@@ -37,6 +37,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _duration = MutableStateFlow(0L)
     val duration: StateFlow<Long> = _duration
 
+    private val _albumArt = MutableStateFlow<android.graphics.Bitmap?>(null)
+    val albumArt: StateFlow<android.graphics.Bitmap?> = _albumArt
+
+    private val appContext = application.applicationContext
+
     init {
         playerManager.exoPlayer.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -71,6 +76,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _currentIndex.value = index
         _currentSong.value = song
         playerManager.playSong(song)
+        loadArt(song)
     }
 
     fun playNext() {
@@ -80,6 +86,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _currentIndex.value = nextIndex
         _currentSong.value = list[nextIndex]
         playerManager.playSong(list[nextIndex])
+        loadArt(list[nextIndex])
     }
 
     fun playPrevious() {
@@ -89,6 +96,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _currentIndex.value = prevIndex
         _currentSong.value = list[prevIndex]
         playerManager.playSong(list[prevIndex])
+        loadArt(list[prevIndex])
+    }
+
+    private fun loadArt(song: Song) {
+        viewModelScope.launch {
+            _albumArt.value = withContext(Dispatchers.IO) {
+                com.ianocent.musicplayer.data.AlbumArtLoader.getEmbeddedArt(appContext, song.uri)
+            }
+        }
     }
 
     fun togglePlayPause() {
