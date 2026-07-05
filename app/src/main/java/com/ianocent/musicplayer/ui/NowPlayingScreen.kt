@@ -50,7 +50,18 @@ import kotlin.collections.indexOf
 import androidx.compose.runtime.getValue
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 
 @Composable
 fun NowPlayingScreen(
@@ -64,12 +75,34 @@ fun NowPlayingScreen(
     val albumArt by viewModel.albumArt.collectAsState()
     val isShuffleOn by viewModel.isShuffleOn.collectAsState()
     val repeatMode by viewModel.repeatMode.collectAsState()
+    val ambientColor by viewModel.ambientColor.collectAsState()
+    var offsetY by remember { mutableStateOf(0f) }
+    val dismissThreshold = 300f
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .offset { IntOffset(0, offsetY.roundToInt().coerceAtLeast(0)) }
+            .statusBarsPadding()
+            .navigationBarsPadding()
             .background(Color.White)
             .padding(20.dp)
+            .background(
+                Brush.verticalGradient(
+                    listOf(ambientColor.copy(alpha = 0.3f), MaterialTheme.colorScheme.background)
+                )
+            )
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragEnd = {
+                        if (offsetY > dismissThreshold) onBack() else offsetY = 0f
+                    },
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
+                        offsetY = (offsetY + dragAmount).coerceAtLeast(0f)
+                    }
+                )
+            }
     ) {
         // Drag handle
         Box(
@@ -150,29 +183,29 @@ fun NowPlayingScreen(
         Spacer(modifier = Modifier.height(20.dp))
 
         // Lyric section
-        val lyric by viewModel.lyric.collectAsState()
+        val syncedLyric by viewModel.syncedLyric.collectAsState()
+        val plainLyric by viewModel.plainLyric.collectAsState()
         val isLyricLoading by viewModel.isLyricLoading.collectAsState()
 
         Text("Lyric :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
         Spacer(modifier = Modifier.height(8.dp))
+
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 150.dp)
-                .background(Color(0xFFF0F0F0), RoundedCornerShape(12.dp))
-                .padding(16.dp)
+            modifier = Modifier.fillMaxWidth().height(150.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
         ) {
-            val scrollState = rememberScrollState()
-            Text(
-                text = when {
-                    isLyricLoading -> "Memuat lirik..."
-                    lyric.isNullOrBlank() -> "Lirik belum tersedia untuk lagu ini"
-                    else -> lyric!!
-                },
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().verticalScroll(scrollState),
-                color = if (lyric.isNullOrBlank()) Color.Gray else Color.Black
-            )
+            when {
+                isLyricLoading -> Text("Memuat lirik...", modifier = Modifier.align(Alignment.Center), color = Color.Gray)
+                syncedLyric != null -> SyncedLyricView(lines = syncedLyric!!, currentPosition = currentPosition)
+                !plainLyric.isNullOrBlank() -> {
+                    val scrollState = rememberScrollState()
+                    Text(
+                        plainLyric!!, textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().verticalScroll(scrollState).padding(16.dp)
+                    )
+                }
+                else -> Text("Lirik belum tersedia untuk lagu ini", modifier = Modifier.align(Alignment.Center), color = Color.Gray)
+            }
         }
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -293,6 +326,30 @@ fun ControlButton(icon: ImageVector, onClick: () -> Unit, active: Boolean = fals
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, contentDescription = null, tint = Color.Black)
+    }
+}
+@Composable
+fun SyncedLyricView(lines: List<com.ianocent.musicplayer.data.LyricLine>, currentPosition: Long) {
+    val activeIndex = remember(currentPosition, lines) {
+        lines.indexOfLast { it.timeMs <= currentPosition }.coerceAtLeast(0)
+    }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(activeIndex) {
+        listState.animateScrollToItem((activeIndex - 1).coerceAtLeast(0))
+    }
+
+    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(vertical = 12.dp)) {
+        itemsIndexed(lines) { index, line ->
+            Text(
+                line.text,
+                textAlign = TextAlign.Center,
+                fontSize = if (index == activeIndex) 16.sp else 14.sp,
+                fontWeight = if (index == activeIndex) FontWeight.Bold else FontWeight.Normal,
+                color = if (index == activeIndex) MaterialTheme.colorScheme.primary else Color.Gray,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            )
+        }
     }
 }
 

@@ -13,6 +13,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
@@ -32,27 +33,36 @@ import com.ianocent.musicplayer.ui.theme.IanPlayerTheme
 import com.ianocent.musicplayer.ui.NowPlayingScreen
 import com.ianocent.musicplayer.viewmodel.MusicViewModel
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.ui.draw.clip
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.ImageBitmap
+import com.ianocent.musicplayer.data.Song
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.ui.text.font.FontWeight
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            IanPlayerTheme {
+            val viewModel: MusicViewModel = viewModel()
+            val isDarkMode by viewModel.isDarkMode.collectAsState()
+
+            IanPlayerTheme(darkTheme = isDarkMode, dynamicColor = false) {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    AppNavHost(modifier = Modifier.padding(innerPadding))
+                    AppNavHost(viewModel = viewModel, modifier = Modifier.padding(innerPadding))
                 }
             }
         }
     }
 }
-
 @Composable
-fun AppNavHost(modifier: Modifier = Modifier) {
+fun AppNavHost(viewModel: MusicViewModel, modifier: Modifier = Modifier) {
     val navController = rememberNavController()
-    val viewModel: MusicViewModel = viewModel()
 
     NavHost(navController = navController, startDestination = "listing") {
         composable("listing") {
@@ -70,7 +80,6 @@ fun AppNavHost(modifier: Modifier = Modifier) {
         }
     }
 }
-
 @Composable
 fun ListingScreen(
     viewModel: MusicViewModel,
@@ -100,53 +109,38 @@ fun ListingScreen(
     val isPlaying by viewModel.isPlaying.collectAsState()
     val currentPosition by viewModel.currentPosition.collectAsState()
     val duration by viewModel.duration.collectAsState()
+    val isDarkMode by viewModel.isDarkMode.collectAsState()
+    var selectedTab by remember { mutableStateOf(0) }
 
     if (hasPermission) {
         Column(modifier = modifier.fillMaxSize()) {
-            LazyColumn(modifier = Modifier.weight(1f)) {
-                items(songs) { song ->
-                    var art by remember(song.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
 
-                    LaunchedEffect(song.id) {
-                        viewModel.getCachedArt(song) { bitmap -> art = bitmap }
-                    }
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Ian Player", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                IconButton(onClick = { viewModel.toggleDarkMode() }) {
+                    Icon(
+                        imageVector = if (isDarkMode) Icons.Default.LightMode else Icons.Default.DarkMode,
+                        contentDescription = "Toggle theme"
+                    )
+                }
+            }
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { viewModel.playSong(song) }
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                                .background(
-                                    if (art == null) MaterialTheme.colorScheme.primaryContainer
-                                    else androidx.compose.ui.graphics.Color.Transparent
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (art != null) {
-                                androidx.compose.foundation.Image(
-                                    bitmap = art!!.asImageBitmap(),
-                                    contentDescription = null,
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                                )
-                            } else {
-                                Icon(Icons.Default.MusicNote, contentDescription = null)
-                            }
-                        }
+            TabRow(selectedTabIndex = selectedTab) {
+                Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Songs") })
+                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Playlists") })
+            }
 
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Column {
-                            Text(song.title, style = MaterialTheme.typography.bodyLarge)
-                            Text(song.artist, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
+            when (selectedTab) {
+                0 -> LazyColumn(modifier = Modifier.weight(1f)) {
+                    items(songs, key = { it.id }) { song -> SongRow(song, viewModel) }
+                }
+                1 -> Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Text("Playlist feature coming soon", color = Color.Gray)
                 }
             }
 
@@ -190,6 +184,40 @@ fun ListingScreen(
     } else {
         Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("Izin akses lagu diperlukan")
+        }
+    }
+}
+
+@Composable
+fun SongRow(song: Song, viewModel: MusicViewModel) {
+    var art by remember(song.id) { mutableStateOf<ImageBitmap?>(null) }
+
+    LaunchedEffect(song.id) {
+        viewModel.getCachedArt(song) { bitmap -> art = bitmap?.asImageBitmap() }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { viewModel.playSong(song) }
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp))
+                .background(if (art == null) MaterialTheme.colorScheme.primaryContainer else Color.Transparent),
+            contentAlignment = Alignment.Center
+        ) {
+            if (art != null) {
+                Image(bitmap = art!!, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            } else {
+                Icon(Icons.Default.MusicNote, contentDescription = null)
+            }
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column {
+            Text(song.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+            Text(song.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1)
         }
     }
 }

@@ -5,8 +5,14 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import androidx.palette.graphics.Palette
 
 object AlbumArtLoader {
+    fun extractDominantColor(bitmap: Bitmap): androidx.compose.ui.graphics.Color {
+        val palette = Palette.from(bitmap).generate()
+        val dominant = palette.getDominantColor(0xFF333333.toInt())
+        return androidx.compose.ui.graphics.Color(dominant)
+    }
     fun getEmbeddedArt(context: Context, uri: Uri, targetSize: Int = 150): Bitmap? {
         return try {
             val retriever = MediaMetadataRetriever()

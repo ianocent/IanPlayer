@@ -15,8 +15,16 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
+import androidx.compose.ui.graphics.Color
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
+    // Di MusicViewModel
+    private val _isDarkMode = MutableStateFlow(true)
+    val isDarkMode: StateFlow<Boolean> = _isDarkMode
+
+    fun toggleDarkMode() {
+        _isDarkMode.value = !_isDarkMode.value
+    }
 
     private val repository = MusicRepository(application)
     val playerManager = PlayerManager(application)
@@ -158,21 +166,41 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         loadArt(list[prevIndex])
     }
 
+    private val _ambientColor = MutableStateFlow(Color(0xFF333333))
+    val ambientColor: StateFlow<Color> = _ambientColor
+
     private fun loadArt(song: Song) {
         viewModelScope.launch {
-            _albumArt.value = withContext(Dispatchers.IO) {
-                com.ianocent.musicplayer.data.AlbumArtLoader.getEmbeddedArt(appContext, song.uri)
+            val bitmap = withContext(Dispatchers.IO) {
+                com.ianocent.musicplayer.data.AlbumArtLoader.getEmbeddedArt(appContext, song.uri, targetSize = 400)
             }
+            _albumArt.value = bitmap
+            _ambientColor.value = bitmap?.let {
+                com.ianocent.musicplayer.data.AlbumArtLoader.extractDominantColor(it)
+            } ?: Color(0xFF333333)
         }
     }
+    private val _syncedLyric = MutableStateFlow<List<com.ianocent.musicplayer.data.LyricLine>?>(null)
+    val syncedLyric: StateFlow<List<com.ianocent.musicplayer.data.LyricLine>?> = _syncedLyric
+
+    private val _plainLyric = MutableStateFlow<String?>(null)
+    val plainLyric: StateFlow<String?> = _plainLyric
+
     private fun loadLyric(song: Song) {
-        _lyric.value = null
+        _syncedLyric.value = null
+        _plainLyric.value = null
         _isLyricLoading.value = true
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                lyricRepository.fetchLyric(song.title, song.artist)
+            val synced = withContext(Dispatchers.IO) {
+                lyricRepository.fetchSyncedLyric(song.title, song.artist)
             }
-            _lyric.value = result
+            if (synced != null) {
+                _syncedLyric.value = synced
+            } else {
+                _plainLyric.value = withContext(Dispatchers.IO) {
+                    lyricRepository.fetchPlainLyric(song.title, song.artist)
+                }
+            }
             _isLyricLoading.value = false
         }
     }
