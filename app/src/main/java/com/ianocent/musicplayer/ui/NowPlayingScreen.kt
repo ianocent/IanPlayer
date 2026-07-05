@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -55,8 +54,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.input.pointer.pointerInput
@@ -64,13 +61,25 @@ import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.media3.common.Player
 import kotlinx.coroutines.launch
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.graphics.toArgb
+import androidx.core.graphics.ColorUtils
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import com.ianocent.musicplayer.data.Song
+import kotlinx.coroutines.flow.StateFlow
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.compositeOver
 
 @Composable
 fun NowPlayingScreen(
@@ -85,12 +94,26 @@ fun NowPlayingScreen(
     val isShuffleOn by viewModel.isShuffleOn.collectAsState()
     val repeatMode by viewModel.repeatMode.collectAsState()
     val ambientColor by viewModel.ambientColor.collectAsState()
-//    var offsetY by remember { mutableStateOf(0f) }
     val offsetY = remember { Animatable(0f) }
     val dismissThreshold = 300f
     val coroutineScope = rememberCoroutineScope()
     val screenHeight = with(LocalDensity.current) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
     val dragProgress = (offsetY.value / screenHeight).coerceIn(0f, 1f)
+    val animatedAmbient by animateColorAsState(
+        targetValue = ambientColor,
+        animationSpec = tween(durationMillis = 800)
+    )
+    val isDarkMode by viewModel.isDarkMode.collectAsState()
+    val adaptiveColor = remember(ambientColor, isDarkMode) {
+        com.ianocent.musicplayer.data.getAdaptiveControlColor(ambientColor, isDarkMode)
+    }
+    val rootBackgroundColor = remember(animatedAmbient, isDarkMode) {
+        if (isDarkMode) {
+            Color(ColorUtils.blendARGB(animatedAmbient.toArgb(), android.graphics.Color.BLACK, 0.6f))  // <- dari 0.85f jadi 0.6f
+        } else {
+            Color(ColorUtils.blendARGB(animatedAmbient.toArgb(), android.graphics.Color.WHITE, 0.75f))  // <- dari 0.85f jadi 0.75f
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -100,10 +123,20 @@ fun NowPlayingScreen(
                 scaleX = 1f - dragProgress * 0.05f
                 scaleY = 1f - dragProgress * 0.05f
             }
+            // 1. Tembak warnanya duluan biar mentok nutupin seluruh ujung layar
+            .background(rootBackgroundColor)
+            // 2. Baru dorong kontennya pakai padding system bar
             .statusBarsPadding()
             .navigationBarsPadding()
-            .background(MaterialTheme.colorScheme.background)
+            // 3. Jarak estetika buat konten di dalamnya
             .padding(20.dp)
+            // 4. Mencegah klik tembus ke layar belakang (ListingScreen)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {}
+            )
+            // 5. Drag gesture
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
                     onDragEnd = {
@@ -186,13 +219,23 @@ fun NowPlayingScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                LinearProgressIndicator(
-                    progress = { if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f },
-                    modifier = Modifier.fillMaxWidth().height(6.dp)
-                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp)),
-                    color = Color(0xFFD32F2F),
-                    trackColor = Color(0xFFE0E0E0)
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Slider(
+                        value = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
+                        onValueChange = { fraction -> viewModel.seekTo((fraction * duration).toLong()) },
+                        modifier = Modifier.fillMaxWidth().scale(scaleX = 1f, scaleY = 0.6f),
+                        colors = SliderDefaults.colors(
+                            thumbColor = adaptiveColor,
+                            activeTrackColor = adaptiveColor,
+                            inactiveTrackColor = adaptiveColor.copy(alpha = 0.25f)
+                        )
+                    )
+                }
                 Text(
                     formatTime(currentPosition),
                     style = MaterialTheme.typography.labelSmall,
@@ -212,12 +255,24 @@ fun NowPlayingScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         Box(
-            modifier = Modifier.fillMaxWidth().height(150.dp)
-                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .background(
+                    adaptiveColor.copy(alpha = if (isDarkMode) 0.15f else 0.12f).compositeOver(
+                        if (isDarkMode) Color(0xFF121212) else Color.White
+                    ),
+                    RoundedCornerShape(12.dp)
+                )
         ) {
             when {
                 isLyricLoading -> Text("Memuat lirik...", modifier = Modifier.align(Alignment.Center), color = Color.Gray)
-                syncedLyric != null -> SyncedLyricView(lines = syncedLyric!!, currentPosition = currentPosition)
+//                syncedLyric != null -> SyncedLyricView(lines = syncedLyric!!, currentPosition = currentPosition)
+                syncedLyric != null -> SyncedLyricView(
+                    lines = syncedLyric!!,
+                    currentPosition = currentPosition,
+                    highlightColor = adaptiveColor
+                )
                 !plainLyric.isNullOrBlank() -> {
                     val scrollState = rememberScrollState()
                     Text(
@@ -239,10 +294,15 @@ fun NowPlayingScreen(
         )
         Spacer(modifier = Modifier.height(8.dp))
 
-        val songs by viewModel.songs.collectAsState()
+//        val songs by viewModel.songs.collectAsState()
+//        val upNextList = remember(songs, song) {
+//            val idx = songs.indexOf(song)
+//            if (idx == -1) songs.take(3) else songs.drop(idx + 1).take(3)
+//        }
+        val songs by viewModel.queue.collectAsState()
         val upNextList = remember(songs, song) {
             val idx = songs.indexOf(song)
-            if (idx == -1) songs.take(3) else songs.drop(idx + 1).take(3)
+            if (idx == -1) songs else songs.drop(idx + 1)
         }
 
         Box(
@@ -250,12 +310,17 @@ fun NowPlayingScreen(
                 .fillMaxWidth()
                 .weight(1f)
                 .background(
-                    Color(0xFF1E1E1E),
+//                    if (isDarkMode) Color(0xFF1E1E1E) else Color(0xFFE0E0E0),
+                    adaptiveColor.copy(alpha = if (isDarkMode) 0.15f else 0.12f).compositeOver(
+                        if (isDarkMode) Color(0xFF121212) else Color.White
+                    ),
                     androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
                 )
-                .padding(12.dp)
         ) {
-            LazyColumn {
+        LazyColumn(
+                modifier = Modifier.padding(12.dp),
+                contentPadding = PaddingValues(bottom = 80.dp)
+            ) {
                 items(upNextList) { upSong ->
                     Row(
                         modifier = Modifier
@@ -270,14 +335,14 @@ fun NowPlayingScreen(
                         ) {
                             Text(
                                 upSong.title,
-                                color = Color.White,
+                                color = if (isDarkMode) Color.White else Color.Black, // <-- FIX INI
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
                             Text(
                                 upSong.artist,
-                                color = Color.Gray,
+                                color = Color.Gray, // Ini aman buat light/dark
                                 style = MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -285,7 +350,7 @@ fun NowPlayingScreen(
                         }
                         Text(
                             formatTime(upSong.duration),
-                            color = Color.White,
+                            color = if (isDarkMode) Color.White else Color.Black, // <-- FIX INI
                             style = MaterialTheme.typography.bodySmall,
                             maxLines = 1
                         )
@@ -303,11 +368,6 @@ fun NowPlayingScreen(
             fontWeight = FontWeight.SemiBold
         )
         Spacer(modifier = Modifier.height(8.dp))
-
-        val isDarkMode by viewModel.isDarkMode.collectAsState()
-        val adaptiveColor = remember(ambientColor, isDarkMode) {
-            com.ianocent.musicplayer.data.getAdaptiveControlColor(ambientColor, isDarkMode)
-        }
 
         Box(
             modifier = Modifier
@@ -337,10 +397,10 @@ fun NowPlayingScreen(
                 ControlButton(icon = Icons.Default.SkipNext, onClick = { viewModel.playNext() }, bgColor = buttonBg, iconTint = iconColor)
                 ControlButton(icon = Icons.Default.Shuffle, onClick = { viewModel.toggleShuffle() }, active = isShuffleOn, bgColor = buttonBg, iconTint = iconColor)
                 ControlButton(
-                    icon = Icons.Default.Repeat,
+                    icon = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
                     onClick = { viewModel.toggleRepeat() },
                     active = repeatMode != Player.REPEAT_MODE_OFF,
-                    badge = if (repeatMode == Player.REPEAT_MODE_ONE) "1" else null,
+                    badge = null,
                     bgColor = buttonBg, iconTint = iconColor
                 )
             }
@@ -369,16 +429,21 @@ fun ControlButton(
         if (badge != null) {
             Text(
                 badge,
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                color = iconTint,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 2.dp, end = 2.dp)
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Black,
+                color = if (active) iconTint else iconTint.copy(alpha = 0.5f),
+                modifier = Modifier.offset(x = 1.dp, y = 1.dp)
             )
         }
+
     }
 }
 @Composable
-fun SyncedLyricView(lines: List<com.ianocent.musicplayer.data.LyricLine>, currentPosition: Long) {
+fun SyncedLyricView(
+    lines: List<com.ianocent.musicplayer.data.LyricLine>,
+    currentPosition: Long,
+    highlightColor: Color  // <- parameter baru
+) {
     val activeIndex = remember(currentPosition, lines) {
         lines.indexOfLast { it.timeMs <= currentPosition }.coerceAtLeast(0)
     }
@@ -395,7 +460,7 @@ fun SyncedLyricView(lines: List<com.ianocent.musicplayer.data.LyricLine>, curren
                 textAlign = TextAlign.Center,
                 fontSize = if (index == activeIndex) 16.sp else 14.sp,
                 fontWeight = if (index == activeIndex) FontWeight.Bold else FontWeight.Normal,
-                color = if (index == activeIndex) MaterialTheme.colorScheme.primary else Color.Gray,
+                color = if (index == activeIndex) highlightColor else Color.Gray,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
             )
         }

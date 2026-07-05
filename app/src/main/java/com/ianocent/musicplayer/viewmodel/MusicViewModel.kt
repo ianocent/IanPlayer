@@ -51,6 +51,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val songs: StateFlow<List<Song>> = _songs
 
+    private val _queue = MutableStateFlow<List<Song>>(emptyList())
+    val queue: StateFlow<List<Song>> = _queue
+
     private val _currentIndex = MutableStateFlow(-1)
 
     private val _currentSong = MutableStateFlow<Song?>(null)
@@ -102,19 +105,37 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private val appContext = application.applicationContext
+    private var pendingMediaId: Long? = null
 
     init {
-        playerManager.exoPlayer.addListener(object : Player.Listener {
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                _isPlaying.value = isPlaying
-            }
+        playerManager.initialize {
+            val player = playerManager.player
 
-            override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
-                _duration.value = playerManager.getDuration()
-            }
-        })
+            player?.addListener(object : Player.Listener {
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    _isPlaying.value = isPlaying
+                }
+                override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                    _duration.value = playerManager.getDuration()
+                }
+            })
 
-        // Poll posisi tiap 500ms buat update progress bar
+            if (player?.currentMediaItem != null) {
+                val mediaId = player.currentMediaItem?.mediaId?.toLongOrNull()
+                if (mediaId != null) {
+                    pendingMediaId = mediaId
+                    tryRestoreCurrentSong()
+                }
+            }
+        }
+
+        // Setiap kali _songs berubah (misal abis loadSongs), coba restore lagi
+        viewModelScope.launch {
+            _songs.collect {
+                tryRestoreCurrentSong()
+            }
+        }
+
         viewModelScope.launch {
             while (isActive) {
                 _currentPosition.value = playerManager.getCurrentPosition()
@@ -123,34 +144,45 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+    private fun tryRestoreCurrentSong() {
+        val mediaId = pendingMediaId ?: return
+        val activeSong = _songs.value.find { it.id == mediaId }
+        if (activeSong != null) {
+            _currentSong.value = activeSong
+            _currentIndex.value = _queue.value.indexOf(activeSong)
+            _isPlaying.value = playerManager.player?.isPlaying ?: false
+            loadArt(activeSong)
+            loadLyric(activeSong)
+            pendingMediaId = null
+        }
+    }
 
     fun loadSongs() {
         viewModelScope.launch {
             val list = withContext(Dispatchers.IO) { repository.getAllSongs() }
             originalOrder = list
             _songs.value = list
+            _queue.value = list
         }
     }
     fun toggleShuffle() {
         _isShuffleOn.value = !_isShuffleOn.value
-        if (_isShuffleOn.value) {
-            val current = _currentSong.value
-            val shuffled = originalOrder.shuffled()
-            _songs.value = shuffled
-            _currentIndex.value = shuffled.indexOf(current)
+        val current = _currentSong.value
+        _queue.value = if (_isShuffleOn.value) {
+            _songs.value.shuffled()
         } else {
-            val current = _currentSong.value
-            _songs.value = originalOrder
-            _currentIndex.value = originalOrder.indexOf(current)
+            _songs.value
         }
+        _currentIndex.value = _queue.value.indexOf(current)
     }
 
     fun toggleRepeat() {
         _repeatMode.value = playerManager.toggleRepeat()
     }
 
+
     fun playSong(song: Song) {
-        val index = _songs.value.indexOf(song)
+        val index = _queue.value.indexOf(song)
         _currentIndex.value = index
         _currentSong.value = song
         playerManager.playSong(song)
@@ -159,7 +191,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playNext() {
-        val list = _songs.value
+        val list = _queue.value
         if (list.isEmpty()) return
         val isLast = _currentIndex.value >= list.size - 1
 
@@ -177,7 +209,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playPrevious() {
-        val list = _songs.value
+        val list = _queue.value
         if (list.isEmpty()) return
         val prevIndex = (_currentIndex.value - 1).coerceAtLeast(0)
         _currentIndex.value = prevIndex

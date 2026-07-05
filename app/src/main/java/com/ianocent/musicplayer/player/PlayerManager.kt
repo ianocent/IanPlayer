@@ -1,45 +1,74 @@
 package com.ianocent.musicplayer.player
 
+import android.content.ComponentName
 import android.content.Context
+import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
+import com.google.common.util.concurrent.ListenableFuture
 import com.ianocent.musicplayer.data.Song
+import com.ianocent.musicplayer.player.PlaybackService
 
-class PlayerManager(context: Context) {
+class PlayerManager(private val context: Context) {
+    // Sekarang pakai Player bawaan interface Media3, bukan ExoPlayer langsung
+    var player: Player? = null
+    private var controllerFuture: ListenableFuture<MediaController>? = null
 
-    val exoPlayer: ExoPlayer = ExoPlayer.Builder(context).build()
+    // Fungsi buat konek UI ke PlaybackService
+    fun initialize(onReady: () -> Unit) {
+        val sessionToken = SessionToken(context, ComponentName(context, PlaybackService::class.java))
+        controllerFuture = MediaController.Builder(context, sessionToken).buildAsync()
+        controllerFuture?.addListener(
+            {
+                player = controllerFuture?.get()
+                onReady() // Panggil listener pas player udah siap
+            },
+            ContextCompat.getMainExecutor(context)
+        )
+    }
 
     fun playSong(song: Song) {
-        val mediaItem = MediaItem.fromUri(song.uri)
-        exoPlayer.setMediaItem(mediaItem)
-        exoPlayer.prepare()
-        exoPlayer.play()
+        val mediaItem = MediaItem.Builder()
+            .setUri(song.uri)
+            .setMediaId(song.id.toString())
+            .build()
+
+        player?.setMediaItem(mediaItem)
+        player?.prepare()
+        player?.play()
     }
 
     fun togglePlayPause() {
-        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+        if (player?.isPlaying == true) {
+            player?.pause()
+        } else {
+            player?.play()
+        }
     }
 
     fun seekTo(positionMs: Long) {
-        exoPlayer.seekTo(positionMs)
+        player?.seekTo(positionMs)
     }
 
-    fun getCurrentPosition(): Long = exoPlayer.currentPosition
+    fun getCurrentPosition(): Long = player?.currentPosition ?: 0L
 
-    fun getDuration(): Long = exoPlayer.duration.coerceAtLeast(0L)
+    fun getDuration(): Long = player?.duration ?: 0L
 
     fun toggleRepeat(): Int {
-        val newMode = when (exoPlayer.repeatMode) {
+        val currentMode = player?.repeatMode ?: Player.REPEAT_MODE_OFF
+        val nextMode = when (currentMode) {
             Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
             Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
             else -> Player.REPEAT_MODE_OFF
         }
-        exoPlayer.repeatMode = newMode
-        return newMode
+        player?.repeatMode = nextMode
+        return nextMode
     }
 
     fun release() {
-        exoPlayer.release()
+        controllerFuture?.let { MediaController.releaseFuture(it) }
+        player = null
     }
 }

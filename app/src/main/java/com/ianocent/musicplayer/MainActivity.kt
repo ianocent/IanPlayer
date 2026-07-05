@@ -39,12 +39,21 @@ import androidx.compose.ui.graphics.ImageBitmap
 import com.ianocent.musicplayer.data.Song
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.Image
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.ui.text.font.FontWeight
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.zIndex
+import com.google.accompanist.systemuicontroller.rememberSystemUiController
+import com.ianocent.musicplayer.ui.formatTime
+import androidx.compose.ui.graphics.luminance
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,32 +61,60 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val viewModel: MusicViewModel = viewModel()
+            val systemUiController = rememberSystemUiController()
             val isDarkMode by viewModel.isDarkMode.collectAsState()
+
+            LaunchedEffect(isDarkMode) {
+                systemUiController.setSystemBarsColor(
+                    color = Color.Transparent,
+                    darkIcons = !isDarkMode
+                )
+            }
 
             IanPlayerTheme(darkTheme = isDarkMode, dynamicColor = false) {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    AppNavHost(viewModel = viewModel, modifier = Modifier.padding(innerPadding))
+                    AppNavHost(viewModel = viewModel, innerPadding = innerPadding)
                 }
             }
         }
     }
 }
 @Composable
-fun AppNavHost(viewModel: MusicViewModel, modifier: Modifier = Modifier) {
-    val navController = rememberNavController()
+fun AppNavHost(viewModel: MusicViewModel, innerPadding: PaddingValues) {
+    var showNowPlaying by remember { mutableStateOf(false) }
 
-    NavHost(navController = navController, startDestination = "listing") {
-        composable("listing") {
-            ListingScreen(
-                viewModel = viewModel,
-                modifier = modifier,
-                onNowPlayingClick = { navController.navigate("now_playing") }
-            )
-        }
-        composable("now_playing") {
+    Box(modifier = Modifier.fillMaxSize()) {
+        ListingScreen(
+            viewModel = viewModel,
+            modifier = Modifier.padding(innerPadding),
+            onNowPlayingClick = { showNowPlaying = true }
+        )
+
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showNowPlaying,
+            enter = androidx.compose.animation.slideInVertically(
+                initialOffsetY = { it },
+                animationSpec = androidx.compose.animation.core.tween(
+                    durationMillis = 350,
+                    easing = androidx.compose.animation.core.FastOutSlowInEasing
+                )
+            ) + androidx.compose.animation.fadeIn(
+                animationSpec = androidx.compose.animation.core.tween(300)
+            ),
+            exit = androidx.compose.animation.slideOutVertically(
+                targetOffsetY = { it },
+                animationSpec = androidx.compose.animation.core.tween(
+                    durationMillis = 300,
+                    easing = androidx.compose.animation.core.FastOutSlowInEasing
+                )
+            ) + androidx.compose.animation.fadeOut(
+                animationSpec = androidx.compose.animation.core.tween(250)
+            ),
+            modifier = Modifier.zIndex(1f)
+        ) {
             NowPlayingScreen(
                 viewModel = viewModel,
-                onBack = { navController.popBackStack() }
+                onBack = { showNowPlaying = false }
             )
         }
     }
@@ -113,6 +150,13 @@ fun ListingScreen(
     val duration by viewModel.duration.collectAsState()
     val isDarkMode by viewModel.isDarkMode.collectAsState()
     var selectedTab by remember { mutableStateOf(0) }
+    val ambientColor by viewModel.ambientColor.collectAsState()
+    val adaptiveColor = remember(ambientColor, isDarkMode) {
+        com.ianocent.musicplayer.data.getAdaptiveControlColor(ambientColor, isDarkMode)
+    }
+    val minibarTextColor = remember(adaptiveColor) {
+        if (adaptiveColor.luminance() > 0.5f) Color.Black else Color.White
+    }
 
     if (hasPermission) {
         Column(modifier = modifier.fillMaxSize()) {
@@ -139,46 +183,73 @@ fun ListingScreen(
 
             var showCreateDialog by remember { mutableStateOf(false) }
             val playlists by viewModel.playlists.collectAsState()
+            var selectedPlaylist by remember { mutableStateOf<com.ianocent.musicplayer.data.Playlist?>(null) }
 
-// ganti bagian "when (selectedTab)"
             when (selectedTab) {
-                0 -> LazyColumn(modifier = Modifier.weight(1f)) {
+                0 -> LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(bottom = 120.dp)
+                ) {
                     items(songs, key = { it.id }) { song -> SongRow(song, viewModel) }
                 }
                 1 -> Box(modifier = Modifier.weight(1f)) {
-                    if (playlists.isEmpty()) {
-                        Text(
-                            "Belum ada playlist. Tap + untuk buat baru",
-                            modifier = Modifier.align(Alignment.Center),
-                            color = Color.Gray
-                        )
+                    if (selectedPlaylist != null) {
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(onClick = { selectedPlaylist = null }) {
+                                    Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                                }
+                                Text(
+                                    text = selectedPlaylist!!.name,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(start = 8.dp)
+                                )
+                            }
+                            val playlistSongs = viewModel.getSongsInPlaylist(selectedPlaylist!!)
+                            LazyColumn(contentPadding = PaddingValues(bottom = 120.dp)) {
+                                items(playlistSongs, key = { it.id }) { song ->
+                                    SongRow(song, viewModel)
+                                }
+                            }
+                        }
                     } else {
-                        LazyColumn {
+                        if (playlists.isEmpty()) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text("Belum ada playlist. Tap + untuk buat baru", color = Color.Gray)
+                            }
+                        } else {
+                            LazyColumn(contentPadding = PaddingValues(bottom = 120.dp)) {
                             items(playlists, key = { it.id }) { playlist ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column {
-                                        Text(playlist.name, style = MaterialTheme.typography.bodyLarge)
-                                        Text("${playlist.songIds.size} lagu", style = MaterialTheme.typography.bodySmall)
-                                    }
-                                    IconButton(onClick = { viewModel.deletePlaylist(playlist) }) {
-                                        Icon(Icons.Default.Delete, contentDescription = "Delete")
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { selectedPlaylist = playlist } // Buka playlist, jangan langsung play!
+                                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text(playlist.name, style = MaterialTheme.typography.bodyLarge)
+                                            Text("${playlist.songIds.size} lagu", style = MaterialTheme.typography.bodySmall)
+                                        }
+                                        IconButton(onClick = { viewModel.deletePlaylist(playlist) }) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Delete")
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    FloatingActionButton(
-                        onClick = { showCreateDialog = true },
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "Create Playlist")
+                        FloatingActionButton(
+                            onClick = { showCreateDialog = true },
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Create Playlist")
+                        }
                     }
                 }
             }
@@ -195,37 +266,81 @@ fun ListingScreen(
             }
 
             currentSong?.let { song ->
-                Column(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .clickable { onNowPlayingClick() }
+                        .padding(horizontal = 12.dp)
                 ) {
-                    Slider(
-                        value = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
-                        onValueChange = { fraction -> viewModel.seekTo((fraction * duration).toLong()) },
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(adaptiveColor.copy(alpha = 0.9f))
+                            .clickable { onNowPlayingClick() }
+                            .padding(16.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(song.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                            Text(song.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    song.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = minibarTextColor,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    song.artist,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = minibarTextColor.copy(alpha = 0.7f),
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
+                            IconButton(onClick = { viewModel.playPrevious() }) {
+                                Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", tint = minibarTextColor)
+                            }
+                            IconButton(onClick = { viewModel.togglePlayPause() }) {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = "Play/Pause",
+                                    tint = minibarTextColor
+                                )
+                            }
+                            IconButton(onClick = { viewModel.playNext() }) {
+                                Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = minibarTextColor)
+                            }
                         }
-                        IconButton(onClick = { viewModel.playPrevious() }) {
-                            Icon(Icons.Default.SkipPrevious, contentDescription = "Previous")
-                        }
-                        IconButton(onClick = { viewModel.togglePlayPause() }) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = "Play/Pause"
+
+                        Spacer(Modifier.height(4.dp))
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                formatTime(currentPosition),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = minibarTextColor,
+                                modifier = Modifier.padding(end = 8.dp)
                             )
-                        }
-                        IconButton(onClick = { viewModel.playNext() }) {
-                            Icon(Icons.Default.SkipNext, contentDescription = "Next")
+                            Slider(
+                                value = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
+                                onValueChange = { fraction -> viewModel.seekTo((fraction * duration).toLong()) },
+                                modifier = Modifier.weight(1f).height(20.dp),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = minibarTextColor,
+                                    activeTrackColor = minibarTextColor,
+                                    inactiveTrackColor = minibarTextColor.copy(alpha = 0.3f)
+                                )
+                            )
+                            Text(
+                                formatTime(duration),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = minibarTextColor,
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
                         }
                     }
                 }
@@ -254,12 +369,16 @@ fun SongRow(song: Song, viewModel: MusicViewModel) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp))
-                .background(if (art == null) MaterialTheme.colorScheme.primaryContainer else Color.Transparent),
+            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.primaryContainer),
             contentAlignment = Alignment.Center
         ) {
             if (art != null) {
-                Image(bitmap = art!!, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                Image(
+                    bitmap = art!!,
+                    contentDescription = "Album Art",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
             } else {
                 Icon(Icons.Default.MusicNote, contentDescription = null)
             }
@@ -272,13 +391,13 @@ fun SongRow(song: Song, viewModel: MusicViewModel) {
     }
 }
 @Composable
-fun CreatePlaylistDialog(
-    songs: List<Song>,
-    onDismiss: () -> Unit,
-    onCreate: (String, List<Long>) -> Unit
-) {
+fun CreatePlaylistDialog(songs: List<Song>, onDismiss: () -> Unit, onCreate: (String, List<Long>) -> Unit) {
     var name by remember { mutableStateOf("") }
+    var searchQuery by remember { mutableStateOf("") }
     val selectedIds = remember { mutableStateListOf<Long>() }
+    val filteredSongs = remember(searchQuery, songs) {
+        songs.filter { it.title.contains(searchQuery, ignoreCase = true) || it.artist.contains(searchQuery, ignoreCase = true) }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -286,15 +405,18 @@ fun CreatePlaylistDialog(
         text = {
             Column {
                 OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Nama Playlist") },
-                    modifier = Modifier.fillMaxWidth()
+                    value = name, onValueChange = { name = it },
+                    label = { Text("Nama Playlist") }, modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                // Search bar
+                OutlinedTextField(
+                    value = searchQuery, onValueChange = { searchQuery = it },
+                    label = { Text("Cari lagu...") }, modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(12.dp))
-                Text("Pilih lagu:", style = MaterialTheme.typography.bodySmall)
-                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
-                    items(songs, key = { it.id }) { song ->
+                LazyColumn(modifier = Modifier.heightIn(max = 250.dp)) {
+                    items(filteredSongs, key = { it.id }) { song ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

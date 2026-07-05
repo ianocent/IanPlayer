@@ -8,6 +8,8 @@ import android.net.Uri
 import androidx.palette.graphics.Palette
 import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.graphics.toArgb
+import android.os.Build
+import android.util.Size
 
 object AlbumArtLoader {
     fun extractDominantColor(bitmap: Bitmap): androidx.compose.ui.graphics.Color {
@@ -17,24 +19,18 @@ object AlbumArtLoader {
     }
     fun getEmbeddedArt(context: Context, uri: Uri, targetSize: Int = 150): Bitmap? {
         return try {
-            val retriever = MediaMetadataRetriever()
-            retriever.setDataSource(context, uri)
-            val art = retriever.embeddedPicture
-            retriever.release()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                context.contentResolver.loadThumbnail(uri, Size(targetSize, targetSize), null)
+            } else {
+                val retriever = MediaMetadataRetriever()
+                retriever.setDataSource(context, uri)
+                val art = retriever.embeddedPicture
+                retriever.release()
 
-            art?.let { bytes ->
-                // Decode cuma bounds dulu buat tau ukuran asli
-                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-
-                // Hitung sample size biar di-downscale pas decode (hemat memory)
-                var sampleSize = 1
-                while (options.outWidth / sampleSize > targetSize * 2) {
-                    sampleSize *= 2
+                art?.let { bytes ->
+                    val options = BitmapFactory.Options().apply { inSampleSize = 2 }
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
                 }
-
-                val finalOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, finalOptions)
             }
         } catch (e: Exception) {
             null
