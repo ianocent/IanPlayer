@@ -6,6 +6,8 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.palette.graphics.Palette
+import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.compose.ui.graphics.toArgb
 
 object AlbumArtLoader {
     fun extractDominantColor(bitmap: Bitmap): androidx.compose.ui.graphics.Color {
@@ -39,3 +41,13 @@ object AlbumArtLoader {
         }
     }
 }
+fun getAdaptiveControlColor(baseColor: ComposeColor, isDarkMode: Boolean): ComposeColor {
+    val hsl = FloatArray(3)
+    android.graphics.Color.colorToHSV(baseColor.toArgb(), hsl)
+    return if (isDarkMode) {
+        ComposeColor.hsl(hsl[0], (hsl[1] * 0.5f).coerceIn(0f, 1f), 0.75f)
+    } else {
+        ComposeColor.hsl(hsl[0], hsl[1], 0.25f)
+    }
+}
+

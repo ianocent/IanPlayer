@@ -16,9 +16,28 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.Color
+import com.ianocent.musicplayer.data.Playlist
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
-    // Di MusicViewModel
+    private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
+    val playlists: StateFlow<List<Playlist>> = _playlists
+
+    fun createPlaylist(name: String, songIds: List<Long>) {
+        val newPlaylist = Playlist(
+            id = System.currentTimeMillis(),
+            name = name,
+            songIds = songIds.toMutableList()
+        )
+        _playlists.value = _playlists.value + newPlaylist
+    }
+
+    fun getSongsInPlaylist(playlist: Playlist): List<Song> {
+        return _songs.value.filter { it.id in playlist.songIds }
+    }
+
+    fun deletePlaylist(playlist: Playlist) {
+        _playlists.value = _playlists.value.filter { it.id != playlist.id }
+    }
     private val _isDarkMode = MutableStateFlow(true)
     val isDarkMode: StateFlow<Boolean> = _isDarkMode
 
@@ -154,6 +173,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _currentSong.value = list[nextIndex]
         playerManager.playSong(list[nextIndex])
         loadArt(list[nextIndex])
+        loadLyric(list[nextIndex])
     }
 
     fun playPrevious() {
@@ -164,6 +184,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _currentSong.value = list[prevIndex]
         playerManager.playSong(list[prevIndex])
         loadArt(list[prevIndex])
+        loadLyric(list[prevIndex])
     }
 
     private val _ambientColor = MutableStateFlow(Color(0xFF333333))

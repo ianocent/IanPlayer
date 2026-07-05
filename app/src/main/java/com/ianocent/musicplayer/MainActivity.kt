@@ -39,9 +39,11 @@ import androidx.compose.ui.graphics.ImageBitmap
 import com.ianocent.musicplayer.data.Song
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.Image
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.ui.text.font.FontWeight
 
 class MainActivity : ComponentActivity() {
@@ -135,13 +137,61 @@ fun ListingScreen(
                 Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Playlists") })
             }
 
+            var showCreateDialog by remember { mutableStateOf(false) }
+            val playlists by viewModel.playlists.collectAsState()
+
+// ganti bagian "when (selectedTab)"
             when (selectedTab) {
                 0 -> LazyColumn(modifier = Modifier.weight(1f)) {
                     items(songs, key = { it.id }) { song -> SongRow(song, viewModel) }
                 }
-                1 -> Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    Text("Playlist feature coming soon", color = Color.Gray)
+                1 -> Box(modifier = Modifier.weight(1f)) {
+                    if (playlists.isEmpty()) {
+                        Text(
+                            "Belum ada playlist. Tap + untuk buat baru",
+                            modifier = Modifier.align(Alignment.Center),
+                            color = Color.Gray
+                        )
+                    } else {
+                        LazyColumn {
+                            items(playlists, key = { it.id }) { playlist ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text(playlist.name, style = MaterialTheme.typography.bodyLarge)
+                                        Text("${playlist.songIds.size} lagu", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    IconButton(onClick = { viewModel.deletePlaylist(playlist) }) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete")
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    FloatingActionButton(
+                        onClick = { showCreateDialog = true },
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Create Playlist")
+                    }
                 }
+            }
+
+            if (showCreateDialog) {
+                CreatePlaylistDialog(
+                    songs = songs,
+                    onDismiss = { showCreateDialog = false },
+                    onCreate = { name, selectedIds ->
+                        viewModel.createPlaylist(name, selectedIds)
+                        showCreateDialog = false
+                    }
+                )
             }
 
             currentSong?.let { song ->
@@ -220,4 +270,64 @@ fun SongRow(song: Song, viewModel: MusicViewModel) {
             Text(song.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1)
         }
     }
+}
+@Composable
+fun CreatePlaylistDialog(
+    songs: List<Song>,
+    onDismiss: () -> Unit,
+    onCreate: (String, List<Long>) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    val selectedIds = remember { mutableStateListOf<Long>() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Buat Playlist Baru") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Nama Playlist") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("Pilih lagu:", style = MaterialTheme.typography.bodySmall)
+                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                    items(songs, key = { it.id }) { song ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    if (selectedIds.contains(song.id)) selectedIds.remove(song.id)
+                                    else selectedIds.add(song.id)
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = selectedIds.contains(song.id),
+                                onCheckedChange = {
+                                    if (it) selectedIds.add(song.id) else selectedIds.remove(song.id)
+                                }
+                            )
+                            Column {
+                                Text(song.title, maxLines = 1)
+                                Text(song.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (name.isNotBlank()) onCreate(name, selectedIds.toList()) },
+                enabled = name.isNotBlank() && selectedIds.isNotEmpty()
+            ) { Text("Buat") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Batal") }
+        }
+    )
 }

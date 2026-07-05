@@ -62,6 +62,15 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.media3.common.Player
+import kotlinx.coroutines.launch
 
 @Composable
 fun NowPlayingScreen(
@@ -76,35 +85,47 @@ fun NowPlayingScreen(
     val isShuffleOn by viewModel.isShuffleOn.collectAsState()
     val repeatMode by viewModel.repeatMode.collectAsState()
     val ambientColor by viewModel.ambientColor.collectAsState()
-    var offsetY by remember { mutableStateOf(0f) }
+//    var offsetY by remember { mutableStateOf(0f) }
+    val offsetY = remember { Animatable(0f) }
     val dismissThreshold = 300f
+    val coroutineScope = rememberCoroutineScope()
+    val screenHeight = with(LocalDensity.current) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
+    val dragProgress = (offsetY.value / screenHeight).coerceIn(0f, 1f)
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .offset { IntOffset(0, offsetY.roundToInt().coerceAtLeast(0)) }
+            .offset { IntOffset(0, offsetY.value.roundToInt()) }
+            .graphicsLayer {
+                scaleX = 1f - dragProgress * 0.05f
+                scaleY = 1f - dragProgress * 0.05f
+            }
             .statusBarsPadding()
             .navigationBarsPadding()
-            .background(Color.White)
+            .background(MaterialTheme.colorScheme.background)
             .padding(20.dp)
-            .background(
-                Brush.verticalGradient(
-                    listOf(ambientColor.copy(alpha = 0.3f), MaterialTheme.colorScheme.background)
-                )
-            )
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
                     onDragEnd = {
-                        if (offsetY > dismissThreshold) onBack() else offsetY = 0f
+                        coroutineScope.launch {
+                            if (offsetY.value > dismissThreshold) {
+                                offsetY.animateTo(screenHeight, animationSpec = spring())
+                                onBack()
+                            } else {
+                                offsetY.animateTo(0f, animationSpec = spring())
+                            }
+                        }
                     },
                     onVerticalDrag = { change, dragAmount ->
                         change.consume()
-                        offsetY = (offsetY + dragAmount).coerceAtLeast(0f)
+                        coroutineScope.launch {
+                            offsetY.snapTo((offsetY.value + dragAmount).coerceAtLeast(0f))
+                        }
                     }
                 )
             }
     ) {
-        // Drag handle
+    // Drag handle
         Box(
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
@@ -244,22 +265,29 @@ fun NowPlayingScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(
+                            modifier = Modifier.weight(1f).padding(end = 8.dp)
+                        ) {
                             Text(
                                 upSong.title,
                                 color = Color.White,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
                             Text(
                                 upSong.artist,
                                 color = Color.Gray,
-                                style = MaterialTheme.typography.bodySmall
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
                         }
                         Text(
                             formatTime(upSong.duration),
                             color = Color.White,
-                            style = MaterialTheme.typography.bodySmall
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1
                         )
                     }
                 }
@@ -276,13 +304,18 @@ fun NowPlayingScreen(
         )
         Spacer(modifier = Modifier.height(8.dp))
 
+        val isDarkMode by viewModel.isDarkMode.collectAsState()
+        val adaptiveColor = remember(ambientColor, isDarkMode) {
+            com.ianocent.musicplayer.data.getAdaptiveControlColor(ambientColor, isDarkMode)
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(16.dp))
                 .background(
                     Brush.verticalGradient(
-                        listOf(Color(0xFFD32F2F), Color(0xFF7B1FA2), Color(0xFF4E342E))
+                        listOf(adaptiveColor, adaptiveColor.copy(alpha = 0.7f))
                     )
                 )
                 .padding(vertical = 16.dp)
@@ -292,23 +325,23 @@ fun NowPlayingScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val buttonBg = if (isDarkMode) Color.Black.copy(alpha = 0.3f) else Color.White
+                val iconColor = if (isDarkMode) Color.White else Color.Black
+
                 ControlButton(
                     icon = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    onClick = { viewModel.togglePlayPause() }
+                    onClick = { viewModel.togglePlayPause() },
+                    bgColor = buttonBg, iconTint = iconColor
                 )
-                ControlButton(
-                    icon = Icons.Default.SkipPrevious,
-                    onClick = { viewModel.playPrevious() })
-                ControlButton(icon = Icons.Default.SkipNext, onClick = { viewModel.playNext() })
-                ControlButton(
-                    icon = Icons.Default.Shuffle,
-                    onClick = { viewModel.toggleShuffle() },
-                    active = isShuffleOn
-                )
+                ControlButton(icon = Icons.Default.SkipPrevious, onClick = { viewModel.playPrevious() }, bgColor = buttonBg, iconTint = iconColor)
+                ControlButton(icon = Icons.Default.SkipNext, onClick = { viewModel.playNext() }, bgColor = buttonBg, iconTint = iconColor)
+                ControlButton(icon = Icons.Default.Shuffle, onClick = { viewModel.toggleShuffle() }, active = isShuffleOn, bgColor = buttonBg, iconTint = iconColor)
                 ControlButton(
                     icon = Icons.Default.Repeat,
                     onClick = { viewModel.toggleRepeat() },
-                    active = repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF
+                    active = repeatMode != Player.REPEAT_MODE_OFF,
+                    badge = if (repeatMode == Player.REPEAT_MODE_ONE) "1" else null,
+                    bgColor = buttonBg, iconTint = iconColor
                 )
             }
         }
@@ -316,16 +349,32 @@ fun NowPlayingScreen(
 }
 
 @Composable
-fun ControlButton(icon: ImageVector, onClick: () -> Unit, active: Boolean = false) {
+fun ControlButton(
+    icon: ImageVector,
+    onClick: () -> Unit,
+    active: Boolean = false,
+    badge: String? = null,
+    iconTint: Color = Color.Black,
+    bgColor: Color = Color.White
+) {
     Box(
         modifier = Modifier
             .size(48.dp)
             .clip(RoundedCornerShape(50))
-            .background(if (active) Color(0xFFFFC107) else Color.White)
+            .background(if (active) bgColor.copy(alpha = 0.7f) else bgColor)
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
-        Icon(icon, contentDescription = null, tint = Color.Black)
+        Icon(icon, contentDescription = null, tint = iconTint)
+        if (badge != null) {
+            Text(
+                badge,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                color = iconTint,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 2.dp, end = 2.dp)
+            )
+        }
     }
 }
 @Composable
