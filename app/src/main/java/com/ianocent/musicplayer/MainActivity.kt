@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
@@ -30,6 +31,9 @@ import androidx.navigation.compose.rememberNavController
 import com.ianocent.musicplayer.ui.theme.IanPlayerTheme
 import com.ianocent.musicplayer.ui.NowPlayingScreen
 import com.ianocent.musicplayer.viewmodel.MusicViewModel
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.ui.draw.clip
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -101,14 +105,47 @@ fun ListingScreen(
         Column(modifier = modifier.fillMaxSize()) {
             LazyColumn(modifier = Modifier.weight(1f)) {
                 items(songs) { song ->
-                    Column(
+                    var art by remember(song.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
+
+                    LaunchedEffect(song.id) {
+                        viewModel.getCachedArt(song) { bitmap -> art = bitmap }
+                    }
+
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { viewModel.playSong(song) }
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(song.title, style = MaterialTheme.typography.bodyLarge)
-                        Text(song.artist, style = MaterialTheme.typography.bodySmall)
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                                .background(
+                                    if (art == null) MaterialTheme.colorScheme.primaryContainer
+                                    else androidx.compose.ui.graphics.Color.Transparent
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (art != null) {
+                                androidx.compose.foundation.Image(
+                                    bitmap = art!!.asImageBitmap(),
+                                    contentDescription = null,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                )
+                            } else {
+                                Icon(Icons.Default.MusicNote, contentDescription = null)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Column {
+                            Text(song.title, style = MaterialTheme.typography.bodyLarge)
+                            Text(song.artist, style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
             }

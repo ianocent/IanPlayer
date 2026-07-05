@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Player
+import com.ianocent.musicplayer.data.LyricRepository
 import com.ianocent.musicplayer.data.MusicRepository
 import com.ianocent.musicplayer.data.Song
 import com.ianocent.musicplayer.player.PlayerManager
@@ -37,8 +38,41 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _duration = MutableStateFlow(0L)
     val duration: StateFlow<Long> = _duration
 
+    private val _isShuffleOn = MutableStateFlow(false)
+
+    val isShuffleOn: StateFlow<Boolean> = _isShuffleOn
+
+    private val _repeatMode = MutableStateFlow(Player.REPEAT_MODE_OFF)
+
+    val repeatMode: StateFlow<Int> = _repeatMode
+
+    private var originalOrder: List<Song> = emptyList()
     private val _albumArt = MutableStateFlow<android.graphics.Bitmap?>(null)
     val albumArt: StateFlow<android.graphics.Bitmap?> = _albumArt
+
+    private val lyricRepository = LyricRepository()
+
+    private val _lyric = MutableStateFlow<String?>(null)
+    val lyric: StateFlow<String?> = _lyric
+
+    private val _isLyricLoading = MutableStateFlow(false)
+    val isLyricLoading: StateFlow<Boolean> = _isLyricLoading
+
+    private val artCache = mutableMapOf<Long, android.graphics.Bitmap?>()
+
+    fun getCachedArt(song: Song, onLoaded: (android.graphics.Bitmap?) -> Unit) {
+        if (artCache.containsKey(song.id)) {
+            onLoaded(artCache[song.id])
+            return
+        }
+        viewModelScope.launch {
+            val art = withContext(Dispatchers.IO) {
+                com.ianocent.musicplayer.data.AlbumArtLoader.getEmbeddedArt(appContext, song.uri)
+            }
+            artCache[song.id] = art
+            onLoaded(art)
+        }
+    }
 
     private val appContext = application.applicationContext
 
@@ -65,10 +99,27 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadSongs() {
         viewModelScope.launch {
-            _songs.value = withContext(Dispatchers.IO) {
-                repository.getAllSongs()
-            }
+            val list = withContext(Dispatchers.IO) { repository.getAllSongs() }
+            originalOrder = list
+            _songs.value = list
         }
+    }
+    fun toggleShuffle() {
+        _isShuffleOn.value = !_isShuffleOn.value
+        if (_isShuffleOn.value) {
+            val current = _currentSong.value
+            val shuffled = originalOrder.shuffled()
+            _songs.value = shuffled
+            _currentIndex.value = shuffled.indexOf(current)
+        } else {
+            val current = _currentSong.value
+            _songs.value = originalOrder
+            _currentIndex.value = originalOrder.indexOf(current)
+        }
+    }
+
+    fun toggleRepeat() {
+        _repeatMode.value = playerManager.toggleRepeat()
     }
 
     fun playSong(song: Song) {
@@ -77,12 +128,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _currentSong.value = song
         playerManager.playSong(song)
         loadArt(song)
+        loadLyric(song)
     }
 
     fun playNext() {
         val list = _songs.value
         if (list.isEmpty()) return
-        val nextIndex = (_currentIndex.value + 1).coerceAtMost(list.size - 1)
+        val isLast = _currentIndex.value >= list.size - 1
+
+        val nextIndex = when {
+            _repeatMode.value == Player.REPEAT_MODE_ONE -> _currentIndex.value
+            isLast && _repeatMode.value == Player.REPEAT_MODE_ALL -> 0
+            isLast -> return
+            else -> _currentIndex.value + 1
+        }
         _currentIndex.value = nextIndex
         _currentSong.value = list[nextIndex]
         playerManager.playSong(list[nextIndex])
@@ -104,6 +163,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _albumArt.value = withContext(Dispatchers.IO) {
                 com.ianocent.musicplayer.data.AlbumArtLoader.getEmbeddedArt(appContext, song.uri)
             }
+        }
+    }
+    private fun loadLyric(song: Song) {
+        _lyric.value = null
+        _isLyricLoading.value = true
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                lyricRepository.fetchLyric(song.title, song.artist)
+            }
+            _lyric.value = result
+            _isLyricLoading.value = false
         }
     }
 

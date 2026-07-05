@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -47,6 +48,9 @@ import com.ianocent.musicplayer.viewmodel.MusicViewModel
 import java.util.concurrent.TimeUnit
 import kotlin.collections.indexOf
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
 
 @Composable
 fun NowPlayingScreen(
@@ -58,6 +62,8 @@ fun NowPlayingScreen(
     val currentPosition by viewModel.currentPosition.collectAsState()
     val duration by viewModel.duration.collectAsState()
     val albumArt by viewModel.albumArt.collectAsState()
+    val isShuffleOn by viewModel.isShuffleOn.collectAsState()
+    val repeatMode by viewModel.repeatMode.collectAsState()
 
     Column(
         modifier = Modifier
@@ -143,27 +149,29 @@ fun NowPlayingScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Lyric section (placeholder — belum ada sumber lirik)
-        Text(
-            "Lyric :",
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold
-        )
+        // Lyric section
+        val lyric by viewModel.lyric.collectAsState()
+        val isLyricLoading by viewModel.isLyricLoading.collectAsState()
+
+        Text("Lyric :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
         Spacer(modifier = Modifier.height(8.dp))
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    Color(0xFFF0F0F0),
-                    androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
-                )
+                .heightIn(max = 150.dp)
+                .background(Color(0xFFF0F0F0), RoundedCornerShape(12.dp))
                 .padding(16.dp)
         ) {
+            val scrollState = rememberScrollState()
             Text(
-                "Lirik belum tersedia untuk lagu ini",
+                text = when {
+                    isLyricLoading -> "Memuat lirik..."
+                    lyric.isNullOrBlank() -> "Lirik belum tersedia untuk lagu ini"
+                    else -> lyric!!
+                },
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-                color = Color.Gray
+                modifier = Modifier.fillMaxWidth().verticalScroll(scrollState),
+                color = if (lyric.isNullOrBlank()) Color.Gray else Color.Black
             )
         }
 
@@ -259,20 +267,28 @@ fun NowPlayingScreen(
                     icon = Icons.Default.SkipPrevious,
                     onClick = { viewModel.playPrevious() })
                 ControlButton(icon = Icons.Default.SkipNext, onClick = { viewModel.playNext() })
-                ControlButton(icon = Icons.Default.Shuffle, onClick = { /* TODO: shuffle */ })
-                ControlButton(icon = Icons.Default.Repeat, onClick = { /* TODO: repeat */ })
+                ControlButton(
+                    icon = Icons.Default.Shuffle,
+                    onClick = { viewModel.toggleShuffle() },
+                    active = isShuffleOn
+                )
+                ControlButton(
+                    icon = Icons.Default.Repeat,
+                    onClick = { viewModel.toggleRepeat() },
+                    active = repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF
+                )
             }
         }
     }
 }
 
 @Composable
-fun ControlButton(icon: ImageVector, onClick: () -> Unit) {
+fun ControlButton(icon: ImageVector, onClick: () -> Unit, active: Boolean = false) {
     Box(
         modifier = Modifier
             .size(48.dp)
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(50))
-            .background(Color.White)
+            .clip(RoundedCornerShape(50))
+            .background(if (active) Color(0xFFFFC107) else Color.White)
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
