@@ -63,6 +63,8 @@ import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.animation.core.*
+import androidx.compose.ui.geometry.Offset
 
 @Composable
 fun NowPlayingScreen(
@@ -280,33 +282,35 @@ fun NowPlayingScreen(
                     .fillMaxWidth()
                     .height(220.dp)
             ) {
-            when {
-                isLyricLoading -> Text("Memuat lirik...", modifier = Modifier.align(Alignment.Center), color = Color.Gray)
-                syncedLyric != null -> SyncedLyricView(
-                    lines = syncedLyric!!,
-                    currentPosition = currentPosition,
-                    highlightColor = adaptiveColor,
-                    selectedIndices = selectedLyricLines,
-                    onLineClick = { index ->
-                        selectedLyricLines = if (selectedLyricLines.contains(index)) {
-                            selectedLyricLines - index
-                        } else {
-                            selectedLyricLines + index
+                when {
+                    isLyricLoading -> SkeletonLyricLoader(adaptiveColor = adaptiveColor)
+                    !syncedLyric.isNullOrEmpty() -> SyncedLyricView(
+                        lines = syncedLyric!!,
+                        currentPosition = currentPosition,
+                        highlightColor = adaptiveColor,
+                        selectedIndices = selectedLyricLines,
+                        onLineClick = { index ->
+                            selectedLyricLines = if (selectedLyricLines.contains(index)) {
+                                selectedLyricLines - index
+                            } else {
+                                selectedLyricLines + index
+                            }
                         }
-                    }
-                )
-                !plainLyric.isNullOrBlank() -> {
-                    val scrollState = rememberScrollState()
-                    Text(
-                        plainLyric!!, textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .verticalScroll(scrollState)
-                            .padding(horizontal = 16.dp)
                     )
+                    !plainLyric.isNullOrBlank() -> { // isNullOrBlank mencegah string " " masuk
+                        val scrollState = rememberScrollState()
+                        Text(
+                            plainLyric!!,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(scrollState)
+                                .padding(horizontal = 16.dp)
+                                .padding(bottom = 24.dp)
+                        )
+                    }
+                    else -> Text("Lirik belum tersedia", modifier = Modifier.align(Alignment.Center), color = Color.Gray)
                 }
-                else -> Text("Lirik belum tersedia", modifier = Modifier.align(Alignment.Center), color = Color.Gray)
-            }
             }
         }
 
@@ -556,4 +560,50 @@ fun formatTime(ms: Long): String {
     val minutes = TimeUnit.MILLISECONDS.toMinutes(ms)
     val seconds = TimeUnit.MILLISECONDS.toSeconds(ms) % 60
     return String.format("%02d:%02d", minutes, seconds)
+}
+
+@Composable
+fun SkeletonLyricLoader(adaptiveColor: Color) {
+    val shimmerColors = listOf(
+        adaptiveColor.copy(alpha = 0.1f),
+        adaptiveColor.copy(alpha = 0.3f),
+        adaptiveColor.copy(alpha = 0.1f)
+    )
+
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val translateAnim by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmer_translate"
+    )
+
+    val brush = Brush.linearGradient(
+        colors = shimmerColors,
+        start = Offset.Zero,
+        end = Offset(x = translateAnim, y = translateAnim)
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Pola lebar fake lyric biar keliatan natural (60%, 80%, 90%, 70%, 50%)
+        val widths = listOf(0.6f, 0.8f, 0.9f, 0.7f, 0.5f)
+        widths.forEach { fraction ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(fraction)
+                    .height(14.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(brush)
+            )
+        }
+    }
 }

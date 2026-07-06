@@ -12,27 +12,22 @@ data class LyricLine(val timeMs: Long, val text: String)
 class LyricRepository {
 
     fun fetchSyncedLyric(title: String, artist: String): List<LyricLine>? {
-        // 1. Coba dari LRCLIB (Utama)
-        val lrcLibResult = fetchFromLrcLibSynced(title, artist)
-        if (lrcLibResult != null) return lrcLibResult
-
-        // 2. Slot untuk YouTube Music (Nanti logic dari YTMDesktop masuk sini)
-        // return fetchFromYoutubeMusicSynced(title, artist)
-
-        return null
+        // Coba dari LRCLIB (Satu-satunya yang ngasih synced/karaoke style mantap)
+        return fetchFromLrcLibSynced(title, artist)
     }
 
     fun fetchPlainLyric(title: String, artist: String): String? {
-        // 1. Coba dari LRCLIB (Utama)
+        // 1. Coba dari LRCLIB
         val lrcLibResult = fetchFromLrcLibPlain(title, artist)
-        if (lrcLibResult != null) return lrcLibResult
+        if (!lrcLibResult.isNullOrBlank()) return lrcLibResult
 
-        // 2. Fallback 1: Coba dari api.lyrics.ovh kalau LRCLIB kosong
+        // 2. Fallback 1: SomeRandomAPI (Sangat reliable buat plain lyric)
+        val sraResult = fetchFromSomeRandomApi(title, artist)
+        if (!sraResult.isNullOrBlank()) return sraResult
+
+        // 3. Fallback 2: api.lyrics.ovh
         val ovhResult = fetchFromLyricsOvh(title, artist)
-        if (ovhResult != null) return ovhResult
-
-        // 3. Slot untuk YouTube Music (Nanti logic dari YTMDesktop masuk sini)
-        // return fetchFromYoutubeMusicPlain(title, artist)
+        if (!ovhResult.isNullOrBlank()) return ovhResult
 
         return null
     }
@@ -46,6 +41,7 @@ class LyricRepository {
             val url = URL("https://lrclib.net/api/search?q=$query")
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
+            connection.setRequestProperty("User-Agent", "IanPlayer/1.0")
             connection.connectTimeout = 5000
 
             val response = connection.inputStream.bufferedReader().readText()
@@ -69,6 +65,7 @@ class LyricRepository {
             val url = URL("https://lrclib.net/api/search?q=$query")
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
+            connection.setRequestProperty("User-Agent", "IanPlayer/1.0")
             connection.connectTimeout = 5000
 
             val response = connection.inputStream.bufferedReader().readText()
@@ -83,7 +80,29 @@ class LyricRepository {
     }
 
     // ==========================================
-    // SOURCE 2: LYRICS.OVH (Fallback Plain Lyric)
+    // SOURCE 2: SOME RANDOM API (Mantap buat fallback)
+    // ==========================================
+    private fun fetchFromSomeRandomApi(title: String, artist: String): String? {
+        return try {
+            val query = URLEncoder.encode("$title $artist", "UTF-8")
+            val url = URL("https://some-random-api.com/lyrics?title=$query")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0")
+            connection.connectTimeout = 5000
+
+            if (connection.responseCode != 200) return null
+
+            val response = connection.inputStream.bufferedReader().readText()
+            JSONObject(response).optString("lyrics").takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            Log.e("LyricRepo", "Error fetching from SomeRandomAPI", e)
+            null
+        }
+    }
+
+    // ==========================================
+    // SOURCE 3: LYRICS.OVH
     // ==========================================
     private fun fetchFromLyricsOvh(title: String, artist: String): String? {
         return try {
@@ -94,15 +113,12 @@ class LyricRepository {
             connection.requestMethod = "GET"
             connection.connectTimeout = 5000
 
-            // Pastikan response sukses (200 OK)
             if (connection.responseCode != HttpURLConnection.HTTP_OK) return null
 
             val response = connection.inputStream.bufferedReader().readText()
-            val jsonObject = JSONObject(response)
-
-            jsonObject.optString("lyrics").takeIf { it.isNotBlank() }
+            JSONObject(response).optString("lyrics").takeIf { it.isNotBlank() }
         } catch (e: Exception) {
-            Log.e("LyricRepo", "Error fetching lyric from lyrics.ovh", e)
+            Log.e("LyricRepo", "Error fetching from lyrics.ovh", e)
             null
         }
     }
