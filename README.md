@@ -13,11 +13,9 @@
 
 ## 📥 Downloads (Assets)
 Dapatkan versi terbaru dari Ian Player untuk perangkat Android kamu:
-*   [📦 Download APK (Latest Release)](#)
+* [📦 Download APK (Latest Release)](https://github.com/ianocent/ianplayer/releases/download/v1.0.0/IanPlayer-v1.0.0.apk)
 *   [📜 Release Notes](#)
 *   [💻 Source Code (.zip)](#)
-
-*(Note: Link Soon.*
 
 ---
 
