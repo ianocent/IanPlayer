@@ -3,37 +3,20 @@ package com.ianocent.musicplayer.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Repeat
-import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.remember
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -45,23 +28,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ianocent.musicplayer.viewmodel.MusicViewModel
 import java.util.concurrent.TimeUnit
-import kotlin.collections.indexOf
-import androidx.compose.runtime.getValue
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -69,17 +43,25 @@ import androidx.media3.common.Player
 import kotlinx.coroutines.launch
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.graphics.ColorUtils
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.material.icons.filled.RepeatOne
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
-import com.ianocent.musicplayer.data.Song
-import kotlinx.coroutines.flow.StateFlow
-import androidx.compose.ui.draw.scale
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RepeatOne
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.compositeOver
+import com.ianocent.musicplayer.data.Song
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.ReceiptLong
 
 @Composable
 fun NowPlayingScreen(
@@ -107,11 +89,18 @@ fun NowPlayingScreen(
     val adaptiveColor = remember(ambientColor, isDarkMode) {
         com.ianocent.musicplayer.data.getAdaptiveControlColor(ambientColor, isDarkMode)
     }
+    var selectedLyricLines by remember { mutableStateOf(setOf<Int>()) }
+    var showLyricCardSheet by remember { mutableStateOf(false) }
+    var isLyricExpanded by remember { mutableStateOf(true) }
+    var isUpnextExpanded by remember { mutableStateOf(true) }
+    val syncedLyric by viewModel.syncedLyric.collectAsState()
+    val plainLyric by viewModel.plainLyric.collectAsState()
+    val isLyricLoading by viewModel.isLyricLoading.collectAsState()
     val rootBackgroundColor = remember(animatedAmbient, isDarkMode) {
         if (isDarkMode) {
-            Color(ColorUtils.blendARGB(animatedAmbient.toArgb(), android.graphics.Color.BLACK, 0.6f))  // <- dari 0.85f jadi 0.6f
+            Color(ColorUtils.blendARGB(animatedAmbient.toArgb(), android.graphics.Color.BLACK, 0.6f))
         } else {
-            Color(ColorUtils.blendARGB(animatedAmbient.toArgb(), android.graphics.Color.WHITE, 0.75f))  // <- dari 0.85f jadi 0.75f
+            Color(ColorUtils.blendARGB(animatedAmbient.toArgb(), android.graphics.Color.WHITE, 0.75f))
         }
     }
 
@@ -123,20 +112,15 @@ fun NowPlayingScreen(
                 scaleX = 1f - dragProgress * 0.05f
                 scaleY = 1f - dragProgress * 0.05f
             }
-            // 1. Tembak warnanya duluan biar mentok nutupin seluruh ujung layar
             .background(rootBackgroundColor)
-            // 2. Baru dorong kontennya pakai padding system bar
             .statusBarsPadding()
             .navigationBarsPadding()
-            // 3. Jarak estetika buat konten di dalamnya
             .padding(20.dp)
-            // 4. Mencegah klik tembus ke layar belakang (ListingScreen)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = {}
             )
-            // 5. Drag gesture
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
                     onDragEnd = {
@@ -158,7 +142,7 @@ fun NowPlayingScreen(
                 )
             }
     ) {
-    // Drag handle
+        // Drag handle
         Box(
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
@@ -170,12 +154,12 @@ fun NowPlayingScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Album art + song info
+        // Album art + song info (Persis Figma)
         Row(verticalAlignment = Alignment.Top) {
             Box(
                 modifier = Modifier
                     .size(110.dp)
-                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(24.dp)) // Di Figma kelihatan cukup membulat (radius agak besar)
                     .background(
                         if (albumArt == null)
                             Brush.linearGradient(listOf(Color(0xFF8B1E1E), Color(0xFF2B0A0A)))
@@ -187,8 +171,9 @@ fun NowPlayingScreen(
                     Image(
                         bitmap = albumArt!!.asImageBitmap(),
                         contentDescription = "Album Art",
-                        modifier = Modifier.fillMaxSize()
-                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(24.dp)),
                         contentScale = ContentScale.Crop
                     )
                 } else {
@@ -209,12 +194,16 @@ fun NowPlayingScreen(
                 Text(
                     song?.artist ?: "Unknown Artist",
                     fontWeight = FontWeight.SemiBold,
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
                 Text(
                     song?.title ?: "No song playing",
                     fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.bodyLarge
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -228,7 +217,9 @@ fun NowPlayingScreen(
                     Slider(
                         value = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
                         onValueChange = { fraction -> viewModel.seekTo((fraction * duration).toLong()) },
-                        modifier = Modifier.fillMaxWidth().scale(scaleX = 1f, scaleY = 0.6f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .scale(scaleX = 1f, scaleY = 0.6f),
                         colors = SliderDefaults.colors(
                             thumbColor = adaptiveColor,
                             activeTrackColor = adaptiveColor,
@@ -246,114 +237,125 @@ fun NowPlayingScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Lyric section
-        val syncedLyric by viewModel.syncedLyric.collectAsState()
-        val plainLyric by viewModel.plainLyric.collectAsState()
-        val isLyricLoading by viewModel.isLyricLoading.collectAsState()
-
-        Text("Lyric :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Box(
+        // Lyric section (Persis Figma: Tanpa background abu2, icon kecil di kanan)
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
-                .background(
-                    adaptiveColor.copy(alpha = if (isDarkMode) 0.15f else 0.12f).compositeOver(
-                        if (isDarkMode) Color(0xFF121212) else Color.White
-                    ),
-                    RoundedCornerShape(12.dp)
-                )
+                .clickable { isLyricExpanded = !isLyricExpanded },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            Text("Lyric :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = { if (selectedLyricLines.isNotEmpty()) showLyricCardSheet = true },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.ReceiptLong,
+                        contentDescription = "Buat Kartu Lirik",
+                        tint = if (selectedLyricLines.isNotEmpty()) adaptiveColor else Color.Gray.copy(alpha = 0.5f)
+                    )
+                }
+                Icon(
+                    imageVector = if (isLyricExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = "Toggle Lyric",
+                    tint = Color.Gray
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+
+        AnimatedVisibility(
+            visible = isLyricExpanded,
+            enter = expandVertically(),
+            exit = shrinkVertically()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(220.dp)
+            ) {
             when {
                 isLyricLoading -> Text("Memuat lirik...", modifier = Modifier.align(Alignment.Center), color = Color.Gray)
-//                syncedLyric != null -> SyncedLyricView(lines = syncedLyric!!, currentPosition = currentPosition)
                 syncedLyric != null -> SyncedLyricView(
                     lines = syncedLyric!!,
                     currentPosition = currentPosition,
-                    highlightColor = adaptiveColor
+                    highlightColor = adaptiveColor,
+                    selectedIndices = selectedLyricLines,
+                    onLineClick = { index ->
+                        selectedLyricLines = if (selectedLyricLines.contains(index)) {
+                            selectedLyricLines - index
+                        } else {
+                            selectedLyricLines + index
+                        }
+                    }
                 )
                 !plainLyric.isNullOrBlank() -> {
                     val scrollState = rememberScrollState()
                     Text(
                         plainLyric!!, textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().verticalScroll(scrollState).padding(16.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(scrollState)
+                            .padding(horizontal = 16.dp)
                     )
                 }
-                else -> Text("Lirik belum tersedia untuk lagu ini", modifier = Modifier.align(Alignment.Center), color = Color.Gray)
+                else -> Text("Lirik belum tersedia", modifier = Modifier.align(Alignment.Center), color = Color.Gray)
+            }
             }
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        // Upnext section
-        Text(
-            "Upnext :",
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold
-        )
+        // Upnext section (Persis Figma: Ada image album art kecil)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { isUpnextExpanded = !isUpnextExpanded },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Upnext :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            Icon(
+                imageVector = if (isUpnextExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                contentDescription = "Toggle Upnext",
+                tint = Color.Gray
+            )
+        }
         Spacer(modifier = Modifier.height(8.dp))
 
-//        val songs by viewModel.songs.collectAsState()
-//        val upNextList = remember(songs, song) {
-//            val idx = songs.indexOf(song)
-//            if (idx == -1) songs.take(3) else songs.drop(idx + 1).take(3)
-//        }
         val songs by viewModel.queue.collectAsState()
         val upNextList = remember(songs, song) {
             val idx = songs.indexOf(song)
             if (idx == -1) songs else songs.drop(idx + 1)
         }
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .background(
-//                    if (isDarkMode) Color(0xFF1E1E1E) else Color(0xFFE0E0E0),
-                    adaptiveColor.copy(alpha = if (isDarkMode) 0.15f else 0.12f).compositeOver(
-                        if (isDarkMode) Color(0xFF121212) else Color.White
-                    ),
-                    androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
-                )
+        AnimatedVisibility(
+            visible = isUpnextExpanded,
+            modifier = Modifier.weight(1f),
+            enter = expandVertically(),
+            exit = shrinkVertically()
         ) {
-        LazyColumn(
-                modifier = Modifier.padding(12.dp),
-                contentPadding = PaddingValues(bottom = 80.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight()
+                    .background(
+                        adaptiveColor.copy(alpha = if (isDarkMode) 0.15f else 0.12f).compositeOver(
+                            if (isDarkMode) Color(0xFF121212) else Color.White
+                        ),
+                        RoundedCornerShape(24.dp)
+                    )
             ) {
-                items(upNextList) { upSong ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { viewModel.playSong(upSong) }
-                            .padding(vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(
-                            modifier = Modifier.weight(1f).padding(end = 8.dp)
-                        ) {
-                            Text(
-                                upSong.title,
-                                color = if (isDarkMode) Color.White else Color.Black, // <-- FIX INI
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                            )
-                            Text(
-                                upSong.artist,
-                                color = Color.Gray, // Ini aman buat light/dark
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                            )
+                LazyColumn(
+                    modifier = Modifier.padding(12.dp),
+                    contentPadding = PaddingValues(bottom = 60.dp)
+                ) {
+                    items(upNextList) { upSong ->
+                        UpnextSongRow(upSong = upSong, viewModel = viewModel, isDarkMode = isDarkMode) {
+                            viewModel.playSong(upSong)
                         }
-                        Text(
-                            formatTime(upSong.duration),
-                            color = if (isDarkMode) Color.White else Color.Black, // <-- FIX INI
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1
-                        )
                     }
                 }
             }
@@ -361,21 +363,17 @@ fun NowPlayingScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Controls
-        Text(
-            "Controls :",
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold
-        )
+        // Controls (Persis Figma)
+        Text("Controls :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
         Spacer(modifier = Modifier.height(8.dp))
 
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(32.dp)) // Radius lebih besar ala figma
                 .background(
                     Brush.verticalGradient(
-                        listOf(adaptiveColor, adaptiveColor.copy(alpha = 0.7f))
+                        listOf(adaptiveColor, adaptiveColor.copy(alpha = 0.5f)) // Gradient adaptif lu
                     )
                 )
                 .padding(vertical = 16.dp)
@@ -385,19 +383,19 @@ fun NowPlayingScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val buttonBg = if (isDarkMode) Color.Black.copy(alpha = 0.3f) else Color.White
+                val buttonBg = if (isDarkMode) Color.Black.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.8f)
                 val iconColor = if (isDarkMode) Color.White else Color.Black
 
                 ControlButton(
-                    icon = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                     onClick = { viewModel.togglePlayPause() },
                     bgColor = buttonBg, iconTint = iconColor
                 )
-                ControlButton(icon = Icons.Default.SkipPrevious, onClick = { viewModel.playPrevious() }, bgColor = buttonBg, iconTint = iconColor)
-                ControlButton(icon = Icons.Default.SkipNext, onClick = { viewModel.playNext() }, bgColor = buttonBg, iconTint = iconColor)
-                ControlButton(icon = Icons.Default.Shuffle, onClick = { viewModel.toggleShuffle() }, active = isShuffleOn, bgColor = buttonBg, iconTint = iconColor)
+                ControlButton(icon = Icons.Rounded.SkipPrevious, onClick = { viewModel.playPrevious() }, bgColor = buttonBg, iconTint = iconColor)
+                ControlButton(icon = Icons.Rounded.SkipNext, onClick = { viewModel.playNext() }, bgColor = buttonBg, iconTint = iconColor)
+                ControlButton(icon = Icons.Rounded.Shuffle, onClick = { viewModel.toggleShuffle() }, active = isShuffleOn, bgColor = buttonBg, iconTint = iconColor)
                 ControlButton(
-                    icon = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
+                    icon = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
                     onClick = { viewModel.toggleRepeat() },
                     active = repeatMode != Player.REPEAT_MODE_OFF,
                     badge = null,
@@ -405,6 +403,76 @@ fun NowPlayingScreen(
                 )
             }
         }
+    }
+
+    if (showLyricCardSheet) {
+        val selectedText = selectedLyricLines.sorted()
+            .mapNotNull { syncedLyric?.getOrNull(it)?.text }
+            .joinToString("\n")
+
+        LyricCardSheet(
+            song = song,
+            lyricText = selectedText,
+            albumArt = albumArt,
+            accentColor = adaptiveColor,
+            onDismiss = {
+                showLyricCardSheet = false
+                selectedLyricLines = emptySet()
+            }
+        )
+    }
+}
+
+@Composable
+fun UpnextSongRow(upSong: Song, viewModel: MusicViewModel, isDarkMode: Boolean, onClick: () -> Unit) {
+    var art by remember(upSong.id) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(upSong.id) {
+        viewModel.getCachedArt(upSong) { bitmap -> art = bitmap?.asImageBitmap() }
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Album art kecil ala Figma
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (isDarkMode) Color.DarkGray else Color.LightGray),
+            contentAlignment = Alignment.Center
+        ) {
+            if (art != null) {
+                Image(bitmap = art!!, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            } else {
+                Icon(Icons.Default.MusicNote, contentDescription = null, modifier = Modifier.size(20.dp), tint = Color.Gray)
+            }
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(
+                upSong.title,
+                color = if (isDarkMode) Color.White else Color.Black,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+            Text(
+                upSong.artist,
+                color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+        }
+        Text(
+            formatTime(upSong.duration),
+            color = if (isDarkMode) Color.White else Color.Black,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1
+        )
     }
 }
 
@@ -435,14 +503,16 @@ fun ControlButton(
                 modifier = Modifier.offset(x = 1.dp, y = 1.dp)
             )
         }
-
     }
 }
+
 @Composable
 fun SyncedLyricView(
     lines: List<com.ianocent.musicplayer.data.LyricLine>,
     currentPosition: Long,
-    highlightColor: Color  // <- parameter baru
+    highlightColor: Color,
+    selectedIndices: Set<Int>,
+    onLineClick: (Int) -> Unit
 ) {
     val activeIndex = remember(currentPosition, lines) {
         lines.indexOfLast { it.timeMs <= currentPosition }.coerceAtLeast(0)
@@ -450,18 +520,28 @@ fun SyncedLyricView(
     val listState = rememberLazyListState()
 
     LaunchedEffect(activeIndex) {
-        listState.animateScrollToItem((activeIndex - 1).coerceAtLeast(0))
+        if (selectedIndices.isEmpty()) {
+            listState.animateScrollToItem((activeIndex - 1).coerceAtLeast(0))
+        }
     }
 
-    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(vertical = 12.dp)) {
+    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
         itemsIndexed(lines) { index, line ->
+            val isSelected = selectedIndices.contains(index)
             Text(
                 line.text,
                 textAlign = TextAlign.Center,
                 fontSize = if (index == activeIndex) 16.sp else 14.sp,
                 fontWeight = if (index == activeIndex) FontWeight.Bold else FontWeight.Normal,
                 color = if (index == activeIndex) highlightColor else Color.Gray,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        if (isSelected) highlightColor.copy(alpha = 0.2f) else Color.Transparent,
+                        RoundedCornerShape(8.dp)
+                    )
+                    .clickable { onLineClick(index) }
+                    .padding(vertical = 6.dp, horizontal = 8.dp)
             )
         }
     }

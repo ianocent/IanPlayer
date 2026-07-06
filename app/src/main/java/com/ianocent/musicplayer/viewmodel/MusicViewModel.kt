@@ -17,8 +17,12 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.Color
 import com.ianocent.musicplayer.data.Playlist
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
+    private val prefs = application.getSharedPreferences("ian_player_prefs", 0)
+
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
     val playlists: StateFlow<List<Playlist>> = _playlists
 
@@ -29,6 +33,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             songIds = songIds.toMutableList()
         )
         _playlists.value = _playlists.value + newPlaylist
+        savePlaylistsToPrefs()
     }
 
     fun getSongsInPlaylist(playlist: Playlist): List<Song> {
@@ -37,6 +42,36 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deletePlaylist(playlist: Playlist) {
         _playlists.value = _playlists.value.filter { it.id != playlist.id }
+        savePlaylistsToPrefs()
+    }
+    private fun savePlaylistsToPrefs() {
+        val jsonArray = JSONArray()
+        _playlists.value.forEach { playlist ->
+            val obj = JSONObject()
+            obj.put("id", playlist.id)
+            obj.put("name", playlist.name)
+            obj.put("songIds", JSONArray(playlist.songIds))
+            jsonArray.put(obj)
+        }
+        prefs.edit().putString("playlists", jsonArray.toString()).apply()
+    }
+
+    private fun loadPlaylistsFromPrefs() {
+        val jsonString = prefs.getString("playlists", null) ?: return
+        try {
+            val jsonArray = JSONArray(jsonString)
+            val loaded = mutableListOf<Playlist>()
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val idsArray = obj.getJSONArray("songIds")
+                val ids = mutableListOf<Long>()
+                for (j in 0 until idsArray.length()) ids.add(idsArray.getLong(j))
+                loaded.add(Playlist(id = obj.getLong("id"), name = obj.getString("name"), songIds = ids))
+            }
+            _playlists.value = loaded
+        } catch (e: Exception) {
+            // data corrupt, abaikan
+        }
     }
     private val _isDarkMode = MutableStateFlow(true)
     val isDarkMode: StateFlow<Boolean> = _isDarkMode
@@ -108,6 +143,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingMediaId: Long? = null
 
     init {
+        loadPlaylistsFromPrefs()
         playerManager.initialize {
             val player = playerManager.player
 
@@ -117,6 +153,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
                     _duration.value = playerManager.getDuration()
+                }
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Player.STATE_ENDED) {
+                        playNext()
+                    }
                 }
             })
 
@@ -165,15 +206,27 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _queue.value = list
         }
     }
+    private var baseQueueBeforeShuffle: List<Song> = emptyList()
+
     fun toggleShuffle() {
         _isShuffleOn.value = !_isShuffleOn.value
         val current = _currentSong.value
-        _queue.value = if (_isShuffleOn.value) {
-            _songs.value.shuffled()
+        if (_isShuffleOn.value) {
+            baseQueueBeforeShuffle = _queue.value
+            _queue.value = _queue.value.shuffled()
         } else {
-            _songs.value
+            _queue.value = baseQueueBeforeShuffle.ifEmpty { _songs.value }
         }
         _currentIndex.value = _queue.value.indexOf(current)
+    }
+    fun setQueue(newQueue: List<Song>, startSong: Song? = null) {
+        _queue.value = newQueue
+        if (_isShuffleOn.value) {
+            baseQueueBeforeShuffle = newQueue
+            _queue.value = newQueue.shuffled()
+        }
+        val target = startSong ?: newQueue.firstOrNull()
+        target?.let { playSong(it) }
     }
 
     fun toggleRepeat() {
