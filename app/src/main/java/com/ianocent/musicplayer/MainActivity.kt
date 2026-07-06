@@ -51,7 +51,12 @@ import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Person
-
+import java.util.concurrent.TimeUnit
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.ChevronLeft
+import androidx.compose.material.icons.rounded.*
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -284,7 +289,7 @@ fun ListingScreen(
                                     contentScale = ContentScale.Crop
                                 )
                             } else {
-                                Icon(Icons.Default.MusicNote, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Icon(Icons.Rounded.MusicNote, contentDescription = null, modifier = Modifier.size(20.dp))
                             }
                         }
                         Spacer(modifier = Modifier.width(12.dp))
@@ -303,7 +308,7 @@ fun ListingScreen(
                             )
                             Box(
                                 modifier = Modifier
-                                    .fillMaxWidth(0.8f)
+                                    .fillMaxWidth(0.9f) // Disesuaikan agar muat timer di kanan
                                     .height(4.dp)
                                     .clip(RoundedCornerShape(2.dp))
                                     .background(Color.Gray.copy(alpha = 0.3f))
@@ -317,6 +322,22 @@ fun ListingScreen(
                                 )
                             }
                         }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // Timer Vertikal
+                        val minutes = TimeUnit.MILLISECONDS.toMinutes(currentPosition)
+                        val seconds = TimeUnit.MILLISECONDS.toSeconds(currentPosition) % 60
+                        val minStr = String.format("%02d", minutes)
+                        val secStr = String.format("%02d", seconds)
+
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text(text = minStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text(text = secStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -325,28 +346,41 @@ fun ListingScreen(
         Spacer(modifier = Modifier.height(12.dp))
 
         // ---------- 3. TABS ----------
-        val tabLabels = listOf("Songs", "Playlists", "Albums", "Artists")
-        androidx.compose.foundation.lazy.LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(tabLabels.size) { index ->
-                val isSelected = selectedTab == index
-                val bg by animateColorAsState(
-                    if (isSelected) adaptiveColor.copy(alpha = 0.2f) else Color.Transparent,
-                    label = "tab_bg_$index"
-                )
-                Text(
-                    tabLabels[index],
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
-                    color = if (isSelected) adaptiveColor else Color.Gray,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(bg)
-                        .clickable { selectedTab = index }
-                        .padding(horizontal = 24.dp, vertical = 10.dp)
-                )
+        var tabPage by remember { mutableStateOf(0) } // 0 untuk halaman pertama, 1 untuk halaman kedua
+
+        AnimatedContent(
+            targetState = tabPage,
+            transitionSpec = {
+                if (targetState > initialState) {
+                    (slideInHorizontally { width -> width } + fadeIn()).togetherWith(slideOutHorizontally { width -> -width } + fadeOut())
+                } else {
+                    (slideInHorizontally { width -> -width } + fadeIn()).togetherWith(slideOutHorizontally { width -> width } + fadeOut())
+                }
+            },
+            label = "tab_paging_animation"
+        ) { page ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (page == 0) {
+                    TabItem("Songs", selectedTab == 0, adaptiveColor) { selectedTab = 0 }
+                    TabItem("Playlists", selectedTab == 1, adaptiveColor) { selectedTab = 1 }
+                    Spacer(modifier = Modifier.weight(1f))
+                    IconButton(onClick = { tabPage = 1 }) {
+                        Icon(Icons.Rounded.ChevronRight, contentDescription = "More Tabs", tint = Color.Gray)
+                    }
+                } else {
+                    IconButton(onClick = { tabPage = 0 }) {
+                        Icon(Icons.Rounded.ChevronLeft, contentDescription = "Previous Tabs", tint = Color.Gray)
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    TabItem("Albums", selectedTab == 2, adaptiveColor) { selectedTab = 2 }
+                    TabItem("Artists", selectedTab == 3, adaptiveColor) { selectedTab = 3 }
+                }
             }
         }
 
@@ -410,7 +444,7 @@ fun ListingScreen(
                                 contentColor = minibarTextColor,
                                 shape = CircleShape
                             ) {
-                                Icon(Icons.Default.Add, contentDescription = "Create Playlist")
+                                Icon(Icons.Rounded.Add, contentDescription = "Create Playlist")
                             }
                         }
                     }
@@ -456,19 +490,19 @@ fun ListingScreen(
             ) {
                 // Gunakan MiniControlButton yang ukurannya lebih kecil (42.dp)
                 MiniControlButton(
-                    icon = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                     onClick = { viewModel.togglePlayPause() },
                     bg = adaptiveColor,
                     tint = minibarTextColor,
                     size = 42.dp // Size lebih kecil
                 )
                 Spacer(Modifier.width(8.dp))
-                MiniControlButton(Icons.Default.SkipPrevious, { viewModel.playPrevious() }, adaptiveColor, minibarTextColor, 42.dp)
+                MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() }, adaptiveColor, minibarTextColor, 42.dp)
                 Spacer(Modifier.width(8.dp))
-                MiniControlButton(Icons.Default.SkipNext, { viewModel.playNext() }, adaptiveColor, minibarTextColor, 42.dp)
+                MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() }, adaptiveColor, minibarTextColor, 42.dp)
                 Spacer(Modifier.width(8.dp))
                 MiniControlButton(
-                    Icons.Default.Shuffle,
+                    Icons.Rounded.Shuffle,
                     { viewModel.toggleShuffle() },
                     if (isShuffleOn) adaptiveColor else MaterialTheme.colorScheme.surfaceVariant,
                     if (isShuffleOn) minibarTextColor else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -476,7 +510,7 @@ fun ListingScreen(
                 )
                 Spacer(Modifier.width(8.dp))
                 MiniControlButton(
-                    if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
+                    if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
                     { viewModel.toggleRepeat() },
                     if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else MaterialTheme.colorScheme.surfaceVariant,
                     if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) minibarTextColor else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -497,7 +531,23 @@ fun ListingScreen(
         )
     }
 }
-
+@Composable
+fun TabItem(text: String, isSelected: Boolean, adaptiveColor: Color, onClick: () -> Unit) {
+    val bg by animateColorAsState(
+        targetValue = if (isSelected) adaptiveColor.copy(alpha = 0.2f) else Color.Transparent,
+        label = "tab_bg_$text"
+    )
+    Text(
+        text = text,
+        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+        color = if (isSelected) adaptiveColor else Color.Gray,
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(bg)
+            .clickable { onClick() }
+            .padding(horizontal = 24.dp, vertical = 10.dp)
+    )
+}
 @Composable
 fun MiniControlButton(icon: ImageVector, onClick: () -> Unit, bg: Color, tint: Color, size: androidx.compose.ui.unit.Dp) {
     Box(
@@ -542,7 +592,7 @@ fun SongRow(song: Song, viewModel: MusicViewModel, customOnClick: (() -> Unit)? 
                     contentScale = ContentScale.Crop
                 )
             } else {
-                Icon(Icons.Default.MusicNote, contentDescription = null)
+                Icon(Icons.Rounded.MusicNote, contentDescription = null)
             }
         }
         Spacer(modifier = Modifier.width(16.dp))
@@ -585,7 +635,7 @@ fun PlaylistCard(
                 .background(MaterialTheme.colorScheme.secondaryContainer),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Default.MusicNote, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+            Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
         }
         Spacer(modifier = Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -603,7 +653,7 @@ fun PlaylistCard(
             )
         }
         IconButton(onClick = onDelete) {
-            Icon(Icons.Default.Delete, contentDescription = "Delete playlist", tint = Color.Gray)
+            Icon(Icons.Rounded.Delete, contentDescription = "Delete playlist", tint = Color.Gray)
         }
     }
 }
@@ -678,7 +728,7 @@ fun PlaylistDetailView(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
                 shape = CircleShape
             ) {
-                Icon(Icons.Default.ArrowBackIosNew, contentDescription = "Back")
+                Icon(Icons.Rounded.ArrowBackIosNew, contentDescription = "Back")
             }
             FloatingActionButton(
                 onClick = onShuffle, // Ganti jadi Shuffle persis figma lu
@@ -686,7 +736,7 @@ fun PlaylistDetailView(
                 contentColor = minibarTextColor,
                 shape = CircleShape
             ) {
-                Icon(Icons.Default.Shuffle, contentDescription = "Shuffle Playlist")
+                Icon(Icons.Rounded.Shuffle, contentDescription = "Shuffle Playlist")
             }
         }
     }

@@ -62,6 +62,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.ReceiptLong
+import androidx.compose.material.icons.rounded.MusicNote
 
 @Composable
 fun NowPlayingScreen(
@@ -218,8 +219,8 @@ fun NowPlayingScreen(
                         value = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
                         onValueChange = { fraction -> viewModel.seekTo((fraction * duration).toLong()) },
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .scale(scaleX = 1f, scaleY = 0.6f),
+                            .fillMaxWidth(),
+//                            .scale(scaleX = 1f, scaleY = 0.6f),
                         colors = SliderDefaults.colors(
                             thumbColor = adaptiveColor,
                             activeTrackColor = adaptiveColor,
@@ -241,12 +242,21 @@ fun NowPlayingScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { isLyricExpanded = !isLyricExpanded },
+                .clickable {
+                    isLyricExpanded = !isLyricExpanded
+                    if (isLyricExpanded) isUpnextExpanded = false // Tutup upnext jika lirik dibuka
+                },
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Lyric :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
             Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = if (isLyricExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = "Toggle Lyric",
+                    tint = Color.Gray,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
                 IconButton(
                     onClick = { if (selectedLyricLines.isNotEmpty()) showLyricCardSheet = true },
                     modifier = Modifier.size(24.dp)
@@ -257,11 +267,6 @@ fun NowPlayingScreen(
                         tint = if (selectedLyricLines.isNotEmpty()) adaptiveColor else Color.Gray.copy(alpha = 0.5f)
                     )
                 }
-                Icon(
-                    imageVector = if (isLyricExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                    contentDescription = "Toggle Lyric",
-                    tint = Color.Gray
-                )
             }
         }
         Spacer(modifier = Modifier.height(8.dp))
@@ -308,11 +313,14 @@ fun NowPlayingScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Upnext section (Persis Figma: Ada image album art kecil)
+        // Upnext section
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { isUpnextExpanded = !isUpnextExpanded },
+                .clickable {
+                    isUpnextExpanded = !isUpnextExpanded
+                    if (isUpnextExpanded) isLyricExpanded = false
+                },
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -447,7 +455,7 @@ fun UpnextSongRow(upSong: Song, viewModel: MusicViewModel, isDarkMode: Boolean, 
             if (art != null) {
                 Image(bitmap = art!!, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             } else {
-                Icon(Icons.Default.MusicNote, contentDescription = null, modifier = Modifier.size(20.dp), tint = Color.Gray)
+                Icon(Icons.Rounded.MusicNote, contentDescription = null, modifier = Modifier.size(20.dp), tint = Color.Gray)
             }
         }
         Spacer(modifier = Modifier.width(12.dp))
