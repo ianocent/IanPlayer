@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -57,6 +56,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.*
+import androidx.compose.animation.animateContentSize
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -94,7 +94,7 @@ fun AppNavHost(viewModel: MusicViewModel, innerPadding: PaddingValues) {
             onNowPlayingClick = { showNowPlaying = true }
         )
 
-        androidx.compose.animation.AnimatedVisibility(
+        AnimatedVisibility(
             visible = showNowPlaying,
             enter = slideInVertically(
                 initialOffsetY = { it },
@@ -247,6 +247,8 @@ fun ListingScreen(
             }
         }
 
+        Spacer(modifier = Modifier.height(8.dp))
+
         // ---------- 2. LISTENING TO PILL ----------
         AnimatedVisibility(
             visible = currentSong != null,
@@ -261,7 +263,7 @@ fun ListingScreen(
 
                 Box(
                     modifier = Modifier
-                        .padding(horizontal = 24.dp, vertical = 8.dp)
+                        .padding(horizontal = 24.dp)
                         .fillMaxWidth()
                         .height(56.dp)
                         .clip(RoundedCornerShape(28.dp))
@@ -293,6 +295,7 @@ fun ListingScreen(
                             }
                         }
                         Spacer(modifier = Modifier.width(12.dp))
+
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "Listening to: ${song.title}",
@@ -308,7 +311,7 @@ fun ListingScreen(
                             )
                             Box(
                                 modifier = Modifier
-                                    .fillMaxWidth(0.9f) // Disesuaikan agar muat timer di kanan
+                                    .fillMaxWidth()
                                     .height(4.dp)
                                     .clip(RoundedCornerShape(2.dp))
                                     .background(Color.Gray.copy(alpha = 0.3f))
@@ -323,9 +326,9 @@ fun ListingScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(16.dp))
 
-                        // Timer Vertikal
+                        // Timer Vertikal dipojok kanan
                         val minutes = TimeUnit.MILLISECONDS.toMinutes(currentPosition)
                         val seconds = TimeUnit.MILLISECONDS.toSeconds(currentPosition) % 60
                         val minStr = String.format("%02d", minutes)
@@ -333,7 +336,8 @@ fun ListingScreen(
 
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(end = 8.dp)
                         ) {
                             Text(text = minStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                             Text(text = secStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
@@ -343,7 +347,7 @@ fun ListingScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         // ---------- 3. TABS ----------
         var tabPage by remember { mutableStateOf(0) } // 0 untuk halaman pertama, 1 untuk halaman kedua
@@ -362,22 +366,30 @@ fun ListingScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp),
+                    .padding(horizontal = 26.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (page == 0) {
                     TabItem("Songs", selectedTab == 0, adaptiveColor) { selectedTab = 0 }
                     TabItem("Playlists", selectedTab == 1, adaptiveColor) { selectedTab = 1 }
-                    Spacer(modifier = Modifier.weight(1f))
-                    IconButton(onClick = { tabPage = 1 }) {
+                    IconButton(
+                        onClick = { tabPage = 1 },
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)) // Rounded background
+                    ) {
                         Icon(Icons.Rounded.ChevronRight, contentDescription = "More Tabs", tint = Color.Gray)
                     }
                 } else {
-                    IconButton(onClick = { tabPage = 0 }) {
+                    IconButton(
+                        onClick = { tabPage = 0 },
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)) // Rounded background
+                    ) {
                         Icon(Icons.Rounded.ChevronLeft, contentDescription = "Previous Tabs", tint = Color.Gray)
                     }
-                    Spacer(modifier = Modifier.weight(1f))
                     TabItem("Albums", selectedTab == 2, adaptiveColor) { selectedTab = 2 }
                     TabItem("Artists", selectedTab == 3, adaptiveColor) { selectedTab = 3 }
                 }
@@ -400,7 +412,12 @@ fun ListingScreen(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp)
                     ) {
-                        items(filteredSongs, key = { it.id }) { song -> SongRow(song, viewModel) }
+                        items(filteredSongs, key = { it.id }) { song ->
+                            SongRow(song, viewModel, customOnClick = {
+                                // Reset antrean ke daftar lagu utama pas di-klik
+                                viewModel.setQueue(filteredSongs, startSong = song)
+                            })
+                        }
                     }
 
                     1 -> Box(modifier = Modifier.fillMaxSize()) {
@@ -547,6 +564,31 @@ fun TabItem(text: String, isSelected: Boolean, adaptiveColor: Color, onClick: ()
             .clickable { onClick() }
             .padding(horizontal = 24.dp, vertical = 10.dp)
     )
+}
+@Composable
+fun RowScope.TabItem(text: String, isSelected: Boolean, adaptiveColor: Color, onClick: () -> Unit) {
+    val bg by animateColorAsState(
+        targetValue = if (isSelected) adaptiveColor.copy(alpha = 0.2f) else Color.Transparent,
+        label = "tab_bg_$text"
+    )
+    Box(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(bg)
+            .clickable { onClick() }
+            .animateContentSize() // Bikin animasi pas ngelebar/ngecil
+            .then(if (isSelected) Modifier.weight(1f) else Modifier) // Otomatis ngisi ruang kosong kalo aktif
+            .padding(horizontal = 24.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+            color = if (isSelected) adaptiveColor else Color.Gray,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
 }
 @Composable
 fun MiniControlButton(icon: ImageVector, onClick: () -> Unit, bg: Color, tint: Color, size: androidx.compose.ui.unit.Dp) {

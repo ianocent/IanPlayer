@@ -238,14 +238,13 @@ fun NowPlayingScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Lyric section (Persis Figma: Tanpa background abu2, icon kecil di kanan)
+        // Lyric section
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable {
-                    isLyricExpanded = !isLyricExpanded
-                    if (isLyricExpanded) isUpnextExpanded = false // Tutup upnext jika lirik dibuka
-                },
+                .clip(RoundedCornerShape(12.dp)) // Bikin area klik jadi membulat
+                .clickable { isLyricExpanded = !isLyricExpanded }
+                .padding(horizontal = 8.dp, vertical = 8.dp), // Kasih ruang napas biar ga ngepress
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -317,10 +316,9 @@ fun NowPlayingScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable {
-                    isUpnextExpanded = !isUpnextExpanded
-                    if (isUpnextExpanded) isLyricExpanded = false
-                },
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { isUpnextExpanded = !isUpnextExpanded }
+                .padding(horizontal = 8.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -544,12 +542,11 @@ fun SyncedLyricView(
                 color = if (index == activeIndex) highlightColor else Color.Gray,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(
-                        if (isSelected) highlightColor.copy(alpha = 0.2f) else Color.Transparent,
-                        RoundedCornerShape(8.dp)
-                    )
+                    .padding(horizontal = 12.dp, vertical = 2.dp) // Margin luar biar rounded-nya kelihatan
+                    .clip(RoundedCornerShape(12.dp)) // Potong melengkung dulu
+                    .background(if (isSelected) highlightColor.copy(alpha = 0.2f) else Color.Transparent)
                     .clickable { onLineClick(index) }
-                    .padding(vertical = 6.dp, horizontal = 8.dp)
+                    .padding(vertical = 8.dp, horizontal = 12.dp) // Margin dalem text (padding)
             )
         }
     }
