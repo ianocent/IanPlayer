@@ -176,6 +176,10 @@ fun ListingScreen(
     val isShuffleOn by viewModel.isShuffleOn.collectAsState()
     val repeatMode by viewModel.repeatMode.collectAsState()
 
+    val isUpdateAvailable by viewModel.isUpdateAvailable.collectAsState()
+    val updateInfo by viewModel.updateInfo.collectAsState()
+    val isDownloading by viewModel.isDownloading.collectAsState()
+
     val adaptiveColor = remember(ambientColor, isDarkMode) {
         com.ianocent.musicplayer.data.getAdaptiveControlColor(ambientColor, isDarkMode)
     }
@@ -708,6 +712,72 @@ fun ListingScreen(
             }
         )
     }
+
+    if (isUpdateAvailable && updateInfo != null) {
+        UpdateDialog(
+            updateInfo = updateInfo!!,
+            isDownloading = isDownloading,
+            onUpdate = { viewModel.downloadUpdate() },
+            onDismiss = { viewModel.dismissUpdate() }
+        )
+    }
+}
+@Composable
+fun UpdateDialog(
+    updateInfo: com.ianocent.musicplayer.data.UpdateInfo,
+    isDownloading: Boolean,
+    onUpdate: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(28.dp),
+        title = {
+            Text("Update Available", fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column {
+                Text(
+                    "Version ${updateInfo.versionName} is available!",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                if (updateInfo.releaseNotes.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        updateInfo.releaseNotes,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.Gray
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onUpdate,
+                enabled = !isDownloading,
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                if (isDownloading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Downloading...")
+                } else {
+                    Text("Update")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isDownloading
+            ) { Text("Later") }
+        }
+    )
 }
 @Composable
 fun TabItem(text: String, isSelected: Boolean, adaptiveColor: Color, onClick: () -> Unit) {

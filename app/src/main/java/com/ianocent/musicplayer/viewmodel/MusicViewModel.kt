@@ -17,11 +17,18 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.Color
 import com.ianocent.musicplayer.data.Playlist
+import com.ianocent.musicplayer.data.UpdateInfo
 import com.ianocent.musicplayer.data.YTMusicRepository
 import com.ianocent.musicplayer.data.StreamRepository
+import com.ianocent.musicplayer.UpdateManager
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.Job
+import android.content.BroadcastReceiver
+import android.app.DownloadManager
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val streamRepository = StreamRepository()
@@ -194,6 +201,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _isLyricLoading = MutableStateFlow(false)
     val isLyricLoading: StateFlow<Boolean> = _isLyricLoading
 
+    private val _updateInfo = MutableStateFlow<UpdateInfo?>(null)
+    val updateInfo: StateFlow<UpdateInfo?> = _updateInfo
+
+    private val _isUpdateAvailable = MutableStateFlow(false)
+    val isUpdateAvailable: StateFlow<Boolean> = _isUpdateAvailable
+
+    private val _isDownloading = MutableStateFlow(false)
+    val isDownloading: StateFlow<Boolean> = _isDownloading
+
     private val artCache = mutableMapOf<Long, android.graphics.Bitmap?>()
 
     fun getCachedArt(song: Song, onLoaded: (android.graphics.Bitmap?) -> Unit) {
@@ -222,9 +238,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val appContext = application.applicationContext
     private var pendingMediaId: Long? = null
+    private var downloadReceiver: BroadcastReceiver? = null
 
     init {
         loadPlaylistsFromPrefs()
+        checkForUpdate()
         playerManager.initialize {
             val player = playerManager.player
 
@@ -413,6 +431,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        downloadReceiver?.let { appContext.unregisterReceiver(it) }
         playerManager.release()
     }
 
@@ -438,5 +457,43 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         currentList[idx] = currentList[idx].copy(songIds = mutableIds)
         _playlists.value = currentList
         savePlaylistsToPrefs()
+    }
+
+    fun checkForUpdate() {
+        viewModelScope.launch {
+            val info = UpdateManager.checkForUpdate()
+            if (info != null) {
+                try {
+                    val currentVersionCode = getApplication<android.app.Application>()
+                        .packageManager
+                        .getPackageInfo(getApplication<android.app.Application>().packageName, 0)
+                        .versionCode
+
+                    if (info.versionCode > currentVersionCode) {
+                        _updateInfo.value = info
+                        _isUpdateAvailable.value = true
+                    }
+                } catch (e: Exception) {
+                    // ignore
+                }
+            }
+        }
+    }
+
+    fun downloadUpdate() {
+        val info = _updateInfo.value ?: return
+        val context = getApplication<android.app.Application>()
+        _isDownloading.value = true
+
+        val downloadId = UpdateManager.startDownload(context, info)
+        downloadReceiver = UpdateManager.registerDownloadReceiver(context, downloadId) {
+            _isDownloading.value = false
+            UpdateManager.installApk(context)
+        }
+    }
+
+    fun dismissUpdate() {
+        _isUpdateAvailable.value = false
+        _updateInfo.value = null
     }
 }
