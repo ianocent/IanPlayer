@@ -41,6 +41,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
 import androidx.compose.foundation.clickable
+
 @Composable
 fun PlaylistCardContent(
     playlist: Playlist,
@@ -225,8 +226,11 @@ fun PlaylistCardSheet(
                 onClick = {
                     coroutineScope.launch {
                         val bitmap = graphicsLayer.toImageBitmap().asAndroidBitmap()
-                        val uri = saveBitmapToCache(context, bitmap)
-                        uri?.let { shareImage(context, it, "Check out my playlist: ${playlist.name}") }
+                        // 1. Simpan ke Galeri permanen (Pakai nama fungsi yang udah di-rename)
+                        savePlaylistBitmapToGallery(context, bitmap)
+                        // 2. Simpan ke Cache untuk di-share
+                        val uri = savePlaylistBitmapToCache(context, bitmap)
+                        uri?.let { sharePlaylistImage(context, it, "Check out my playlist: ${playlist.name}") }
                         onDismiss()
                     }
                 },
@@ -238,7 +242,8 @@ fun PlaylistCardSheet(
     }
 }
 
-fun saveBitmapToCache(context: Context, bitmap: Bitmap): android.net.Uri? {
+// Tambahin "private" biar fungsinya cuma hidup dan bisa dipanggil di dalem file ini aja
+private fun savePlaylistBitmapToCache(context: Context, bitmap: Bitmap): android.net.Uri? {
     return try {
         val file = File(context.cacheDir, "playlist_card_${System.currentTimeMillis()}.png")
         FileOutputStream(file).use { out ->
@@ -250,7 +255,25 @@ fun saveBitmapToCache(context: Context, bitmap: Bitmap): android.net.Uri? {
     }
 }
 
-fun shareImage(context: Context, uri: android.net.Uri, text: String) {
+// Ganti nama fungsi & tambahin "private"
+private fun savePlaylistBitmapToGallery(context: Context, bitmap: Bitmap) {
+    val filename = "playlist_card_${System.currentTimeMillis()}.png"
+    val resolver = context.contentResolver
+    val contentValues = ContentValues().apply {
+        put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+        put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+        put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/IanPlayer")
+    }
+    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+    uri?.let {
+        resolver.openOutputStream(it)?.use { stream ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+        }
+    }
+}
+
+// Tambahin "private" & rename
+private fun sharePlaylistImage(context: Context, uri: android.net.Uri, text: String) {
     val intent = Intent(Intent.ACTION_SEND).apply {
         type = "image/png"
         putExtra(Intent.EXTRA_STREAM, uri)
@@ -259,4 +282,3 @@ fun shareImage(context: Context, uri: android.net.Uri, text: String) {
     }
     context.startActivity(Intent.createChooser(intent, "Share Playlist Card"))
 }
-

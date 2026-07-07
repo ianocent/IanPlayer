@@ -82,7 +82,16 @@ class MainActivity : ComponentActivity() {
             }
 
             IanPlayerTheme(darkTheme = isDarkMode, dynamicColor = false) {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                val animatedScaffoldBg by animateColorAsState(
+                    targetValue = MaterialTheme.colorScheme.background,
+                    animationSpec = tween(500),
+                    label = "scaffoldBgAnim"
+                )
+
+                Scaffold(
+                    modifier = Modifier.fillMaxSize(),
+                    containerColor = animatedScaffoldBg
+                ) { innerPadding ->
                     AppNavHost(viewModel = viewModel, innerPadding = innerPadding)
                 }
             }
@@ -186,11 +195,25 @@ fun ListingScreen(
         return
     }
 
+    // Animasi perubahan warna background
+    val animatedBgColor by animateColorAsState(
+        targetValue = MaterialTheme.colorScheme.background,
+        animationSpec = tween(500),
+        label = "bgAnim"
+    )
+
+    val animatedContainerColor by animateColorAsState(
+        targetValue = if (isDarkMode) Color(0xFF1C1C1E) else Color(0xFFF2F2F7),
+        animationSpec = tween(500),
+        label = "containerAnim"
+    )
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(animatedBgColor)
     ) {
+        // ---------- 1. HEADER ----------
         // ---------- 1. HEADER ----------
         Row(
             modifier = Modifier
@@ -462,7 +485,7 @@ fun ListingScreen(
                 .weight(1f)
                 .padding(horizontal = 16.dp)
                 .clip(RoundedCornerShape(32.dp))
-                .background(if (isDarkMode) Color(0xFF1C1C1E) else Color(0xFFF2F2F7))
+                .background(animatedContainerColor)
         ) {
             Crossfade(targetState = selectedTab) { tab ->
                 when (tab) {
@@ -595,6 +618,7 @@ fun ListingScreen(
                                         DraggableScrollbar(listState, adaptiveColor)
                                     }
                                 }
+                                // State buat nentuin menu kebuka atau ketutup
                                 FloatingActionButton(
                                     onClick = { showCreateDialog = true },
                                     modifier = Modifier
@@ -740,7 +764,6 @@ fun MiniControlButton(icon: ImageVector, onClick: () -> Unit, bg: Color, tint: C
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(size * 0.6f))
     }
 }
-
 @Composable
 fun SongRow(
     song: Song,
@@ -753,6 +776,18 @@ fun SongRow(
     LaunchedEffect(song.id) {
         viewModel.getCachedArt(song) { bitmap -> art = bitmap?.asImageBitmap() }
     }
+
+    // Animasi transisi warna teks biar sinkron sama background
+    val animatedTitleColor by animateColorAsState(
+        targetValue = MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(500),
+        label = "titleColor"
+    )
+    val animatedArtistColor by animateColorAsState(
+        targetValue = Color.Gray,
+        animationSpec = tween(500),
+        label = "artistColor"
+    )
 
     Row(
         modifier = modifier
@@ -786,13 +821,14 @@ fun SongRow(
                 song.title,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Bold,
+                color = animatedTitleColor, // <- Pake warna yang dianimasikan
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
                 song.artist,
                 style = MaterialTheme.typography.bodySmall,
-                color = Color.Gray,
+                color = animatedArtistColor, // <- Pake warna yang dianimasikan
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -823,6 +859,12 @@ fun PlaylistCard(
             }
         }
     }
+
+    val animatedTitleColor by animateColorAsState(
+        targetValue = MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(500),
+        label = "titleColor"
+    )
 
     Row(
         modifier = Modifier
@@ -855,6 +897,7 @@ fun PlaylistCard(
                 playlist.name,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Bold,
+                color = animatedTitleColor, // <- Pake warna yang dianimasikan
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -872,8 +915,15 @@ fun PlaylistCard(
         }
     }
 }
+
 @Composable
 fun GroupRow(name: String, count: Int) {
+    val animatedTitleColor by animateColorAsState(
+        targetValue = MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(500),
+        label = "titleColor"
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -891,7 +941,12 @@ fun GroupRow(name: String, count: Int) {
         }
         Spacer(modifier = Modifier.width(16.dp))
         Column {
-            Text(name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+            Text(
+                name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                color = animatedTitleColor // <- Pake warna yang dianimasikan
+            )
             Text("$count songs", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
         }
     }
@@ -907,6 +962,12 @@ fun AlbumRow(album: String, songs: List<Song>, viewModel: MusicViewModel, count:
             viewModel.getCachedArt(song) { bitmap -> art = bitmap?.asImageBitmap() }
         }
     }
+
+    val animatedTitleColor by animateColorAsState(
+        targetValue = MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(500),
+        label = "titleColor"
+    )
 
     Row(
         modifier = Modifier
@@ -934,11 +995,17 @@ fun AlbumRow(album: String, songs: List<Song>, viewModel: MusicViewModel, count:
         }
         Spacer(modifier = Modifier.width(16.dp))
         Column {
-            Text(album, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+            Text(
+                album,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                color = animatedTitleColor // <- Pake warna yang dianimasikan
+            )
             Text("$count songs", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
         }
     }
 }
+
 @Composable
 fun PlaylistDetailView(
     playlist: com.ianocent.musicplayer.data.Playlist,
@@ -950,7 +1017,26 @@ fun PlaylistDetailView(
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
     var showCardSheet by remember { mutableStateOf(false) }
-    val playlistSongs = viewModel.getSongsInPlaylist(playlist)
+
+    // Gunakan mutableStateList agar UI tahu kapan harus update saat item digeser
+    val playlistSongs = remember(playlist.songIds) {
+        viewModel.getSongsInPlaylist(playlist).toMutableStateList()
+    }
+
+    val lazyListState = rememberLazyListState()
+
+    // Perbaikan: Hapus 'onDragEnd' yang error, gunakan logic update di 'onMove'
+    val reorderableState = rememberReorderableLazyListState(
+        lazyListState = lazyListState,
+        onMove = { from, to ->
+            // 1. Update UI secara instan
+            playlistSongs.add(to.index, playlistSongs.removeAt(from.index))
+
+            // 2. Kirim update ke ViewModel secara real-time
+            val newIds = playlistSongs.map { it.id }
+            viewModel.savePlaylistOrder(playlist, newIds)
+        }
+    )
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -972,12 +1058,6 @@ fun PlaylistDetailView(
                     Text("This playlist is empty", color = Color.Gray)
                 }
             } else {
-                val lazyListState = rememberLazyListState()
-                val reorderableState = rememberReorderableLazyListState(
-                    lazyListState = lazyListState,
-                    onMove = { from, to ->
-                        viewModel.reorderPlaylistSongs(playlist, from.index, to.index)
-                    })
                 Box(modifier = Modifier.fillMaxSize()) {
                     LazyColumn(
                         state = lazyListState,
@@ -1047,16 +1127,62 @@ fun PlaylistDetailView(
             }
         }
         // Small floating action buttons (symmetric 42.dp like minibar)
-        Row(
+        // State buat nentuin menu kebuka atau ketutup
+        var isMenuExpanded by remember { mutableStateOf(false) }
+
+        // Floating Buttons dikelompokkin di kanan bawah
+        Column(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(24.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            MiniControlButton(Icons.Rounded.ArrowBackIosNew, onBack, MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant, 42.dp)
-            MiniControlButton(Icons.Rounded.PlaylistAdd, { showAddDialog = true }, MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant, 42.dp)
-            MiniControlButton(Icons.Rounded.Share, { showCardSheet = true }, adaptiveColor, minibarTextColor, 42.dp)
-            MiniControlButton(Icons.Rounded.Shuffle, onShuffle, adaptiveColor, minibarTextColor, 42.dp)
+            // Tombol-tombol yang muncul pas Hamburger di-klik
+            AnimatedVisibility(
+                visible = isMenuExpanded,
+                enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 })
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    SmallFloatingActionButton(
+                        onClick = onBack,
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ) { Icon(Icons.Rounded.ArrowBackIosNew, contentDescription = "Back") }
+
+                    SmallFloatingActionButton(
+                        onClick = { showAddDialog = true; isMenuExpanded = false },
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ) { Icon(Icons.Rounded.PlaylistAdd, contentDescription = "Add Songs") }
+
+                    SmallFloatingActionButton(
+                        onClick = { showCardSheet = true; isMenuExpanded = false },
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ) { Icon(Icons.Rounded.Share, contentDescription = "Share") }
+
+                    SmallFloatingActionButton(
+                        onClick = { onShuffle(); isMenuExpanded = false },
+                        containerColor = adaptiveColor,
+                        contentColor = minibarTextColor
+                    ) { Icon(Icons.Rounded.Shuffle, contentDescription = "Shuffle") }
+                }
+            }
+
+            // Tombol Utama (Hamburger)
+            FloatingActionButton(
+                onClick = { isMenuExpanded = !isMenuExpanded },
+                containerColor = if (isMenuExpanded) MaterialTheme.colorScheme.surfaceVariant else adaptiveColor,
+                contentColor = if (isMenuExpanded) MaterialTheme.colorScheme.onSurfaceVariant else minibarTextColor,
+                shape = CircleShape
+            ) {
+                Icon(
+                    imageVector = if (isMenuExpanded) Icons.Rounded.Close else Icons.Rounded.Menu,
+                    contentDescription = "Menu"
+                )
+            }
         }
     }
 

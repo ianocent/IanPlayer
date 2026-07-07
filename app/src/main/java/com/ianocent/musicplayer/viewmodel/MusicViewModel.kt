@@ -141,6 +141,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _isDarkMode.value = !_isDarkMode.value
     }
 
+    fun savePlaylistOrder(playlist: Playlist, newSongIds: List<Long>) {
+        val currentList = _playlists.value.toMutableList()
+        val idx = currentList.indexOfFirst { it.id == playlist.id }
+        if (idx != -1) {
+            currentList[idx] = currentList[idx].copy(songIds = newSongIds.toMutableList())
+            _playlists.value = currentList
+            savePlaylistsToPrefs()
+        }
+    }
+
     private val repository = MusicRepository(application)
     val playerManager = PlayerManager(application)
 
