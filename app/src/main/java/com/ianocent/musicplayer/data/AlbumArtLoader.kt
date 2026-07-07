@@ -17,6 +17,19 @@ object AlbumArtLoader {
         val dominant = palette.getDominantColor(0xFF333333.toInt())
         return androidx.compose.ui.graphics.Color(dominant)
     }
+
+    fun extractPaletteColors(bitmap: Bitmap): List<ComposeColor> {
+        val palette = Palette.from(bitmap).generate()
+        val colors = mutableListOf<ComposeColor>()
+        palette.vibrantSwatch?.rgb?.let { colors.add(ComposeColor(it)) }
+        palette.darkVibrantSwatch?.rgb?.let { colors.add(ComposeColor(it)) }
+        palette.lightVibrantSwatch?.rgb?.let { colors.add(ComposeColor(it)) }
+        palette.mutedSwatch?.rgb?.let { colors.add(ComposeColor(it)) }
+        palette.darkMutedSwatch?.rgb?.let { colors.add(ComposeColor(it)) }
+        palette.lightMutedSwatch?.rgb?.let { colors.add(ComposeColor(it)) }
+        palette.dominantSwatch?.rgb?.let { colors.add(ComposeColor(it)) }
+        return colors.distinct()
+    }
     fun getEmbeddedArt(context: Context, uri: Uri, targetSize: Int = 150): Bitmap? {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

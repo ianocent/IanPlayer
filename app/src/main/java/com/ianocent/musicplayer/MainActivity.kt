@@ -11,9 +11,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -54,6 +56,7 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.ianocent.musicplayer.data.Song
+import com.ianocent.musicplayer.data.ElementRect
 import com.ianocent.musicplayer.ui.NowPlayingScreen
 import com.ianocent.musicplayer.ui.theme.IanPlayerTheme
 import com.ianocent.musicplayer.viewmodel.MusicViewModel
@@ -61,8 +64,11 @@ import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import java.util.concurrent.TimeUnit
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -102,29 +108,28 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppNavHost(viewModel: MusicViewModel, innerPadding: PaddingValues) {
     var showNowPlaying by remember { mutableStateOf(false) }
+    var miniAlbumArtRect by remember { mutableStateOf<ElementRect?>(null) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         ListingScreen(
             viewModel = viewModel,
             modifier = Modifier.padding(innerPadding),
-            onNowPlayingClick = { showNowPlaying = true }
+            onNowPlayingClick = { showNowPlaying = true },
+            onMiniPlayerLayout = { albumRect, _ ->
+                miniAlbumArtRect = albumRect
+            }
         )
 
         AnimatedVisibility(
             visible = showNowPlaying,
-            enter = slideInVertically(
-                initialOffsetY = { it },
-                animationSpec = tween(350, easing = androidx.compose.animation.core.FastOutSlowInEasing)
-            ) + fadeIn(animationSpec = tween(300)),
-            exit = slideOutVertically(
-                targetOffsetY = { it },
-                animationSpec = tween(300, easing = androidx.compose.animation.core.FastOutSlowInEasing)
-            ) + fadeOut(animationSpec = tween(250)),
+            enter = fadeIn(animationSpec = tween(300)),
+            exit = fadeOut(animationSpec = tween(250)),
             modifier = Modifier.zIndex(1f)
         ) {
             NowPlayingScreen(
                 viewModel = viewModel,
-                onBack = { showNowPlaying = false }
+                onBack = { showNowPlaying = false },
+                initialAlbumArtRect = miniAlbumArtRect
             )
         }
     }
@@ -134,7 +139,8 @@ fun AppNavHost(viewModel: MusicViewModel, innerPadding: PaddingValues) {
 fun ListingScreen(
     viewModel: MusicViewModel,
     modifier: Modifier = Modifier,
-    onNowPlayingClick: () -> Unit
+    onNowPlayingClick: () -> Unit,
+    onMiniPlayerLayout: (albumArtRect: ElementRect, progressRect: ElementRect) -> Unit = { _, _ -> }
 ) {
     var hasPermission by remember { mutableStateOf(false) }
 
@@ -180,6 +186,16 @@ fun ListingScreen(
     val updateInfo by viewModel.updateInfo.collectAsState()
     val isDownloading by viewModel.isDownloading.collectAsState()
 
+    val paletteColors by viewModel.paletteColors.collectAsState()
+    var controlBgColor by remember { mutableStateOf<Color?>(null) }
+    var currentPaletteIndex by remember { mutableStateOf(0) }
+    var showVolumeControl by remember { mutableStateOf(false) }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val audioManager = remember { context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager }
+    val maxVolume = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+    var currentVolume by remember { mutableStateOf(audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)) }
+
     val adaptiveColor = remember(ambientColor, isDarkMode) {
         com.ianocent.musicplayer.data.getAdaptiveControlColor(ambientColor, isDarkMode)
     }
@@ -217,7 +233,6 @@ fun ListingScreen(
             .fillMaxSize()
             .background(animatedBgColor)
     ) {
-        // ---------- 1. HEADER ----------
         // ---------- 1. HEADER ----------
         Row(
             modifier = Modifier
@@ -289,25 +304,24 @@ fun ListingScreen(
                 } else {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        IconButton(onClick = { isSearchActive = true }) {
+                            Icon(Icons.Rounded.Search, contentDescription = "Search")
+                        }
                         Text(
-                            "IanPlayer",
+                            "ıanplayer",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground
+                            color = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.weight(0.5f),
+                            textAlign = TextAlign.Center
                         )
-                        Row {
-                            IconButton(onClick = { isSearchActive = true }) {
-                                Icon(Icons.Rounded.Search, contentDescription = "Search")
-                            }
-                            IconButton(onClick = { viewModel.toggleDarkMode() }) {
-                                Icon(
-                                    imageVector = if (isDarkMode) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                                    contentDescription = "Toggle theme"
-                                )
-                            }
+                        IconButton(onClick = { viewModel.toggleDarkMode() }) {
+                            Icon(
+                                imageVector = if (isDarkMode) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
+                                contentDescription = "Toggle theme"
+                            )
                         }
                     }
                 }
@@ -319,8 +333,14 @@ fun ListingScreen(
         // ---------- 2. LISTENING TO PILL ----------
         AnimatedVisibility(
             visible = currentSong != null,
-            enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
-            exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
+            enter = expandVertically(
+                expandFrom = Alignment.Top,
+                animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f)
+            ) + fadeIn(animationSpec = tween(300)),
+            exit = shrinkVertically(
+                shrinkTowards = Alignment.Top,
+                animationSpec = tween(250)
+            ) + fadeOut(animationSpec = tween(200))
         ) {
             currentSong?.let { song ->
                 var art by remember(song.id) { mutableStateOf<ImageBitmap?>(null) }
@@ -335,82 +355,164 @@ fun ListingScreen(
                         .height(56.dp)
                         .clip(RoundedCornerShape(28.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                        .clickable { onNowPlayingClick() }
+                        .pointerInput(Unit) {
+                            var dragSum = 0f
+                            detectHorizontalDragGestures(
+                                onDragEnd = {
+                                    if (dragSum > 60f) showVolumeControl = true
+                                    else if (dragSum < -60f) showVolumeControl = false
+                                    dragSum = 0f
+                                }
+                            ) { _, dragAmount ->
+                                dragSum += dragAmount
+                            }
+                        }
                         .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.CenterStart
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primaryContainer),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (art != null) {
-                                Image(
-                                    bitmap = art!!,
-                                    contentDescription = null,
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop
+                    AnimatedContent(
+                        targetState = showVolumeControl,
+                        transitionSpec = {
+                            (fadeIn(tween(200)) + slideInHorizontally(tween(200)) { it / 2 })
+                                .togetherWith(fadeOut(tween(150)) + slideOutHorizontally(tween(150)) { -it / 2 })
+                        },
+                        label = "pill_content"
+                    ) { showVol ->
+                        if (showVol) {
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Rounded.VolumeDown,
+                                    contentDescription = "Vol min",
+                                    tint = adaptiveColor,
+                                    modifier = Modifier.size(20.dp)
                                 )
-                            } else {
-                                Icon(Icons.Rounded.MusicNote, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Slider(
+                                    value = currentVolume.toFloat(),
+                                    onValueChange = { v ->
+                                        currentVolume = v.toInt()
+                                        audioManager.setStreamVolume(
+                                            android.media.AudioManager.STREAM_MUSIC,
+                                            v.toInt(),
+                                            0
+                                        )
+                                    },
+                                    valueRange = 0f..maxVolume.toFloat(),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(horizontal = 8.dp)
+                                        .height(24.dp),
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = adaptiveColor,
+                                        activeTrackColor = adaptiveColor,
+                                        inactiveTrackColor = adaptiveColor.copy(alpha = 0.25f)
+                                    )
+                                )
+                                Icon(
+                                    Icons.Rounded.VolumeUp,
+                                    contentDescription = "Vol max",
+                                    tint = adaptiveColor,
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Listening to: ${song.title}",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            val animatedProgress by animateFloatAsState(
-                                targetValue = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
-                                animationSpec = tween(durationMillis = 500)
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(4.dp)
-                                    .clip(RoundedCornerShape(2.dp))
-                                    .background(Color.Gray.copy(alpha = 0.3f))
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .fillMaxWidth(animatedProgress.coerceIn(0f, 1f))
-                                        .fillMaxHeight()
-                                        .clip(RoundedCornerShape(2.dp))
-                                        .background(adaptiveColor)
-                                )
-                            }
-                        }
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primaryContainer)
+                                        .clickable { onNowPlayingClick() }
+                                        .onGloballyPositioned { coords ->
+                                            val pos = coords.positionInWindow()
+                                            val sz = coords.size
+                                            onMiniPlayerLayout(
+                                                ElementRect(
+                                                    center = androidx.compose.ui.geometry.Offset(
+                                                        pos.x + sz.width / 2f,
+                                                        pos.y + sz.height / 2f
+                                                    ),
+                                                    size = androidx.compose.ui.geometry.Size(
+                                                        sz.width.toFloat(),
+                                                        sz.height.toFloat()
+                                                    )
+                                                ),
+                                                ElementRect(
+                                                    center = androidx.compose.ui.geometry.Offset.Zero,
+                                                    size = androidx.compose.ui.geometry.Size.Zero
+                                                )
+                                            )
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (art != null) {
+                                        Image(
+                                            bitmap = art!!,
+                                            contentDescription = null,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    } else {
+                                        Icon(Icons.Rounded.MusicNote, contentDescription = null, modifier = Modifier.size(20.dp))
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
 
-                        Spacer(modifier = Modifier.width(16.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Listening to: ${song.title}",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    val animatedProgress by animateFloatAsState(
+                                        targetValue = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
+                                        animationSpec = tween(durationMillis = 500)
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(4.dp)
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(Color.Gray.copy(alpha = 0.3f))
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth(animatedProgress.coerceIn(0f, 1f))
+                                                .fillMaxHeight()
+                                                .clip(RoundedCornerShape(2.dp))
+                                                .background(adaptiveColor)
+                                        )
+                                    }
+                                }
 
-                        // Timer Vertikal dipojok kanan
-                        val minutes = TimeUnit.MILLISECONDS.toMinutes(currentPosition)
-                        val seconds = TimeUnit.MILLISECONDS.toSeconds(currentPosition) % 60
-                        val minStr = String.format("%02d", minutes)
-                        val secStr = String.format("%02d", seconds)
+                                Spacer(modifier = Modifier.width(16.dp))
 
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
-                            modifier = Modifier.padding(end = 8.dp)
-                        ) {
-                            Text(text = minStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                            Text(text = secStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                        }
+                                // Timer Vertikal dipojok kanan
+                                val minutes = TimeUnit.MILLISECONDS.toMinutes(currentPosition)
+                                val seconds = TimeUnit.MILLISECONDS.toSeconds(currentPosition) % 60
+                                val minStr = String.format("%02d", minutes)
+                                val secStr = String.format("%02d", seconds)
+
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center,
+                                    modifier = Modifier.padding(end = 8.dp)
+                                ) {
+                                    Text(text = minStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                    Text(text = secStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                }
                     }
                 }
+            }
+        }
             }
         }
 
@@ -615,7 +717,8 @@ fun ListingScreen(
                                                         editingPlaylist = playlist
                                                         showEditDialog = true
                                                     },
-                                                    viewModel = viewModel
+                                                    viewModel = viewModel,
+                                                    accentColor = adaptiveColor
                                                 )
                                             }
                                         }
@@ -642,46 +745,80 @@ fun ListingScreen(
         }
 
         // ---------- 5. MINI PLAYER BAR (Rounded per icon, no backplate) ----------
+        Spacer(modifier = Modifier.height(6.dp))
         AnimatedVisibility(
             visible = currentSong != null,
-            enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
-            exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut()
+            enter = expandVertically(
+                expandFrom = Alignment.Bottom,
+                animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f)
+            ) + fadeIn(animationSpec = tween(350, delayMillis = 100)),
+            exit = shrinkVertically(
+                shrinkTowards = Alignment.Bottom,
+                animationSpec = tween(250)
+            ) + fadeOut(animationSpec = tween(200))
         ) {
+            val animatedBg by animateColorAsState(
+                targetValue = controlBgColor ?: Color.Transparent,
+                animationSpec = tween(300),
+                label = "controlBg"
+            )
+            val hasBg = controlBgColor != null
+            val btnBg = if (hasBg) Color.Transparent else adaptiveColor
+            val btnTint = if (hasBg) {
+                if (controlBgColor!!.luminance() > 0.5f) Color.Black else Color.White
+            } else minibarTextColor
+            val inactiveBg = if (hasBg) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant
+            val inactiveTint = if (hasBg) btnTint.copy(alpha = 0.35f) else MaterialTheme.colorScheme.onSurfaceVariant
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center, // Biar posisi minibar di tengah
+                horizontalArrangement = Arrangement.SpaceEvenly,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 40.dp) // Dikasih margin biar width-nya lebih ramping dari listing
-                    .padding(top = 16.dp, bottom = 20.dp)
+                    .padding(horizontal = 16.dp)
+                    .clip(RoundedCornerShape(32.dp))
+                    .background(animatedBg)
+                    .pointerInput(Unit) {
+                        var dragSum = 0f
+                        detectVerticalDragGestures(
+                            onDragEnd = {
+                                if (dragSum < -60f && paletteColors.isNotEmpty()) {
+                                    currentPaletteIndex = (currentPaletteIndex + 1) % paletteColors.size
+                                    controlBgColor = paletteColors[currentPaletteIndex].copy(alpha = 0.15f)
+                                }
+                                if (dragSum > 60f) {
+                                    controlBgColor = null
+                                    currentPaletteIndex = 0
+                                }
+                                dragSum = 0f
+                            }
+                        ) { _, dragAmount ->
+                            dragSum += dragAmount
+                        }
+                    }
+                    .padding(vertical = 6.dp)
             ) {
-                // Gunakan MiniControlButton yang ukurannya lebih kecil (42.dp)
                 MiniControlButton(
                     icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                     onClick = { viewModel.togglePlayPause() },
-                    bg = adaptiveColor,
-                    tint = minibarTextColor,
-                    size = 42.dp // Size lebih kecil
+                    bg = btnBg,
+                    tint = btnTint,
+                    size = 40.dp
                 )
-                Spacer(Modifier.width(8.dp))
-                MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() }, adaptiveColor, minibarTextColor, 42.dp)
-                Spacer(Modifier.width(8.dp))
-                MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() }, adaptiveColor, minibarTextColor, 42.dp)
-                Spacer(Modifier.width(8.dp))
+                MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() }, btnBg, btnTint, 40.dp)
+                MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() }, btnBg, btnTint, 40.dp)
                 MiniControlButton(
                     Icons.Rounded.Shuffle,
                     { viewModel.toggleShuffle() },
-                    if (isShuffleOn) adaptiveColor else MaterialTheme.colorScheme.surfaceVariant,
-                    if (isShuffleOn) minibarTextColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                    42.dp
+                    if (isShuffleOn) btnBg else inactiveBg,
+                    if (isShuffleOn) btnTint else inactiveTint,
+                    40.dp
                 )
-                Spacer(Modifier.width(8.dp))
                 MiniControlButton(
                     if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
                     { viewModel.toggleRepeat() },
-                    if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else MaterialTheme.colorScheme.surfaceVariant,
-                    if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) minibarTextColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                    42.dp
+                    if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) btnBg else inactiveBg,
+                    if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) btnTint else inactiveTint,
+                    40.dp
                 )
             }
         }
@@ -912,7 +1049,8 @@ fun PlaylistCard(
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onEdit: () -> Unit,
-    viewModel: MusicViewModel
+    viewModel: MusicViewModel,
+    accentColor: Color = MaterialTheme.colorScheme.primary
 ) {
     var art by remember(playlist.id, playlist.imageUri) { mutableStateOf<ImageBitmap?>(null) }
 
@@ -978,10 +1116,10 @@ fun PlaylistCard(
             )
         }
         IconButton(onClick = onEdit) {
-            Icon(Icons.Rounded.Edit, contentDescription = "Edit playlist", tint = Color.Gray)
+            Icon(Icons.Rounded.Edit, contentDescription = "Edit playlist", tint = accentColor)
         }
         IconButton(onClick = onDelete) {
-            Icon(Icons.Rounded.Delete, contentDescription = "Delete playlist", tint = Color.Gray)
+            Icon(Icons.Rounded.Delete, contentDescription = "Delete playlist", tint = accentColor.copy(alpha = 0.7f))
         }
     }
 }
@@ -1436,18 +1574,11 @@ fun AddSongsToPlaylistDialog(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Checkbox(
+                            RoundedCheckbox(
                                 checked = selectedIds.contains(song.id),
                                 onCheckedChange = {
                                     if (it) selectedIds.add(song.id) else selectedIds.remove(song.id)
-                                },
-                                colors = CheckboxDefaults.colors(
-                                    checkedColor = MaterialTheme.colorScheme.primary,
-                                    uncheckedColor = Color.Gray
-                                ),
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .clip(RoundedCornerShape(6.dp))
+                                }
                             )
                             Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
                                 Text(song.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1652,18 +1783,11 @@ fun CreatePlaylistDialog(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Checkbox(
+                            RoundedCheckbox(
                                 checked = selectedIds.contains(song.id),
                                 onCheckedChange = {
                                     if (it) selectedIds.add(song.id) else selectedIds.remove(song.id)
-                                },
-                                colors = CheckboxDefaults.colors(
-                                    checkedColor = MaterialTheme.colorScheme.primary,
-                                    uncheckedColor = Color.Gray
-                                ),
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .clip(RoundedCornerShape(6.dp))
+                                }
                             )
                             Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
                                 Text(song.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1684,4 +1808,34 @@ fun CreatePlaylistDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+@Composable
+fun RoundedCheckbox(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    Box(
+        modifier = modifier
+            .size(24.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (checked) primary else Color.Transparent)
+            .then(
+                if (!checked) Modifier.border(2.dp, Color.Gray, RoundedCornerShape(8.dp))
+                else Modifier
+            )
+            .clickable { onCheckedChange(!checked) },
+        contentAlignment = Alignment.Center
+    ) {
+        if (checked) {
+            Icon(
+                Icons.Rounded.Check,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+    }
 }

@@ -12,20 +12,25 @@ data class LyricLine(val timeMs: Long, val text: String)
 class LyricRepository {
 
     fun fetchSyncedLyric(title: String, artist: String): List<LyricLine>? {
-        // Coba dari LRCLIB (Satu-satunya yang ngasih synced/karaoke style mantap)
-        return fetchFromLrcLibSynced(title, artist)
+        val lrcLibResult = fetchFromLrcLibSynced(title, artist)
+        if (!lrcLibResult.isNullOrEmpty()) return lrcLibResult
+
+        val lrcMuxResult = fetchFromLrcMuxSynced(title, artist)
+        if (!lrcMuxResult.isNullOrEmpty()) return lrcMuxResult
+
+        return null
     }
 
     fun fetchPlainLyric(title: String, artist: String): String? {
-        // 1. Coba dari LRCLIB
         val lrcLibResult = fetchFromLrcLibPlain(title, artist)
         if (!lrcLibResult.isNullOrBlank()) return lrcLibResult
 
-        // 2. Fallback 1: SomeRandomAPI (Sangat reliable buat plain lyric)
+        val lrcMuxResult = fetchFromLrcMuxPlain(title, artist)
+        if (!lrcMuxResult.isNullOrBlank()) return lrcMuxResult
+
         val sraResult = fetchFromSomeRandomApi(title, artist)
         if (!sraResult.isNullOrBlank()) return sraResult
 
-        // 3. Fallback 2: api.lyrics.ovh
         val ovhResult = fetchFromLyricsOvh(title, artist)
         if (!ovhResult.isNullOrBlank()) return ovhResult
 
@@ -80,7 +85,62 @@ class LyricRepository {
     }
 
     // ==========================================
-    // SOURCE 2: SOME RANDOM API (Mantap buat fallback)
+    // SOURCE 2: LRCMUX (Aggregator, cakep banget)
+    // ==========================================
+    private fun fetchFromLrcMuxSynced(title: String, artist: String): List<LyricLine>? {
+        return try {
+            val encArtist = URLEncoder.encode(artist, "UTF-8")
+            val encTitle = URLEncoder.encode(title, "UTF-8")
+            val url = URL("https://api.lrcmux.dev/get?artist=$encArtist&title=$encTitle&format=json")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("User-Agent", "IanPlayer/1.0 (https://github.com/ianocent/IanPlayer)")
+            connection.connectTimeout = 8000
+
+            if (connection.responseCode != 200) return null
+
+            val response = connection.inputStream.bufferedReader().readText()
+            val json = JSONObject(response)
+            val lines = json.optJSONArray("lines") ?: return null
+            if (lines.length() == 0) return null
+
+            val result = mutableListOf<LyricLine>()
+            for (i in 0 until lines.length()) {
+                val line = lines.getJSONObject(i)
+                val text = line.optString("text", "").trim()
+                if (text.isBlank()) continue
+                val startMs = line.optLong("start", -1)
+                val endMs = line.optLong("end", -1)
+                result.add(LyricLine(if (startMs >= 0) startMs else endMs, text))
+            }
+            result.ifEmpty { null }
+        } catch (e: Exception) {
+            Log.e("LyricRepo", "Error fetching synced lyric from lrcmux", e)
+            null
+        }
+    }
+
+    private fun fetchFromLrcMuxPlain(title: String, artist: String): String? {
+        return try {
+            val encArtist = URLEncoder.encode(artist, "UTF-8")
+            val encTitle = URLEncoder.encode(title, "UTF-8")
+            val url = URL("https://api.lrcmux.dev/get?artist=$encArtist&title=$encTitle&format=txt")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("User-Agent", "IanPlayer/1.0 (https://github.com/ianocent/IanPlayer)")
+            connection.connectTimeout = 8000
+
+            if (connection.responseCode != 200) return null
+
+            connection.inputStream.bufferedReader().readText().takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            Log.e("LyricRepo", "Error fetching plain lyric from lrcmux", e)
+            null
+        }
+    }
+
+    // ==========================================
+    // SOURCE 3: SOME RANDOM API (Mantap buat fallback)
     // ==========================================
     private fun fetchFromSomeRandomApi(title: String, artist: String): String? {
         return try {

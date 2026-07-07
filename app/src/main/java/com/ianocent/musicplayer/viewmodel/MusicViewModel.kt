@@ -32,6 +32,7 @@ import android.content.IntentFilter
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val streamRepository = StreamRepository()
+    private val ytMusicRepository = YTMusicRepository()
 
     private val _allStreamSongs = MutableStateFlow<List<Song>>(emptyList())
     private val _streamSongs = MutableStateFlow<List<Song>>(emptyList())
@@ -56,9 +57,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         searchJob = viewModelScope.launch {
-            delay(500) // Tunggu 0.5 detik (Debounce) biar user kelar ngetik dulu
+            delay(500)
             _isSearchingRemote.value = true
-            val results = streamRepository.searchSongs(query)
+            var results = streamRepository.searchSongs(query)
+            if (results.isEmpty()) {
+                results = ytMusicRepository.searchSongs(query)
+            }
             _allStreamSongs.value = results
             _streamSongs.value = results.take(streamPageSize)
             _isSearchingRemote.value = false
@@ -374,6 +378,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _ambientColor = MutableStateFlow(Color(0xFF333333))
     val ambientColor: StateFlow<Color> = _ambientColor
 
+    private val _paletteColors = MutableStateFlow<List<Color>>(emptyList())
+    val paletteColors: StateFlow<List<Color>> = _paletteColors
+
     private fun loadArt(song: Song) {
         viewModelScope.launch {
             val bitmap = withContext(Dispatchers.IO) {
@@ -393,6 +400,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _ambientColor.value = bitmap?.let {
                 com.ianocent.musicplayer.data.AlbumArtLoader.extractDominantColor(it)
             } ?: Color(0xFF333333)
+            _paletteColors.value = bitmap?.let {
+                com.ianocent.musicplayer.data.AlbumArtLoader.extractPaletteColors(it)
+            } ?: emptyList()
         }
     }
     private val _syncedLyric = MutableStateFlow<List<com.ianocent.musicplayer.data.LyricLine>?>(null)

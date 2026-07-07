@@ -56,8 +56,12 @@ import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.compositeOver
 import com.ianocent.musicplayer.data.Song
+import com.ianocent.musicplayer.data.ElementRect
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
@@ -65,11 +69,14 @@ import androidx.compose.material.icons.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.animation.core.*
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 
 @Composable
 fun NowPlayingScreen(
     viewModel: MusicViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    initialAlbumArtRect: ElementRect? = null
 ) {
     val song by viewModel.currentSong.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
@@ -84,6 +91,41 @@ fun NowPlayingScreen(
     val coroutineScope = rememberCoroutineScope()
     val screenHeight = with(LocalDensity.current) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
     val dragProgress = (offsetY.value / screenHeight).coerceIn(0f, 1f)
+
+    val heroAnimProgress = remember { Animatable(0f) }
+    var targetAlbumArtRect by remember { mutableStateOf<ElementRect?>(null) }
+    var heroInitScale by remember { mutableStateOf(1f) }
+    var heroInitOffsetX by remember { mutableStateOf(0f) }
+    var heroInitOffsetY by remember { mutableStateOf(0f) }
+    var isExiting by remember { mutableStateOf(false) }
+
+    LaunchedEffect(initialAlbumArtRect, targetAlbumArtRect) {
+        val from = initialAlbumArtRect ?: return@LaunchedEffect
+        val to = targetAlbumArtRect ?: return@LaunchedEffect
+
+        heroInitScale = (from.size.width / to.size.width).coerceIn(0.15f, 1f)
+        heroInitOffsetX = from.center.x - to.center.x
+        heroInitOffsetY = from.center.y - to.center.y
+
+        heroAnimProgress.snapTo(0f)
+        heroAnimProgress.animateTo(1f, animationSpec = tween(400, easing = FastOutSlowInEasing))
+    }
+
+    val heroCornerRadius = if (initialAlbumArtRect != null) {
+        val p = heroAnimProgress.value
+        (18f * (1f - p) + 24f * p).dp
+    } else 24.dp
+
+    val handleBack: () -> Unit = {
+        if (initialAlbumArtRect != null && heroAnimProgress.value > 0.05f) {
+            isExiting = true
+            coroutineScope.launch {
+                heroAnimProgress.animateTo(0f, animationSpec = tween(300, easing = FastOutSlowInEasing))
+            }
+        }
+        onBack()
+    }
+
     val animatedAmbient by animateColorAsState(
         targetValue = ambientColor,
         animationSpec = tween(durationMillis = 800)
@@ -130,7 +172,7 @@ fun NowPlayingScreen(
                         coroutineScope.launch {
                             if (offsetY.value > dismissThreshold) {
                                 offsetY.animateTo(screenHeight, animationSpec = spring())
-                                onBack()
+                                handleBack()
                             } else {
                                 offsetY.animateTo(0f, animationSpec = spring())
                             }
@@ -152,7 +194,7 @@ fun NowPlayingScreen(
                 .width(40.dp)
                 .height(4.dp)
                 .background(Color.LightGray, RoundedCornerShape(2.dp))
-                .clickable { onBack() }
+                .clickable { handleBack() }
         )
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -162,7 +204,31 @@ fun NowPlayingScreen(
             Box(
                 modifier = Modifier
                     .size(110.dp)
-                    .clip(RoundedCornerShape(24.dp)) // Di Figma kelihatan cukup membulat (radius agak besar)
+                    .onGloballyPositioned { coords ->
+                        val pos = coords.positionInWindow()
+                        val sz = coords.size
+                        targetAlbumArtRect = ElementRect(
+                            center = androidx.compose.ui.geometry.Offset(
+                                pos.x + sz.width / 2f,
+                                pos.y + sz.height / 2f
+                            ),
+                            size = androidx.compose.ui.geometry.Size(
+                                sz.width.toFloat(),
+                                sz.height.toFloat()
+                            )
+                        )
+                    }
+                    .graphicsLayer {
+                        if (initialAlbumArtRect != null && heroAnimProgress.value < 0.99f) {
+                            val p = heroAnimProgress.value
+                            scaleX = heroInitScale + (1f - heroInitScale) * p
+                            scaleY = heroInitScale + (1f - heroInitScale) * p
+                            translationX = heroInitOffsetX * (1f - p)
+                            translationY = heroInitOffsetY * (1f - p)
+                            clip = true
+                            shape = RoundedCornerShape(heroCornerRadius)
+                        }
+                    }
                     .background(
                         if (albumArt == null)
                             Brush.linearGradient(listOf(Color(0xFF8B1E1E), Color(0xFF2B0A0A)))
@@ -176,7 +242,7 @@ fun NowPlayingScreen(
                         contentDescription = "Album Art",
                         modifier = Modifier
                             .fillMaxSize()
-                            .clip(RoundedCornerShape(24.dp)),
+                            .clip(RoundedCornerShape(heroCornerRadius)),
                         contentScale = ContentScale.Crop
                     )
                 } else {
@@ -374,20 +440,29 @@ fun NowPlayingScreen(
         Spacer(modifier = Modifier.height(20.dp))
 
         // Controls (Persis Figma)
-        Text("Controls :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(32.dp)) // Radius lebih besar ala figma
-                .background(
-                    Brush.verticalGradient(
-                        listOf(adaptiveColor, adaptiveColor.copy(alpha = 0.5f)) // Gradient adaptif lu
-                    )
-                )
-                .padding(vertical = 16.dp)
+        val controlsVisible by remember {
+            derivedStateOf { heroAnimProgress.value > 0.4f }
+        }
+        AnimatedVisibility(
+            visible = controlsVisible,
+            enter = fadeIn(tween(300)) + scaleIn(initialScale = 0.85f, animationSpec = tween(300, delayMillis = 50)),
+            exit = fadeOut(tween(200))
         ) {
+            Column {
+                Text("Controls :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(32.dp))
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(adaptiveColor, adaptiveColor.copy(alpha = 0.5f))
+                            )
+                        )
+                        .padding(vertical = 16.dp)
+                ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -411,6 +486,8 @@ fun NowPlayingScreen(
                     badge = null,
                     bgColor = buttonBg, iconTint = iconColor
                 )
+            }
+        }
             }
         }
     }
