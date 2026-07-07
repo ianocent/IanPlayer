@@ -12,7 +12,8 @@ class MusicRepository(private val context: Context) {
             MediaStore.Audio.Media._ID,
             MediaStore.Audio.Media.TITLE,
             MediaStore.Audio.Media.ARTIST,
-            MediaStore.Audio.Media.DURATION
+            MediaStore.Audio.Media.DURATION,
+            MediaStore.Audio.Media.ALBUM
         )
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
 
@@ -27,6 +28,7 @@ class MusicRepository(private val context: Context) {
             val titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
             val artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
             val durationCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+            val albumCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
 
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idCol)
@@ -39,7 +41,8 @@ class MusicRepository(private val context: Context) {
                         title = cursor.getString(titleCol) ?: "Unknown",
                         artist = cursor.getString(artistCol) ?: "Unknown Artist",
                         duration = cursor.getLong(durationCol),
-                        uri = uri
+                        uri = uri,
+                        album = cursor.getString(albumCol) ?: "Unknown Album"
                     )
                 )
             }

@@ -17,10 +17,54 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.Color
 import com.ianocent.musicplayer.data.Playlist
+import com.ianocent.musicplayer.data.YTMusicRepository
+import com.ianocent.musicplayer.data.StreamRepository
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlinx.coroutines.Job
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
+    private val streamRepository = StreamRepository()
+
+    private val _allStreamSongs = MutableStateFlow<List<Song>>(emptyList())
+    private val _streamSongs = MutableStateFlow<List<Song>>(emptyList())
+    val streamSongs: StateFlow<List<Song>> = _streamSongs
+
+    private val _isSearchingRemote = MutableStateFlow(false)
+    val isSearchingRemote: StateFlow<Boolean> = _isSearchingRemote
+
+    private var searchJob: Job? = null
+
+    private val streamPageSize = 10
+
+    // Fungsi khusus buat search di Tab Stream dengan sistem Debounce (Anti-lag)
+    fun searchRemoteSongs(query: String) {
+        searchJob?.cancel() // Batalin pencarian sebelumnya kalau user ngetik cepet
+
+        if (query.isBlank()) {
+            _allStreamSongs.value = emptyList()
+            _streamSongs.value = emptyList()
+            _isSearchingRemote.value = false
+            return
+        }
+
+        searchJob = viewModelScope.launch {
+            delay(500) // Tunggu 0.5 detik (Debounce) biar user kelar ngetik dulu
+            _isSearchingRemote.value = true
+            val results = streamRepository.searchSongs(query)
+            _allStreamSongs.value = results
+            _streamSongs.value = results.take(streamPageSize)
+            _isSearchingRemote.value = false
+        }
+    }
+
+    fun loadMoreStreamSongs() {
+        val all = _allStreamSongs.value
+        val current = _streamSongs.value
+        if (current.size >= all.size) return
+        _streamSongs.value = all.take(current.size + streamPageSize)
+    }
+
     private val prefs = application.getSharedPreferences("ian_player_prefs", 0)
 
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
@@ -36,6 +80,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         savePlaylistsToPrefs()
     }
 
+    fun updatePlaylist(playlistId: Long, newName: String? = null, newImageUri: String? = null) {
+        _playlists.value = _playlists.value.map { playlist ->
+            if (playlist.id == playlistId) {
+                playlist.copy(
+                    name = newName ?: playlist.name,
+                    imageUri = newImageUri ?: playlist.imageUri
+                )
+            } else {
+                playlist
+            }
+        }
+        savePlaylistsToPrefs()
+    }
+
     fun getSongsInPlaylist(playlist: Playlist): List<Song> {
         return _songs.value.filter { it.id in playlist.songIds }
     }
@@ -44,6 +102,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _playlists.value = _playlists.value.filter { it.id != playlist.id }
         savePlaylistsToPrefs()
     }
+
     private fun savePlaylistsToPrefs() {
         val jsonArray = JSONArray()
         _playlists.value.forEach { playlist ->
@@ -51,6 +110,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             obj.put("id", playlist.id)
             obj.put("name", playlist.name)
             obj.put("songIds", JSONArray(playlist.songIds))
+            playlist.imageUri?.let { obj.put("imageUri", it) }
             jsonArray.put(obj)
         }
         prefs.edit().putString("playlists", jsonArray.toString()).apply()
@@ -66,7 +126,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 val idsArray = obj.getJSONArray("songIds")
                 val ids = mutableListOf<Long>()
                 for (j in 0 until idsArray.length()) ids.add(idsArray.getLong(j))
-                loaded.add(Playlist(id = obj.getLong("id"), name = obj.getString("name"), songIds = ids))
+                val imageUri = if (obj.has("imageUri")) obj.getString("imageUri") else null
+                loaded.add(Playlist(id = obj.getLong("id"), name = obj.getString("name"), songIds = ids, imageUri = imageUri))
             }
             _playlists.value = loaded
         } catch (e: Exception) {
@@ -132,7 +193,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             val art = withContext(Dispatchers.IO) {
-                com.ianocent.musicplayer.data.AlbumArtLoader.getEmbeddedArt(appContext, song.uri)
+                if (song.isStream && !song.remoteArtUrl.isNullOrEmpty()) {
+                    try {
+                        val url = java.net.URL(song.remoteArtUrl)
+                        val conn = url.openConnection() as java.net.HttpURLConnection
+                        conn.doInput = true
+                        conn.connect()
+                        android.graphics.BitmapFactory.decodeStream(conn.inputStream)
+                    } catch (e: Exception) { null }
+                } else {
+                    com.ianocent.musicplayer.data.AlbumArtLoader.getEmbeddedArt(appContext, song.uri)
+                }
             }
             artCache[song.id] = art
             onLoaded(art)
@@ -278,7 +349,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadArt(song: Song) {
         viewModelScope.launch {
             val bitmap = withContext(Dispatchers.IO) {
-                com.ianocent.musicplayer.data.AlbumArtLoader.getEmbeddedArt(appContext, song.uri, targetSize = 400)
+                if (song.isStream && !song.remoteArtUrl.isNullOrEmpty()) {
+                    try {
+                        val url = java.net.URL(song.remoteArtUrl)
+                        val conn = url.openConnection() as java.net.HttpURLConnection
+                        conn.doInput = true
+                        conn.connect()
+                        android.graphics.BitmapFactory.decodeStream(conn.inputStream)
+                    } catch (e: Exception) { null }
+                } else {
+                    com.ianocent.musicplayer.data.AlbumArtLoader.getEmbeddedArt(appContext, song.uri, targetSize = 400)
+                }
             }
             _albumArt.value = bitmap
             _ambientColor.value = bitmap?.let {
@@ -323,5 +404,29 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         playerManager.release()
+    }
+
+    fun reorderPlaylistSongs(playlist: Playlist, fromIndex: Int, toIndex: Int) {
+        val currentList = _playlists.value.toMutableList()
+        val idx = currentList.indexOfFirst { it.id == playlist.id }
+        if (idx == -1) return
+        val mutableIds = currentList[idx].songIds.toMutableList()
+        if (fromIndex !in mutableIds.indices || toIndex !in mutableIds.indices) return
+        val item = mutableIds.removeAt(fromIndex)
+        mutableIds.add(toIndex, item)
+        currentList[idx] = currentList[idx].copy(songIds = mutableIds)
+        _playlists.value = currentList
+        savePlaylistsToPrefs()
+    }
+
+    fun addSongsToPlaylist(playlist: Playlist, songIds: List<Long>) {
+        val currentList = _playlists.value.toMutableList()
+        val idx = currentList.indexOfFirst { it.id == playlist.id }
+        if (idx == -1) return
+        val mutableIds = currentList[idx].songIds.toMutableList()
+        songIds.forEach { if (it !in mutableIds) mutableIds.add(it) }
+        currentList[idx] = currentList[idx].copy(songIds = mutableIds)
+        _playlists.value = currentList
+        savePlaylistsToPrefs()
     }
 }

@@ -61,4 +61,5 @@ dependencies {
     implementation("androidx.palette:palette-ktx:1.0.0")
     implementation("io.coil-kt:coil-compose:2.5.0")
     implementation("com.google.accompanist:accompanist-systemuicontroller:0.32.0")
+    implementation("sh.calvin.reorderable:reorderable:2.4.0")
 }
