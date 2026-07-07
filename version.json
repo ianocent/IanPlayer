@@ -1,6 +1,13 @@
 {
+<<<<<<< HEAD
   "versionCode": 3,
   "versionName": "1.2.0",
   "downloadUrl": "https://github.com/ianocent/IanPlayer/releases/download/v1.2.0/app-release.apk",
   "releaseNotes": "## 1.2.0\n\n### In-App Update\n- Auto-check update dari remote `version.json` setiap app dibuka\n- Download APK otomatis via DownloadManager\n- Install via FileProvider + REQUEST_INSTALL_PACKAGES\n- Update dialog dengan release notes\n\n### Shared Element Transition\n- Hero animation album art dari mini-player (36dp circle) ke NowPlaying (110dp rounded)\n- Morphing scale, position, dan corner radius (18dp → 24dp)\n- Reverse animation pas swipe down / back\n\n### UI Improvements\n- Header reorder: search kiri | ianplayer tengah | theme toggle kanan\n- Animasi spring minibar & controls pas pertama play\n- Rounded checkbox di Create/Add Playlist dialog\n- Edit/delete icon playlist pakai adaptive color\n\n### Hidden Gems\n- Swipe kanan di mini-bar Listening to → volume control (slider + icon volume)\n- Swipe atas di media controls → cycle adaptive color background dari palette album art\n- Swipe bawah → clear background\n\n### Backend\n- **Stream API**: primary JioSaavn (saavn.dev), fallback YTMusic (Piped)\n- **Lyric API**: lrcmux.dev fallback setelah LRCLIB, sebelum SomeRandomAPI & lyrics.ovh\n- **PlaybackService**: notifikasi MediaSession + notification channel\n\n### Technical\n- 10 files modified, 557 insertions, 195 deletions\n- Palette color extraction dari album art (7 warna: Vibrant, Muted, dll)\n- Play logic crosscheck: REPEAT_MODE_ONE/ALL/OFF handled manual via listener"
+=======
+  "versionCode": 2,
+  "versionName": "1.1.1",
+  "downloadUrl": "https://github.com/ianocent/IanPlayer/releases/download/v1.1.1/IanPlayer-v1.1.1.apk",
+  "releaseNotes": "- Bug fixes\n- Performance improvements"
+>>>>>>> 52eaea86c329b8010cfe34f818ca5458acfbef8d
 }
