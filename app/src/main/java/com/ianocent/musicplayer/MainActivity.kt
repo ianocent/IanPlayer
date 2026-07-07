@@ -60,6 +60,10 @@ import com.ianocent.musicplayer.viewmodel.MusicViewModel
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import java.util.concurrent.TimeUnit
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -155,9 +159,11 @@ fun ListingScreen(
     var showCreateDialog by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
     var editingPlaylist by remember { mutableStateOf<com.ianocent.musicplayer.data.Playlist?>(null) }
-    var selectedPlaylist by remember { mutableStateOf<com.ianocent.musicplayer.data.Playlist?>(null) }
-
+    var selectedPlaylistId by remember { mutableStateOf<Long?>(null) }
     val playlists by viewModel.playlists.collectAsState()
+    val selectedPlaylist = remember(playlists, selectedPlaylistId) {
+        playlists.find { it.id == selectedPlaylistId }
+    }
     val isShuffleOn by viewModel.isShuffleOn.collectAsState()
     val repeatMode by viewModel.repeatMode.collectAsState()
 
@@ -462,18 +468,19 @@ fun ListingScreen(
                 when (tab) {
                     0 -> { // SONGS
                         val listState = rememberLazyListState()
-                        LazyColumn(
-                            state = listState,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .verticalScrollbar(listState, adaptiveColor),
-                            contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp)
-                        ) {
-                            items(filteredSongs, key = { it.id }) { song ->
-                                SongRow(song, viewModel, customOnClick = {
-                                    viewModel.setQueue(filteredSongs, startSong = song)
-                                })
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp, end = 20.dp)
+                            ) {
+                                items(filteredSongs, key = { it.id }) { song ->
+                                    SongRow(song, viewModel, customOnClick = {
+                                        viewModel.setQueue(filteredSongs, startSong = song)
+                                    })
+                                }
                             }
+                            DraggableScrollbar(listState, adaptiveColor)
                         }
                     }
 
@@ -482,16 +489,17 @@ fun ListingScreen(
                             songs.groupBy { it.album }.entries.toList()
                         }
                         val listState = rememberLazyListState()
-                        LazyColumn(
-                            state = listState,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .verticalScrollbar(listState, adaptiveColor),
-                            contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp)
-                        ) {
-                            items(albumGroups) { (albumName, groupSongs) ->
-                                AlbumRow(album = albumName, songs = groupSongs, viewModel = viewModel, count = groupSongs.size)
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp, end = 20.dp)
+                            ) {
+                                items(albumGroups) { (albumName, groupSongs) ->
+                                    AlbumRow(album = albumName, songs = groupSongs, viewModel = viewModel, count = groupSongs.size)
+                                }
                             }
+                            DraggableScrollbar(listState, adaptiveColor)
                         }
                     }
 
@@ -523,18 +531,19 @@ fun ListingScreen(
                                     if (shouldLoadMore) viewModel.loadMoreStreamSongs()
                                 }
 
-                                LazyColumn(
-                                    state = listState,
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .verticalScrollbar(listState, adaptiveColor),
-                                    contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp)
-                                ) {
-                                    items(streamSongs, key = { it.id }) { song ->
-                                        SongRow(song, viewModel, customOnClick = {
-                                            viewModel.setQueue(streamSongs, startSong = song)
-                                        })
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    LazyColumn(
+                                        state = listState,
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp, end = 20.dp)
+                                    ) {
+                                        items(streamSongs, key = { it.id }) { song ->
+                                            SongRow(song, viewModel, customOnClick = {
+                                                viewModel.setQueue(streamSongs, startSong = song)
+                                            })
+                                        }
                                     }
+                                    DraggableScrollbar(listState, adaptiveColor)
                                 }
                             }
                         }
@@ -549,7 +558,7 @@ fun ListingScreen(
                                     viewModel = viewModel,
                                     adaptiveColor = adaptiveColor,
                                     minibarTextColor = minibarTextColor,
-                                    onBack = { selectedPlaylist = null },
+                                    onBack = { selectedPlaylistId = null },
                                     onShuffle = {
                                         val playlistSongs = viewModel.getSongsInPlaylist(selectedPlaylist!!)
                                         if (playlistSongs.isNotEmpty()) {
@@ -564,25 +573,26 @@ fun ListingScreen(
                                         Text("No playlists yet. Tap + to create.", color = Color.Gray)
                                     }
                                 } else {
-                                    LazyColumn(
-                                        state = listState,
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .verticalScrollbar(listState, adaptiveColor),
-                                        contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp)
-                                    ) {
-                                        items(playlists, key = { it.id }) { playlist ->
-                                            PlaylistCard(
-                                                playlist = playlist,
-                                                onClick = { selectedPlaylist = playlist },
-                                                onDelete = { viewModel.deletePlaylist(playlist) },
-                                                onEdit = {
-                                                    editingPlaylist = playlist
-                                                    showEditDialog = true
-                                                },
-                                                viewModel = viewModel
-                                            )
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        LazyColumn(
+                                            state = listState,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp, end = 20.dp)
+                                        ) {
+                                            items(playlists, key = { it.id }) { playlist ->
+                                                PlaylistCard(
+                                                    playlist = playlist,
+                                                    onClick = { selectedPlaylistId = playlist.id },
+                                                    onDelete = { viewModel.deletePlaylist(playlist) },
+                                                    onEdit = {
+                                                        editingPlaylist = playlist
+                                                        showEditDialog = true
+                                                    },
+                                                    viewModel = viewModel
+                                                )
+                                            }
                                         }
+                                        DraggableScrollbar(listState, adaptiveColor)
                                     }
                                 }
                                 FloatingActionButton(
@@ -667,8 +677,8 @@ fun ListingScreen(
                 showEditDialog = false
                 editingPlaylist = null
             },
-            onUpdate = { name ->
-                viewModel.updatePlaylist(editingPlaylist!!.id, newName = name)
+            onUpdate = { name, imageUri ->
+                viewModel.updatePlaylist(editingPlaylist!!.id, newName = name, newImageUri = imageUri)
                 showEditDialog = false
                 editingPlaylist = null
             }
@@ -955,64 +965,87 @@ fun PlaylistDetailView(
             )
 
             if (playlistSongs.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier.fillMaxSize().weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
                     Text("This playlist is empty", color = Color.Gray)
                 }
             } else {
                 val lazyListState = rememberLazyListState()
-                val reorderableState = rememberReorderableLazyListState(lazyListState = lazyListState, onMove = { from, to ->
-                    viewModel.reorderPlaylistSongs(playlist, from.index, to.index)
-                })
-                LazyColumn(
-                    state = lazyListState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScrollbar(lazyListState, adaptiveColor, autoHide = true)
-                        .padding(horizontal = 12.dp),
-                    contentPadding = PaddingValues(bottom = 120.dp)
-                ) {
-                    items(playlistSongs, key = { it.id }) { song ->
-                        ReorderableItem(reorderableState, key = song.id) { isDragging ->
-                            val elevation by animateDpAsState(if (isDragging) 8.dp else 0.dp, label = "drag_elevation")
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp)
-                                    .shadow(elevation, RoundedCornerShape(12.dp)),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Row(
+                val reorderableState = rememberReorderableLazyListState(
+                    lazyListState = lazyListState,
+                    onMove = { from, to ->
+                        viewModel.reorderPlaylistSongs(playlist, from.index, to.index)
+                    })
+                Box(modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        state = lazyListState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 12.dp),
+                        contentPadding = PaddingValues(bottom = 120.dp, end = 20.dp)
+                    ) {
+                        items(playlistSongs, key = { it.id }) { song ->
+                            ReorderableItem(reorderableState, key = song.id) { isDragging ->
+                                val elevation by animateDpAsState(
+                                    if (isDragging) 8.dp else 0.dp,
+                                    label = "drag_elevation"
+                                )
+                                Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                        .padding(vertical = 4.dp)
+                                        .shadow(elevation, RoundedCornerShape(12.dp)),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
+                                            alpha = 0.3f
+                                        )
+                                    ),
+                                    shape = RoundedCornerShape(12.dp)
                                 ) {
-                                    Box(
+                                    Row(
                                         modifier = Modifier
-                                            .size(24.dp)
-                                            .clip(CircleShape)
-                                            .background(adaptiveColor.copy(alpha = 0.2f))
-                                            .draggableHandle(),
-                                        contentAlignment = Alignment.Center
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Icon(Icons.Rounded.DragHandle, contentDescription = "Drag", tint = adaptiveColor, modifier = Modifier.size(16.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .size(24.dp)
+                                                .clip(CircleShape)
+                                                .background(adaptiveColor.copy(alpha = 0.2f))
+                                                .draggableHandle(),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                Icons.Rounded.DragHandle,
+                                                contentDescription = "Drag",
+                                                tint = adaptiveColor,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                        Spacer(Modifier.width(8.dp))
+                                        SongRow(
+                                            song = song,
+                                            viewModel = viewModel,
+                                            customOnClick = {
+                                                viewModel.setQueue(
+                                                    playlistSongs,
+                                                    startSong = song
+                                                )
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        )
                                     }
-                                    Spacer(Modifier.width(8.dp))
-                                    SongRow(
-                                        song = song,
-                                        viewModel = viewModel,
-                                        customOnClick = { viewModel.setQueue(playlistSongs, startSong = song) },
-                                        modifier = Modifier.weight(1f)
-                                    )
                                 }
                             }
                         }
                     }
+                    DraggableScrollbar(lazyListState, adaptiveColor)
                 }
             }
         }
-
         // Small floating action buttons (symmetric 42.dp like minibar)
         Row(
             modifier = Modifier
@@ -1048,14 +1081,28 @@ fun PlaylistDetailView(
         )
     }
 }
-
 @Composable
 fun EditPlaylistDialog(
     playlist: com.ianocent.musicplayer.data.Playlist,
     onDismiss: () -> Unit,
-    onUpdate: (String) -> Unit
+    onUpdate: (String, String?) -> Unit  // <-- tambahin parameter imageUri
 ) {
     var name by remember { mutableStateOf(playlist.name) }
+    var pickedImageUri by remember { mutableStateOf(playlist.imageUri) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    val imagePicker = rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    it, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (e: Exception) { /* beberapa provider gak support, aman diabaikan */ }
+            pickedImageUri = it.toString()
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1077,10 +1124,20 @@ fun EditPlaylistDialog(
                             .padding(6.dp)
                             .size(40.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                            .clickable { imagePicker.launch("image/*") },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Rounded.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        if (pickedImageUri != null) {
+                            coil.compose.AsyncImage(
+                                model = pickedImageUri,
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize().clip(CircleShape),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Icon(Icons.Rounded.AddPhotoAlternate, contentDescription = "Pilih gambar", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        }
                     }
                     BasicTextField(
                         value = name,
@@ -1101,7 +1158,7 @@ fun EditPlaylistDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onUpdate(name) },
+                onClick = { onUpdate(name, pickedImageUri) },
                 enabled = name.isNotBlank()
             ) { Text("Save") }
         },
@@ -1218,50 +1275,61 @@ fun AddSongsToPlaylistDialog(
 }
 
 @Composable
-fun Modifier.verticalScrollbar(
-    state: androidx.compose.foundation.lazy.LazyListState,
+fun BoxScope.DraggableScrollbar(
+    listState: androidx.compose.foundation.lazy.LazyListState,
     color: Color,
-    width: Dp = 4.dp,
-    padding: Dp = 4.dp,
-    autoHide: Boolean = false
-): Modifier {
-    val isScrolling = remember { mutableStateOf(false) }
+    thumbWidth: Dp = 6.dp
+) {
+    val coroutineScope = rememberCoroutineScope()
+    var containerHeightPx by remember { mutableStateOf(0f) }
+    var isDragging by remember { mutableStateOf(false) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
 
-    LaunchedEffect(Unit) {
-        snapshotFlow { state.isScrollInProgress }
-            .collect { scrollInProgress ->
-                if (scrollInProgress) {
-                    isScrolling.value = true
-                } else {
-                    kotlinx.coroutines.delay(1000) // Hide after 1 second of inactivity
-                    if (!state.isScrollInProgress) {
-                        isScrolling.value = false
+    val totalItems = listState.layoutInfo.totalItemsCount
+    if (totalItems <= 0) return
+
+    val visibleCount = listState.layoutInfo.visibleItemsInfo.size.coerceAtLeast(1)
+    val thumbFraction = (visibleCount.toFloat() / totalItems).coerceIn(0.08f, 1f)
+    val firstVisible = listState.firstVisibleItemIndex
+    val maxScrollableIndex = (totalItems - 1).coerceAtLeast(1)
+    val scrollFraction = firstVisible.toFloat() / maxScrollableIndex
+
+    Box(
+        modifier = Modifier
+            .align(Alignment.CenterEnd)
+            .fillMaxHeight()
+            .width(28.dp) // area sentuh lebih lebar dari thumb, biar gampang di-drag
+            .onGloballyPositioned { containerHeightPx = it.size.height.toFloat() }
+            .pointerInput(totalItems) {
+                detectDragGestures(
+                    onDragStart = { isDragging = true },
+                    onDragEnd = { isDragging = false },
+                    onDragCancel = { isDragging = false },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        if (containerHeightPx > 0) {
+                            val fraction = (change.position.y / containerHeightPx).coerceIn(0f, 1f)
+                            val targetIndex = (fraction * maxScrollableIndex).toInt().coerceIn(0, maxScrollableIndex)
+                            coroutineScope.launch { listState.scrollToItem(targetIndex) }
+                        }
                     }
-                }
-            }
-    }
-
-    return this.then(
-        Modifier.drawWithContent {
-            drawContent()
-
-            if (!autoHide || isScrolling.value) {
-                val firstVisible = state.layoutInfo.visibleItemsInfo.firstOrNull() ?: return@drawWithContent
-                val totalItems = state.layoutInfo.totalItemsCount
-                if (totalItems <= 0) return@drawWithContent
-                val viewportHeight = state.layoutInfo.viewportEndOffset - state.layoutInfo.viewportStartOffset
-                val itemHeight = firstVisible.size.toFloat()
-                val thumbHeight = (viewportHeight * (viewportHeight.toFloat() / (totalItems * itemHeight.coerceAtLeast(1f)))).coerceIn(24.dp.toPx(), viewportHeight * 0.4f)
-                val scrollOffset = (firstVisible.index.toFloat() / totalItems.coerceAtLeast(1)) * (viewportHeight - thumbHeight)
-                drawRoundRect(
-                    color = color.copy(alpha = if (autoHide && !state.isScrollInProgress) 0.3f else 0.5f),
-                    topLeft = Offset(size.width - width.toPx() - padding.toPx(), scrollOffset.coerceAtLeast(0f)),
-                    size = Size(width.toPx(), thumbHeight),
-                    cornerRadius = CornerRadius((width.toPx() / 2), (width.toPx() / 2))
                 )
             }
-        }
-    )
+    ) {
+        val thumbHeightDp = with(density) { (containerHeightPx * thumbFraction).toDp() }
+        val offsetYDp = with(density) { (containerHeightPx * scrollFraction * (1 - thumbFraction)).toDp() }
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = 4.dp)
+                .offset(y = offsetYDp)
+                .width(thumbWidth)
+                .height(thumbHeightDp.coerceAtLeast(24.dp))
+                .clip(RoundedCornerShape(thumbWidth / 2))
+                .background(color.copy(alpha = if (isDragging) 0.9f else 0.4f))
+        )
+    }
 }
 
 @Composable

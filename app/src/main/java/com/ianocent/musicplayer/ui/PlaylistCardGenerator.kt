@@ -40,7 +40,7 @@ import com.ianocent.musicplayer.viewmodel.MusicViewModel
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
-
+import androidx.compose.foundation.clickable
 @Composable
 fun PlaylistCardContent(
     playlist: Playlist,
@@ -54,24 +54,35 @@ fun PlaylistCardContent(
             .height(480.dp)
             .clip(RoundedCornerShape(24.dp))
     ) {
-        // Background: stacked album arts blurred
+        // Background: gambar custom playlist kalau ada, fallback ke collage album art
         Box(modifier = Modifier.fillMaxSize()) {
-            val validArts = albumArts.filterNotNull().take(4)
-            if (validArts.isNotEmpty()) {
-                validArts.forEachIndexed { index, art ->
-                    Image(
-                        bitmap = art.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .offset(x = (index * 8).dp, y = (index * 8).dp)
-                            .blur(20.dp)
-                            .alpha(0.35f),
-                        contentScale = ContentScale.Crop
-                    )
-                }
+            if (!playlist.imageUri.isNullOrBlank()) {
+                coil.compose.AsyncImage(
+                    model = playlist.imageUri,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blur(8.dp),
+                    contentScale = ContentScale.Crop
+                )
             } else {
-                Box(modifier = Modifier.fillMaxSize().background(accentColor))
+                val validArts = albumArts.filterNotNull().take(4)
+                if (validArts.isNotEmpty()) {
+                    validArts.forEachIndexed { index, art ->
+                        Image(
+                            bitmap = art.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .offset(x = (index * 8).dp, y = (index * 8).dp)
+                                .blur(8.dp)
+                                .alpha(0.5f),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
+                } else {
+                    Box(modifier = Modifier.fillMaxSize().background(accentColor))
+                }
             }
         }
 

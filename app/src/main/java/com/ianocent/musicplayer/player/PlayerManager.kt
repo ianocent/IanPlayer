@@ -34,7 +34,7 @@ class PlayerManager(private val context: Context) {
             .setUri(song.uri)
             .setMediaId(song.id.toString())
             .build()
-
+        player?.repeatMode = Player.REPEAT_MODE_OFF
         player?.setMediaItem(mediaItem)
         player?.prepare()
         player?.play()
@@ -56,15 +56,15 @@ class PlayerManager(private val context: Context) {
 
     fun getDuration(): Long = player?.duration ?: 0L
 
+    private var currentRepeatMode = Player.REPEAT_MODE_OFF
+
     fun toggleRepeat(): Int {
-        val currentMode = player?.repeatMode ?: Player.REPEAT_MODE_OFF
-        val nextMode = when (currentMode) {
+        currentRepeatMode = when (currentRepeatMode) {
             Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
             Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
             else -> Player.REPEAT_MODE_OFF
         }
-        player?.repeatMode = nextMode
-        return nextMode
+        return currentRepeatMode
     }
 
     fun release() {
