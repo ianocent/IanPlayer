@@ -474,10 +474,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val info = UpdateManager.checkForUpdate()
             if (info != null) {
                 try {
-                    val currentVersionCode = getApplication<android.app.Application>()
+                    val pkgInfo = getApplication<android.app.Application>()
                         .packageManager
                         .getPackageInfo(getApplication<android.app.Application>().packageName, 0)
-                        .versionCode
+                    val currentVersionCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                        pkgInfo.longVersionCode.toInt()
+                    } else {
+                        @Suppress("DEPRECATION")
+                        pkgInfo.versionCode
+                    }
 
                     if (info.versionCode > currentVersionCode) {
                         _updateInfo.value = info
