@@ -7,12 +7,14 @@
   <img src="https://img.shields.io/badge/Kotlin-1.9+-7F52FF?style=flat-square&logo=kotlin" alt="Kotlin" />
   <img src="https://img.shields.io/badge/Compose-Material3-0081CB?style=flat-square" alt="Compose" />
 </div>
+
 ---
 ## 📥 Downloads (Assets)
 Get the latest version of Ian Player for your Android device:
 * [📦 Download APK (Latest Release)](https://github.com/ianocent/ianplayer/releases/download/v1.2.0/app-release.apk)
 * [📜 Release Notes](https://github.com/ianocent/IanPlayer/releases/tag/v1.0.0)
 * [💻 Source Code (.zip)](https://github.com/ianocent/IanPlayer/archive/refs/tags/v1.0.0.zip)
+
 ---
 ## ✨ Main Features
 ### 🎧 Core Playback
@@ -21,6 +23,7 @@ Get the latest version of Ian Player for your Android device:
 * Music continues playing in the background and appears in the notification shade / lockscreen.
 * Supports Next, Previous, Seek, Shuffle, and Repeat (off / all / one).
 * Realtime progress bar with manual seeking.
+
 ### 📱 Now Playing Screen
 * Custom design created in Figma, ported 1:1 to Compose.
 * Ambient color — UI colors (background, controls bar, slider, lyric card) are automatically extracted from the dominant color of the album art for each song.
@@ -29,21 +32,25 @@ Get the latest version of Ian Player for your Android device:
 * Falls back to plain lyrics if synced lyrics are not available.
 * Swipe-down gesture to close Now Playing, with smooth animation (scale + fade + spring).
 * Album art is decoded with downsampling to keep scrolling and rendering lightweight.
+
 ### 🖼️ Lyric Card Generator (Unique Feature)
 * Select one or multiple lyric lines directly from the lyric view.
 * Generate custom-styled lyric cards (blurred album art as background, big quote mark, accent bar with song info).
 * Design created differently from the style of YouTube Music / Spotify / Genius.
 * Rendered using Compose GraphicsLayer, directly saved to the gallery (Pictures/IanPlayer).
+
 ### 📚 Library & Playlist
 * Song listing with album art thumbnails and a fast search bar for filtering.
 * Custom playlists: create, add songs via dialog with checkboxes + search, open and play playlist contents.
 * Persistent playlists — saved to SharedPreferences as JSON.
 * Playlist data remains after app restart.
+
 ### 🎨 UI/UX
 * Manual light & dark mode toggle.
 * Mini player bar shaped as a floating card, matching the ambient color of the album art.
 * Text contrast on the mini player automatically adjusts (black/white depending on background luminance).
 * Open/close Now Playing transitions using AnimatedVisibility with slide + fade.
+
 ---
 ## 🛠️ Tech Stack
 | Category | Technology |
@@ -55,6 +62,7 @@ Get the latest version of Ian Player for your Android device:
 | **Sync Lyrics** | lrclib.net API (free, no API key required) |
 | **Persistence** | SharedPreferences (manual JSON) |
 | **System UI** | Accompanist SystemUiController |
+
 ---
 ## 📂 Project Structure
 ```text
