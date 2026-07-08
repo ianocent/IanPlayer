@@ -20,6 +20,7 @@ import com.ianocent.musicplayer.data.Playlist
 import com.ianocent.musicplayer.data.UpdateInfo
 import com.ianocent.musicplayer.data.YTMusicRepository
 import com.ianocent.musicplayer.data.StreamRepository
+import com.ianocent.musicplayer.data.SoundCloudRepository
 import com.ianocent.musicplayer.UpdateManager
 import org.json.JSONArray
 import org.json.JSONObject
@@ -33,6 +34,7 @@ import android.content.IntentFilter
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val streamRepository = StreamRepository()
     private val ytMusicRepository = YTMusicRepository()
+    private val soundCloudRepository = SoundCloudRepository()
 
     private val _allStreamSongs = MutableStateFlow<List<Song>>(emptyList())
     private val _streamSongs = MutableStateFlow<List<Song>>(emptyList())
@@ -62,6 +64,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             var results = streamRepository.searchSongs(query)
             if (results.isEmpty()) {
                 results = ytMusicRepository.searchSongs(query)
+            }
+            if (results.isEmpty()) {
+                results = soundCloudRepository.searchSongs(query)
             }
             _allStreamSongs.value = results
             _streamSongs.value = results.take(streamPageSize)

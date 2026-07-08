@@ -12,22 +12,45 @@ import java.net.URLEncoder
 
 class StreamRepository {
 
-    private val baseUrl = "https://saavn.dev"
+    private val saavnInstances = listOf(
+        "https://saavn.dev",
+        "https://saavn.me",
+        "https://jiosaavn-api.vercel.app"
+    )
+
+    private suspend fun fetchApi(path: String): String? {
+        for (baseUrl in saavnInstances) {
+            try {
+                val url = URL("$baseUrl$path")
+                val conn = url.openConnection() as HttpURLConnection
+                conn.setRequestProperty("Accept", "application/json")
+                conn.requestMethod = "GET"
+                conn.connectTimeout = 4000
+                conn.readTimeout = 4000
+
+                if (conn.responseCode != 200) continue
+
+                val raw = conn.inputStream.bufferedReader().readText()
+                if (raw.isBlank()) continue
+
+                val trimmed = raw.trimStart()
+                if (trimmed.startsWith("{") || trimmed.startsWith("[")) return raw
+
+                Log.w("StreamRepo", "Instance $baseUrl returned non-JSON response")
+            } catch (e: Exception) {
+                Log.w("StreamRepo", "Instance $baseUrl failed: ${e.message}")
+            }
+        }
+        return null
+    }
 
     suspend fun searchSongs(query: String): List<Song> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
 
         try {
             val encQuery = URLEncoder.encode(query, "UTF-8")
-            val url = URL("$baseUrl/api/search/songs?query=$encQuery&limit=15")
+            val response = fetchApi("/api/search/songs?query=$encQuery&limit=15") ?: return@withContext emptyList()
 
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.connectTimeout = 8000
-
-            if (conn.responseCode != 200) return@withContext emptyList()
-
-            val response = conn.inputStream.bufferedReader().readText()
             val json = JSONObject(response)
             val data = json.optJSONObject("data") ?: return@withContext emptyList()
             val results = data.optJSONArray("results") ?: return@withContext emptyList()
