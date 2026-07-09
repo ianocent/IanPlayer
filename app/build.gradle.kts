@@ -15,8 +15,8 @@ android {
         applicationId = "com.ianocent.musicplayer"
         minSdk = 24
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.5.1"
+        versionCode = 5
+        versionName = "1.5.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -40,6 +40,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -68,4 +69,11 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.5.0")
     implementation("com.google.accompanist:accompanist-systemuicontroller:0.32.0")
     implementation("sh.calvin.reorderable:reorderable:2.4.0")
+
+    // YouTube PoToken (BotGuard) generation + signature cipher deobfuscation for streaming.
+    // Pinned to a specific commit (not master-SNAPSHOT) for reproducible builds.
+    implementation("com.github.ZemerTeam:zemer-cipher:55ef918b75")
+    // zemer-cipher logs via Timber but only "compileOnly" depends on it; without this it would
+    // crash at runtime with NoClassDefFoundError the first time it logs.
+    implementation("com.jakewharton.timber:timber:5.0.1")
 }

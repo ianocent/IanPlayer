@@ -2,6 +2,8 @@ package com.ianocent.musicplayer.data
 
 import android.net.Uri
 import android.util.Log
+import com.zemer.cipher.CipherDeobfuscator
+import com.zemer.cipher.potoken.PoTokenGenerator
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -30,6 +32,20 @@ class YTMusicRepository {
             "https://invidious.0011.lt",
             "https://inv.us.projectsegfau.lt"
         )
+
+        // Shared across the app: caches the WebView-based BotGuard session so we don't pay the
+        // ~2-5s cold-start cost on every song, only when the session (visitorData) changes.
+        private val poTokenGenerator = PoTokenGenerator()
+    }
+
+    // visitorData identifies our InnerTube "session" to Google; PoTokens are minted bound to it.
+    // Refreshed opportunistically from any InnerTube response's responseContext.visitorData.
+    @Volatile
+    private var visitorData: String? = null
+
+    private fun updateVisitorData(json: JSONObject) {
+        val vd = json.optJSONObject("responseContext")?.optString("visitorData", null)
+        if (!vd.isNullOrBlank()) visitorData = vd
     }
 
     private fun clientContext(): JSONObject = JSONObject().apply {
@@ -38,6 +54,7 @@ class YTMusicRepository {
             put("clientVersion", "1.20260701.01.00")
             put("hl", "en")
             put("gl", "ID")
+            visitorData?.let { put("visitorData", it) }
         })
     }
 
@@ -92,13 +109,27 @@ class YTMusicRepository {
         }
     }
 
-    private fun extractAudioUrl(format: JSONObject): String? {
-        val url: String? = format.optString("url", null)
-        if (!url.isNullOrBlank()) return url
+    private suspend fun extractAudioUrl(format: JSONObject, videoId: String): String? {
+        val directUrl: String? = format.optString("url", null)
+        if (!directUrl.isNullOrBlank()) {
+            return CipherDeobfuscator.transformNParamInUrl(directUrl)
+        }
 
         val cipher: String? = format.optString("signatureCipher", null)
         if (cipher.isNullOrBlank()) return null
 
+        // Preferred path: proper BotGuard/WebView-based deobfuscation (handles current YouTube
+        // player rotations, unlike the legacy manual "s"/"sp" passthrough below).
+        try {
+            val deciphered = CipherDeobfuscator.deobfuscateStreamUrl(cipher, videoId)
+            if (!deciphered.isNullOrBlank()) {
+                return CipherDeobfuscator.transformNParamInUrl(deciphered)
+            }
+        } catch (e: Exception) {
+            Log.w("YTMusicRepo", "CipherDeobfuscator failed for $videoId: ${e.message}")
+        }
+
+        // Legacy fallback (pre-cipher-rotation era; kept as a last resort, rarely works anymore).
         val params = mutableMapOf<String, String>()
         for (pair in cipher.split("&")) {
             val kv = pair.split("=", limit = 2)
@@ -220,12 +251,21 @@ class YTMusicRepository {
             ?.optJSONArray("runs")
             ?: return "Unknown Artist"
 
+        // flexColumns[1] is a "Artist • Album • Duration" run list; every segment with a
+        // browseEndpoint could be an artist OR an album (both are clickable), so we must check
+        // pageType specifically rather than assume "any browseEndpoint = artist" (that previously
+        // picked up album names too, e.g. "Eminem, The Eminem Show").
         val artists = mutableListOf<String>()
         for (i in 0 until runs.length()) {
             val run = runs.optJSONObject(i) ?: continue
-            val nav = run.optJSONObject("navigationEndpoint")
             val text = run.optString("text", "")
-            if (text.isNotBlank() && nav?.has("browseEndpoint") == true) {
+            if (text.isBlank() || text == " • ") continue
+            val pageType = run.optJSONObject("navigationEndpoint")
+                ?.optJSONObject("browseEndpoint")
+                ?.optJSONObject("browseEndpointContextSupportedConfigs")
+                ?.optJSONObject("browseEndpointContextMusicConfig")
+                ?.optString("pageType", "")
+            if (pageType == "MUSIC_PAGE_TYPE_ARTIST") {
                 artists.add(text)
             }
         }
@@ -234,15 +274,19 @@ class YTMusicRepository {
 
     private fun parseDuration(item: JSONObject): Long {
         val flexCols = item.optJSONArray("flexColumns") ?: return 0L
-        val text = flexCols.optJSONObject(2)
+        val runs = flexCols.optJSONObject(1)
             ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
             ?.optJSONObject("text")
             ?.optJSONArray("runs")
-            ?.optJSONObject(0)
-            ?.optString("text", "0:00")
-            ?: "0:00"
+            ?: return 0L
 
-        val parts = text.split(":")
+        // Duration is the LAST run of the "Artist • Album • Duration" column (flexColumns[2] is
+        // play count, not duration, and column widths vary — e.g. no album for singles — so we
+        // can't rely on a fixed index).
+        val last = runs.optJSONObject(runs.length() - 1)?.optString("text", "") ?: return 0L
+        if (!Regex("^\\d+(:\\d{2})+$").matches(last)) return 0L
+
+        val parts = last.split(":")
         var total = 0L
         for (part in parts) {
             total = total * 60 + (part.toLongOrNull() ?: 0)
@@ -302,21 +346,47 @@ class YTMusicRepository {
         ctx: JSONObject,
         apiKey: String,
         userAgent: String,
-        origin: String
+        origin: String,
+        usePoToken: Boolean = false
     ): String? {
+        // WEB/WEB_REMIX playback is rejected by YouTube without a valid PoToken (BotGuard
+        // attestation). Mint one via the WebView-based generator before asking for the stream;
+        // ANDROID/IOS use DroidGuard/iosGuard instead, which we can't satisfy from a 3rd-party app.
+        var playerRequestPoToken: String? = null
+        var streamingDataPoToken: String? = null
+        if (usePoToken) {
+            val sessionId = visitorData
+            if (!sessionId.isNullOrBlank()) {
+                try {
+                    val result = withContext(Dispatchers.IO) {
+                        poTokenGenerator.getWebClientPoToken(videoId, sessionId)
+                    }
+                    playerRequestPoToken = result?.playerRequestPoToken
+                    streamingDataPoToken = result?.streamingDataPoToken
+                } catch (e: Exception) {
+                    Log.w("YTMusicRepo", "PoToken generation failed for $videoId: ${e.message}")
+                }
+            }
+        }
+
         val body = JSONObject().apply {
             put("context", ctx)
             put("videoId", videoId)
             put("playbackContext", JSONObject().apply {
                 put("contentPlaybackContext", JSONObject().apply {
                     put("html5Preference", "HTML5_PREF_WANTS")
+                    if (usePoToken) {
+                        CipherDeobfuscator.signatureTimestamp()?.let { put("signatureTimestamp", it) }
+                    }
                 })
             })
             put("contentCheckOk", true)
             put("racyCheckOk", true)
+            playerRequestPoToken?.let { put("poToken", it) }
         }
         val raw = post("player", body, apiKey, userAgent, origin) ?: return null
         val json = JSONObject(raw)
+        updateVisitorData(json)
 
         val playability = json.optJSONObject("playabilityStatus")
         val status = playability?.optString("status", "OK")
@@ -333,13 +403,34 @@ class YTMusicRepository {
             val fmt = formats.getJSONObject(j)
             val mime = fmt.optString("mimeType", "")
             if (!mime.startsWith("audio/")) continue
-            val url = extractAudioUrl(fmt)
-            if (url != null) return url
+            val url = extractAudioUrl(fmt, videoId) ?: continue
+            return if (!streamingDataPoToken.isNullOrBlank()) "$url&pot=$streamingDataPoToken" else url
         }
         return null
     }
 
     private suspend fun fetchViaInnerTube(videoId: String): String? {
+        // WEB_REMIX + real PoToken is now the primary path: it's the only client whose
+        // attestation (BotGuard, via zemer-cipher's WebView) we can actually satisfy.
+        tryPlayerContext(
+            videoId, clientContext(), WEB_KEY, UA_WEB, "https://music.youtube.com", usePoToken = true
+        )?.let { return it }
+
+        val webContext = JSONObject().apply {
+            put("client", JSONObject().apply {
+                put("clientName", "WEB")
+                put("clientVersion", "2.20250610.01.00")
+                put("hl", "en")
+                put("gl", "ID")
+                visitorData?.let { put("visitorData", it) }
+            })
+        }
+        tryPlayerContext(
+            videoId, webContext, WEB_KEY, UA_WEB, "https://www.youtube.com", usePoToken = true
+        )?.let { return it }
+
+        // Legacy fallbacks kept for cases where BotGuard/WebView is unavailable on-device
+        // (e.g. WebView disabled) — these rarely succeed anymore without PoToken.
         val androidContext = JSONObject().apply {
             put("client", JSONObject().apply {
                 put("clientName", "ANDROID")
@@ -367,18 +458,6 @@ class YTMusicRepository {
         }
         tryPlayerContext(videoId, iosContext, ANDROID_KEY, UA_ANDROID, "https://www.youtube.com")?.let { return it }
 
-        val webContext = JSONObject().apply {
-            put("client", JSONObject().apply {
-                put("clientName", "WEB")
-                put("clientVersion", "2.20250610.01.00")
-                put("hl", "en")
-                put("gl", "ID")
-            })
-        }
-        tryPlayerContext(videoId, webContext, WEB_KEY, UA_WEB, "https://www.youtube.com")?.let { return it }
-
-        tryPlayerContext(videoId, clientContext(), WEB_KEY, UA_WEB, "https://music.youtube.com")?.let { return it }
-
         return null
     }
 
@@ -394,7 +473,10 @@ class YTMusicRepository {
             val body = JSONObject().apply {
                 put("context", clientContext())
                 put("query", query)
-                put("params", "EgWKAQIIAWoKEAoQCRADEAE=")
+                // "Songs" filter (verified live: gives a dedicated musicShelfRenderer with only
+                // Song-type items — the old params here mixed Artist/Album/Video results and
+                // only surfaced the ~3 items nested under the top-result card).
+                put("params", "EgWKAQIIAWoKEAMQBBAFEAoQCQ==")
             }
 
             val raw = post("search", body)
@@ -405,10 +487,11 @@ class YTMusicRepository {
             Log.d("YTMusicRepo", "InnerTube search response len=${raw.length}")
 
             val response = JSONObject(raw)
+            updateVisitorData(response)
             val items = walkMusicContents(response)
             Log.d("YTMusicRepo", "Parsed ${items.length()} songs from search")
 
-            val limit = minOf(items.length(), 10)
+            val limit = minOf(items.length(), 20)
             if (limit == 0) {
                 Log.w("YTMusicRepo", "No musicShelfRenderer items found in response")
                 return@withContext emptyList()
@@ -552,6 +635,7 @@ class YTMusicRepository {
             Log.d("YTMusicRepo", "Regular YT search response len=${raw.length}")
 
             val response = JSONObject(raw)
+            updateVisitorData(response)
             val items = walkVideoContents(response)
             Log.d("YTMusicRepo", "Regular YT found ${items.length()} videos")
 
@@ -580,9 +664,10 @@ class YTMusicRepository {
                                             put("clientVersion", "2.20250610.01.00")
                                             put("hl", "en")
                                             put("gl", "ID")
+                                            visitorData?.let { put("visitorData", it) }
                                         })
                                     },
-                                    WEB_KEY, UA_WEB, "https://www.youtube.com"
+                                    WEB_KEY, UA_WEB, "https://www.youtube.com", usePoToken = true
                                 )
                             }
 
