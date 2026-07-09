@@ -24,6 +24,8 @@ import com.ianocent.musicplayer.data.SoundCloudRepository
 import com.ianocent.musicplayer.UpdateManager
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Job
 import android.content.BroadcastReceiver
 import android.app.DownloadManager
@@ -36,6 +38,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val ytMusicRepository = YTMusicRepository()
     private val soundCloudRepository = SoundCloudRepository()
 
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        if (throwable !is CancellationException) {
+            throwable.printStackTrace()
+        }
+    }
+
     private val _allStreamSongs = MutableStateFlow<List<Song>>(emptyList())
     private val _streamSongs = MutableStateFlow<List<Song>>(emptyList())
     val streamSongs: StateFlow<List<Song>> = _streamSongs
@@ -46,6 +54,52 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var searchJob: Job? = null
 
     private val streamPageSize = 10
+
+    private val _sortMode = MutableStateFlow(0)
+    val sortMode: StateFlow<Int> = _sortMode
+
+    private val _playCounts = MutableStateFlow<Map<Long, Int>>(emptyMap())
+    val playCounts: StateFlow<Map<Long, Int>> = _playCounts
+
+    fun setSortMode(mode: Int) {
+        _sortMode.value = mode
+        prefs.edit().putInt("sort_mode", mode).apply()
+    }
+
+    private fun loadPlayCounts(): Map<Long, Int> {
+        val json = prefs.getString("play_counts", null) ?: return emptyMap()
+        return try {
+            val obj = JSONObject(json)
+            val map = mutableMapOf<Long, Int>()
+            obj.keys().forEach { key -> map[key.toLong()] = obj.getInt(key) }
+            map
+        } catch (_: Exception) { emptyMap() }
+    }
+
+    private fun savePlayCounts(counts: Map<Long, Int>) {
+        val obj = JSONObject()
+        counts.forEach { (id, count) -> obj.put(id.toString(), count) }
+        prefs.edit().putString("play_counts", obj.toString()).apply()
+    }
+
+    fun incrementPlayCount(songId: Long) {
+        val counts = _playCounts.value.toMutableMap()
+        counts[songId] = (counts[songId] ?: 0) + 1
+        _playCounts.value = counts
+        savePlayCounts(counts)
+    }
+
+    fun applySort(songs: List<Song>): List<Song> {
+        return when (_sortMode.value) {
+            0 -> songs.sortedBy { it.title.lowercase() }
+            1 -> songs.sortedByDescending { it.dateAdded }
+            2 -> {
+                val counts = _playCounts.value
+                songs.sortedByDescending { counts[it.id] ?: 0 }
+            }
+            else -> songs
+        }
+    }
 
     // Fungsi khusus buat search di Tab Stream dengan sistem Debounce (Anti-lag)
     fun searchRemoteSongs(query: String) {
@@ -68,8 +122,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             if (results.isEmpty()) {
                 results = soundCloudRepository.searchSongs(query)
             }
-            _allStreamSongs.value = results
-            _streamSongs.value = results.take(streamPageSize)
+            // distinctBy id: API kadang balikin track duplikat, kalau dibiarin bikin
+            // LazyColumn crash ("Key X was already used") pas key = it.id ketemu kembar
+            val distinctResults = results.distinctBy { it.id }
+            _allStreamSongs.value = distinctResults
+            _streamSongs.value = distinctResults.take(streamPageSize)
             _isSearchingRemote.value = false
         }
     }
@@ -245,12 +302,33 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun getHighResArt(song: Song, onLoaded: (android.graphics.Bitmap?) -> Unit) {
+        viewModelScope.launch {
+            val art = withContext(Dispatchers.IO) {
+                if (song.isStream && !song.remoteArtUrl.isNullOrEmpty()) {
+                    try {
+                        val url = java.net.URL(song.remoteArtUrl)
+                        val conn = url.openConnection() as java.net.HttpURLConnection
+                        conn.doInput = true
+                        conn.connect()
+                        android.graphics.BitmapFactory.decodeStream(conn.inputStream)
+                    } catch (e: Exception) { null }
+                } else {
+                    com.ianocent.musicplayer.data.AlbumArtLoader.getEmbeddedArt(appContext, song.uri, targetSize = 800)
+                }
+            }
+            onLoaded(art)
+        }
+    }
+
     private val appContext = application.applicationContext
     private var pendingMediaId: Long? = null
     private var downloadReceiver: BroadcastReceiver? = null
 
     init {
         loadPlaylistsFromPrefs()
+        _playCounts.value = loadPlayCounts()
+        _sortMode.value = prefs.getInt("sort_mode", 0)
         checkForUpdate()
         playerManager.initialize {
             val player = playerManager.player
@@ -266,6 +344,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     if (playbackState == Player.STATE_ENDED) {
                         playNext()
                     }
+                }
+                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    error.printStackTrace()
                 }
             })
 
@@ -285,10 +366,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        viewModelScope.launch {
+        viewModelScope.launch(exceptionHandler) {
             while (isActive) {
-                _currentPosition.value = playerManager.getCurrentPosition()
-                _duration.value = playerManager.getDuration()
+                try {
+                    _currentPosition.value = playerManager.getCurrentPosition()
+                    _duration.value = playerManager.getDuration()
+                } catch (_: Exception) {}
                 delay(500)
             }
         }
@@ -347,6 +430,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _currentIndex.value = index
         _currentSong.value = song
         playerManager.playSong(song)
+        incrementPlayCount(song.id)
         loadArt(song)
         loadLyric(song)
     }
@@ -515,5 +599,45 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun dismissUpdate() {
         _isUpdateAvailable.value = false
         _updateInfo.value = null
+    }
+
+    fun deleteSong(song: Song) {
+        viewModelScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                repository.deleteSong(song)
+            }
+            if (success) {
+                _songs.value = _songs.value.filter { it.id != song.id }
+                _queue.value = _queue.value.filter { it.id != song.id }
+                if (_currentSong.value?.id == song.id) {
+                    _currentSong.value = null
+                    playerManager.player?.stop()
+                }
+                _playlists.value = _playlists.value.map { playlist ->
+                    playlist.copy(songIds = playlist.songIds.filter { it != song.id }.toMutableList())
+                }
+                savePlaylistsToPrefs()
+            } else {
+                // If it failed, it stays in the list, avoiding the "relog" surprise
+                // In a real app, we'd show a Toast or handle Scoped Storage permissions here
+            }
+        }
+    }
+
+    fun updateSongInfo(songId: Long, newTitle: String, newArtist: String) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                repository.updateSongInfo(songId, newTitle, newArtist)
+            }
+            _songs.value = _songs.value.map {
+                if (it.id == songId) it.copy(title = newTitle, artist = newArtist) else it
+            }
+            _queue.value = _queue.value.map {
+                if (it.id == songId) it.copy(title = newTitle, artist = newArtist) else it
+            }
+            if (_currentSong.value?.id == songId) {
+                _currentSong.value = _currentSong.value?.copy(title = newTitle, artist = newArtist)
+            }
+        }
     }
 }

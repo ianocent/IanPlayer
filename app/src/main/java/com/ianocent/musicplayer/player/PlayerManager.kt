@@ -30,26 +30,40 @@ class PlayerManager(private val context: Context) {
     }
 
     fun playSong(song: Song) {
-        val mediaItem = MediaItem.Builder()
-            .setUri(song.uri)
-            .setMediaId(song.id.toString())
-            .build()
-        player?.repeatMode = Player.REPEAT_MODE_OFF
-        player?.setMediaItem(mediaItem)
-        player?.prepare()
-        player?.play()
+        try {
+            val mediaItem = MediaItem.Builder()
+                .setUri(song.uri)
+                .setMediaId(song.id.toString())
+                .build()
+            player?.let { p ->
+                p.repeatMode = Player.REPEAT_MODE_OFF
+                p.setMediaItem(mediaItem)
+                p.prepare()
+                p.play()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     fun togglePlayPause() {
-        if (player?.isPlaying == true) {
-            player?.pause()
-        } else {
-            player?.play()
+        try {
+            if (player?.isPlaying == true) {
+                player?.pause()
+            } else {
+                player?.play()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
     fun seekTo(positionMs: Long) {
-        player?.seekTo(positionMs)
+        try {
+            player?.seekTo(positionMs)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     fun getCurrentPosition(): Long = player?.currentPosition ?: 0L

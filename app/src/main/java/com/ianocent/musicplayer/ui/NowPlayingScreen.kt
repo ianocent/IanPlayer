@@ -1,11 +1,11 @@
 package com.ianocent.musicplayer.ui
 
+import com.ianocent.musicplayer.ResponsiveSnapList
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ianocent.musicplayer.viewmodel.MusicViewModel
@@ -138,6 +139,16 @@ fun NowPlayingScreen(
     var showLyricCardSheet by remember { mutableStateOf(false) }
     var isLyricExpanded by remember { mutableStateOf(true) }
     var isUpnextExpanded by remember { mutableStateOf(true) }
+    val lyricWeight by animateFloatAsState(
+        targetValue = if (isLyricExpanded) (if (isUpnextExpanded) 0.4f else 1f) else 0f,
+        animationSpec = spring(dampingRatio = 0.6f, stiffness = 300f),
+        label = "lyricWeight"
+    )
+    val upnextWeight by animateFloatAsState(
+        targetValue = if (isUpnextExpanded) (if (isLyricExpanded) 0.6f else 1f) else 0f,
+        animationSpec = spring(dampingRatio = 0.6f, stiffness = 300f),
+        label = "upnextWeight"
+    )
     val syncedLyric by viewModel.syncedLyric.collectAsState()
     val plainLyric by viewModel.plainLyric.collectAsState()
     val isLyricLoading by viewModel.isLyricLoading.collectAsState()
@@ -169,11 +180,13 @@ fun NowPlayingScreen(
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
                     onDragEnd = {
-                        coroutineScope.launch {
-                            if (offsetY.value > dismissThreshold) {
-                                offsetY.animateTo(screenHeight, animationSpec = spring())
-                                handleBack()
-                            } else {
+                        if (offsetY.value > dismissThreshold) {
+                            // KUNCI FIX GLITCH: nol-in paksa offset drag detik itu juga,
+                            // biarin heroAnimProgress murni ngurusin animasi keluar tanpa ditimpa offsetY
+                            coroutineScope.launch { offsetY.snapTo(0f) }
+                            handleBack()
+                        } else {
+                            coroutineScope.launch {
                                 offsetY.animateTo(0f, animationSpec = spring())
                             }
                         }
@@ -185,7 +198,8 @@ fun NowPlayingScreen(
                         }
                     }
                 )
-            }
+            },
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Drag handle
         Box(
@@ -199,7 +213,7 @@ fun NowPlayingScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Album art + song info (Persis Figma)
+        // Album art + song info (sesuai Figma: art kecil kiri, info + progress bar kanan)
         Row(verticalAlignment = Alignment.Top) {
             Box(
                 modifier = Modifier
@@ -208,14 +222,8 @@ fun NowPlayingScreen(
                         val pos = coords.positionInWindow()
                         val sz = coords.size
                         targetAlbumArtRect = ElementRect(
-                            center = androidx.compose.ui.geometry.Offset(
-                                pos.x + sz.width / 2f,
-                                pos.y + sz.height / 2f
-                            ),
-                            size = androidx.compose.ui.geometry.Size(
-                                sz.width.toFloat(),
-                                sz.height.toFloat()
-                            )
+                            center = Offset(pos.x + sz.width / 2f, pos.y + sz.height / 2f),
+                            size = androidx.compose.ui.geometry.Size(sz.width.toFloat(), sz.height.toFloat())
                         )
                     }
                     .graphicsLayer {
@@ -229,6 +237,7 @@ fun NowPlayingScreen(
                             shape = RoundedCornerShape(heroCornerRadius)
                         }
                     }
+                    .clip(RoundedCornerShape(heroCornerRadius))
                     .background(
                         if (albumArt == null)
                             Brush.linearGradient(listOf(Color(0xFF8B1E1E), Color(0xFF2B0A0A)))
@@ -240,18 +249,29 @@ fun NowPlayingScreen(
                     Image(
                         bitmap = albumArt!!.asImageBitmap(),
                         contentDescription = "Album Art",
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(RoundedCornerShape(heroCornerRadius)),
+                        modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     )
+                    // Scrim gelap biar timer selalu kebaca di atas album art terang
+                    Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
+                    val timerMins = remember(currentPosition) {
+                        TimeUnit.MILLISECONDS.toMinutes(currentPosition).toString().padStart(2, '0')
+                    }
+                    val timerSecs = remember(currentPosition) {
+                        (TimeUnit.MILLISECONDS.toSeconds(currentPosition) % 60).toString().padStart(2, '0')
+                    }
+                    Column(
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(timerMins, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                        Text(timerSecs, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                    }
                 } else {
                     Text(
                         text = formatTime(currentPosition),
-                        color = Color.White,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center
+                        color = Color.White, fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold, textAlign = TextAlign.Center
                     )
                 }
             }
@@ -264,31 +284,20 @@ fun NowPlayingScreen(
                     song?.artist ?: "Unknown Artist",
                     fontWeight = FontWeight.SemiBold,
                     style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     song?.title ?: "No song playing",
                     fontWeight = FontWeight.Bold,
                     style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
-
                 Spacer(modifier = Modifier.height(8.dp))
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(24.dp),
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(modifier = Modifier.fillMaxWidth().height(24.dp), contentAlignment = Alignment.Center) {
                     Slider(
                         value = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
                         onValueChange = { fraction -> viewModel.seekTo((fraction * duration).toLong()) },
-                        modifier = Modifier
-                            .fillMaxWidth(),
-//                            .scale(scaleX = 1f, scaleY = 0.6f),
+                        modifier = Modifier.fillMaxWidth(),
                         colors = SliderDefaults.colors(
                             thumbColor = adaptiveColor,
                             activeTrackColor = adaptiveColor,
@@ -296,139 +305,134 @@ fun NowPlayingScreen(
                         )
                     )
                 }
-                Text(
-                    formatTime(currentPosition),
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Lyric section
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp)) // Bikin area klik jadi membulat
-                .clickable { isLyricExpanded = !isLyricExpanded }
-                .padding(horizontal = 8.dp, vertical = 8.dp), // Kasih ruang napas biar ga ngepress
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Lyric :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = if (isLyricExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                    contentDescription = "Toggle Lyric",
-                    tint = Color.Gray,
-                    modifier = Modifier.padding(end = 8.dp)
-                )
-                IconButton(
-                    onClick = { if (selectedLyricLines.isNotEmpty()) showLyricCardSheet = true },
-                    modifier = Modifier.size(24.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.ReceiptLong,
-                        contentDescription = "Buat Kartu Lirik",
-                        tint = if (selectedLyricLines.isNotEmpty()) adaptiveColor else Color.Gray.copy(alpha = 0.5f)
-                    )
-                }
-            }
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-
-        AnimatedVisibility(
-            visible = isLyricExpanded,
-            enter = expandVertically(),
-            exit = shrinkVertically()
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(220.dp)
-            ) {
-                when {
-                    isLyricLoading -> SkeletonLyricLoader(adaptiveColor = adaptiveColor)
-                    !syncedLyric.isNullOrEmpty() -> SyncedLyricView(
-                        lines = syncedLyric!!,
-                        currentPosition = currentPosition,
-                        highlightColor = adaptiveColor,
-                        selectedIndices = selectedLyricLines,
-                        onLineClick = { index ->
-                            selectedLyricLines = if (selectedLyricLines.contains(index)) {
-                                selectedLyricLines - index
-                            } else {
-                                selectedLyricLines + index
-                            }
-                        }
-                    )
-                    !plainLyric.isNullOrBlank() -> { // isNullOrBlank mencegah string " " masuk
-                        val scrollState = rememberScrollState()
-                        Text(
-                            plainLyric!!,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .verticalScroll(scrollState)
-                                .padding(horizontal = 16.dp)
-                                .padding(bottom = 24.dp)
-                        )
-                    }
-                    else -> Text("Lirik belum tersedia", modifier = Modifier.align(Alignment.Center), color = Color.Gray)
-                }
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Upnext section
-        Row(
+        // Lyric & Upnext dibungkus scrollable + weight(fill=true) biar section ini SELALU
+        // ngisi semua sisa ruang yang ada -> Controls jadi ke-anchor konsisten di posisi yang sama
+        // (ga "ngambang"/naik-turun tiap Lyric-Upnext di-collapse/expand), dan tetep aman dari
+        // kepotong karena discroll sendiri kalau kontennya kepanjangan.
+        Column(
             modifier = Modifier
+                .weight(1f)
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .clickable { isUpnextExpanded = !isUpnextExpanded }
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Upnext :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-            Icon(
-                imageVector = if (isUpnextExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                contentDescription = "Toggle Upnext",
-                tint = Color.Gray
-            )
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-
-        val songs by viewModel.queue.collectAsState()
-        val upNextList = remember(songs, song) {
-            val idx = songs.indexOf(song)
-            if (idx == -1) songs else songs.drop(idx + 1)
-        }
-
-        AnimatedVisibility(
-            visible = isUpnextExpanded,
-            modifier = Modifier.weight(1f),
-            enter = expandVertically(),
-            exit = shrinkVertically()
-        ) {
-            Box(
+            // Lyric toggle
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .fillMaxHeight()
-                    .background(
-                        adaptiveColor.copy(alpha = if (isDarkMode) 0.15f else 0.12f).compositeOver(
-                            if (isDarkMode) Color(0xFF121212) else Color.White
-                        ),
-                        RoundedCornerShape(24.dp)
-                    )
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable {
+                        isLyricExpanded = !isLyricExpanded
+                    }
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                LazyColumn(
-                    modifier = Modifier.padding(12.dp),
-                    contentPadding = PaddingValues(bottom = 60.dp)
+                Text("Lyric :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (isLyricExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                        contentDescription = "Toggle Lyric", tint = Color.Gray,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    IconButton(
+                        onClick = { if (selectedLyricLines.isNotEmpty()) showLyricCardSheet = true },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(Icons.Rounded.ReceiptLong, "Buat Kartu Lirik",
+                            tint = if (selectedLyricLines.isNotEmpty()) adaptiveColor else Color.Gray.copy(alpha = 0.5f))
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+
+            AnimatedVisibility(
+                visible = isLyricExpanded,
+                modifier = Modifier.weight(lyricWeight.coerceAtLeast(0.001f)),
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Box(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
+                    when {
+                        isLyricLoading -> SkeletonLyricLoader(adaptiveColor = adaptiveColor)
+                        !syncedLyric.isNullOrEmpty() -> SyncedLyricView(
+                            lines = syncedLyric!!,
+                            currentPosition = currentPosition,
+                            highlightColor = adaptiveColor,
+                            selectedIndices = selectedLyricLines,
+                            onLineClick = { index ->
+                                selectedLyricLines = if (selectedLyricLines.contains(index))
+                                    selectedLyricLines - index else selectedLyricLines + index
+                            }
+                        )
+                        !plainLyric.isNullOrBlank() -> {
+                            val lyricScrollState = rememberScrollState()
+                            Text(plainLyric!!, textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().verticalScroll(lyricScrollState)
+                                    .padding(horizontal = 16.dp).padding(bottom = 24.dp))
+                        }
+                        else -> Text("Lirik belum tersedia", modifier = Modifier.align(Alignment.Center), color = Color.Gray)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Upnext toggle
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable {
+                        isUpnextExpanded = !isUpnextExpanded
+                    }
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Upnext :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Icon(
+                    imageVector = if (isUpnextExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = "Toggle Upnext", tint = Color.Gray
+                )
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+
+            val songs by viewModel.queue.collectAsState()
+            val upNextList = remember(songs, song) {
+                val idx = songs.indexOf(song)
+                if (idx == -1) songs else songs.drop(idx + 1)
+            }
+
+            AnimatedVisibility(
+                visible = isUpnextExpanded,
+                modifier = Modifier.weight(upnextWeight.coerceAtLeast(0.001f)),
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight()
+                        .background(
+                            adaptiveColor.copy(alpha = if (isDarkMode) 0.15f else 0.12f)
+                                .compositeOver(if (isDarkMode) Color(0xFF121212) else Color.White),
+                            RoundedCornerShape(24.dp)
+                        )
                 ) {
-                    items(upNextList) { upSong ->
+                    // Sama kayak listing di MainActivity: item dibagi rata biar full keliatan,
+                    // ga ada row yang kepotong setengah, + snap fling biar scroll-nya pas per-item.
+                    ResponsiveSnapList(
+                        items = upNextList,
+                        key = { it.id },
+                        scrollbarColor = adaptiveColor,
+                        modifier = Modifier.padding(12.dp),
+                        minItemHeight = 64.dp,
+                        bottomPadding = 4.dp
+                    ) { upSong, _ ->
                         UpnextSongRow(upSong = upSong, viewModel = viewModel, isDarkMode = isDarkMode) {
                             viewModel.playSong(upSong)
                         }
@@ -437,32 +441,30 @@ fun NowPlayingScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        // Controls (Persis Figma)
-        val controlsVisible by remember {
-            derivedStateOf { heroAnimProgress.value > 0.4f }
-        }
-        AnimatedVisibility(
-            visible = controlsVisible,
-            enter = fadeIn(tween(300)) + scaleIn(initialScale = 0.85f, animationSpec = tween(300, delayMillis = 50)),
-            exit = fadeOut(tween(200))
+        // Controls - SELALU tampil
+        Text(
+            text = "Controls :",
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(32.dp))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(adaptiveColor, adaptiveColor.copy(alpha = 0.5f))
+                    )
+                )
+                .padding(vertical = 16.dp)
         ) {
-            Column {
-                Text("Controls :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(32.dp))
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(adaptiveColor, adaptiveColor.copy(alpha = 0.5f))
-                            )
-                        )
-                        .padding(vertical = 16.dp)
-                ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -486,8 +488,6 @@ fun NowPlayingScreen(
                     badge = null,
                     bgColor = buttonBg, iconTint = iconColor
                 )
-            }
-        }
             }
         }
     }
@@ -554,12 +554,12 @@ fun UpnextSongRow(upSong: Song, viewModel: MusicViewModel, isDarkMode: Boolean, 
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )
         }
-        Text(
-            formatTime(upSong.duration),
-            color = if (isDarkMode) Color.White else Color.Black,
-            style = MaterialTheme.typography.bodySmall,
-            maxLines = 1
-        )
+        val mins = remember(upSong.duration) { TimeUnit.MILLISECONDS.toMinutes(upSong.duration).toString().padStart(2, '0') }
+        val secs = remember(upSong.duration) { (TimeUnit.MILLISECONDS.toSeconds(upSong.duration) % 60).toString().padStart(2, '0') }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(mins, color = if (isDarkMode) Color.White else Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold, lineHeight = 12.sp)
+            Text(secs, color = if (isDarkMode) Color.White else Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold, lineHeight = 12.sp)
+        }
     }
 }
 
@@ -608,26 +608,43 @@ fun SyncedLyricView(
 
     LaunchedEffect(activeIndex) {
         if (selectedIndices.isEmpty()) {
-            listState.animateScrollToItem((activeIndex - 1).coerceAtLeast(0))
+            // Scroll agar baris aktif berada di paling atas area yang terlihat,
+            // sehingga baris-baris lirik selanjutnya (upcoming) terlihat lebih banyak di bawahnya.
+            listState.animateScrollToItem(activeIndex)
         }
     }
 
-    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-        itemsIndexed(lines) { index, line ->
-            val isSelected = selectedIndices.contains(index)
+    // Menggunakan ResponsiveSnapList agar tinggi lirik dibagi rata sesuai sisa ruang
+    // dan tidak ada baris yang "kepotong" setengah di bagian bawah/atas.
+    ResponsiveSnapList(
+        items = lines,
+        key = { it.timeMs },
+        scrollbarColor = highlightColor,
+        listState = listState,
+        minItemHeight = 52.dp, // Balikin ke jarak aman biar ga kepotong ("...") pas 2 baris
+        bottomPadding = 8.dp
+    ) { line, itemHeight ->
+        val index = lines.indexOf(line)
+        val isSelected = selectedIndices.contains(index)
+        
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(itemHeight)
+                .padding(horizontal = 12.dp, vertical = 2.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (isSelected) highlightColor.copy(alpha = 0.2f) else Color.Transparent)
+                .clickable { onLineClick(index) },
+            contentAlignment = Alignment.Center
+        ) {
             Text(
                 line.text,
                 textAlign = TextAlign.Center,
                 fontSize = if (index == activeIndex) 16.sp else 14.sp,
                 fontWeight = if (index == activeIndex) FontWeight.Bold else FontWeight.Normal,
                 color = if (index == activeIndex) highlightColor else Color.Gray,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 2.dp) // Margin luar biar rounded-nya kelihatan
-                    .clip(RoundedCornerShape(12.dp)) // Potong melengkung dulu
-                    .background(if (isSelected) highlightColor.copy(alpha = 0.2f) else Color.Transparent)
-                    .clickable { onLineClick(index) }
-                    .padding(vertical = 8.dp, horizontal = 12.dp) // Margin dalem text (padding)
+                maxLines = 2,
+                lineHeight = 18.sp
             )
         }
     }

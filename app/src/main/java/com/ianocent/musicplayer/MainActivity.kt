@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -66,10 +67,15 @@ import java.util.concurrent.TimeUnit
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import kotlinx.coroutines.launch
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.graphics.compositeOver
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,8 +105,157 @@ class MainActivity : ComponentActivity() {
                     containerColor = animatedScaffoldBg
                 ) { innerPadding ->
                     AppNavHost(viewModel = viewModel, innerPadding = innerPadding)
+    }
+}
+}
+    }
+}
+
+@Composable
+fun FastScroller(
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    letters: List<String>,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    if (listState.layoutInfo.totalItemsCount <= 0 || letters.isEmpty()) return
+
+    var isDragging by remember { mutableStateOf(false) }
+    var tooltipLetter by remember { mutableStateOf("") }
+    var containerHeightPx by remember { mutableStateOf(0f) }
+    val coroutineScope = rememberCoroutineScope()
+    val density = androidx.compose.ui.platform.LocalDensity.current
+
+    val scrollFraction by remember {
+        derivedStateOf {
+            val idx = listState.firstVisibleItemIndex / listState.layoutInfo.totalItemsCount.toFloat()
+            idx.coerceIn(0f, 1f)
+        }
+    }
+
+    val letterFraction by remember(listState) {
+        derivedStateOf {
+            val total = listState.layoutInfo.totalItemsCount
+            if (total <= 0) 0f
+            else listState.firstVisibleItemIndex.toFloat() / total
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .width(36.dp)
+            .onGloballyPositioned { containerHeightPx = it.size.height.toFloat() }
+            .pointerInput(letters) {
+                detectVerticalDragGestures(
+                    onDragStart = { isDragging = true },
+                    onDragEnd = { isDragging = false },
+                    onDragCancel = { isDragging = false },
+                    onVerticalDrag = { change, _ ->
+                        change.consume()
+                        if (containerHeightPx > 0) {
+                            val fraction = (change.position.y / containerHeightPx).coerceIn(0f, 1f)
+                            val letterIdx = (fraction * (letters.size - 1)).toInt().coerceIn(0, letters.size - 1)
+                            tooltipLetter = letters[letterIdx]
+                            coroutineScope.launch {
+                                val targetIdx = listState.layoutInfo.totalItemsCount * fraction.toDouble()
+                                listState.scrollToItem(targetIdx.toInt())
+                            }
+                        }
+                    }
+                )
+            },
+        contentAlignment = Alignment.TopCenter
+    ) {
+        val totalItems = listState.layoutInfo.totalItemsCount
+        val visibleCount = listState.layoutInfo.visibleItemsInfo.size.coerceAtLeast(1)
+        val thumbFraction = (visibleCount.toFloat() / totalItems).coerceIn(0.06f, 1f)
+        val thumbHeightDp = with(density) { (containerHeightPx * thumbFraction).toDp() }
+        val offsetYDp = with(density) { (containerHeightPx * letterFraction * (1 - thumbFraction)).toDp() }
+        val tooltipOffsetY = with(density) { (-(containerHeightPx / 2f) + containerHeightPx * letterFraction).toDp() }
+
+        Box(
+            modifier = Modifier
+                .padding(end = 12.dp)
+                .offset(y = offsetYDp)
+                .width(4.dp)
+                .height(thumbHeightDp.coerceAtLeast(32.dp))
+                .clip(RoundedCornerShape(2.dp))
+                .background(color.copy(alpha = if (isDragging) 0.9f else 0.35f))
+        )
+
+        if (isDragging && tooltipLetter.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(x = (-28).dp, y = tooltipOffsetY)
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(color),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    tooltipLetter,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = MaterialTheme.typography.headlineSmall.fontSize,
+                    color = Color.White
+                )
+            }
+        }
+    }
+}
+
+/**
+ * List responsif yang selalu nampilin item secara utuh (ga ada yang kepotong),
+ * ngitung tinggi tiap item berdasarkan sisa ruang layar yang tersedia (BoxWithConstraints)
+ * dan pake snap fling behavior biar scroll-nya "magnet" ke item terdekat, jadi pas
+ * discroll ga ada moment nanggung/kepotong setengah item.
+ */
+@Composable
+fun <T> ResponsiveSnapList(
+    items: List<T>,
+    key: (T) -> Any,
+    scrollbarColor: Color,
+    modifier: Modifier = Modifier,
+    listState: androidx.compose.foundation.lazy.LazyListState = rememberLazyListState(),
+    minItemHeight: Dp = 72.dp,
+    topPadding: Dp = 0.dp,
+    bottomPadding: Dp = 90.dp,
+    itemContent: @Composable (T, Dp) -> Unit
+) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val availableHeight = (maxHeight - topPadding).coerceAtLeast(minItemHeight)
+        val itemsPerScreen = (availableHeight / minItemHeight).toInt().coerceAtLeast(1)
+        val itemHeight = availableHeight / itemsPerScreen
+        val snapBehavior = rememberSnapFlingBehavior(lazyListState = listState)
+
+        // Safety net: kalau sumber data (misalnya hasil search stream) kebetulan
+        // ngasih key yang kembar, LazyColumn bakal crash ("Key X was already used").
+        // Jadi di-dedupe dulu di sini biar UI ga pernah force close gara-gara itu.
+        val dedupedItems = remember(items) {
+            val seenKeys = HashSet<Any>()
+            items.filter { seenKeys.add(key(it)) }
+        }
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                state = listState,
+                flingBehavior = snapBehavior,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(top = topPadding, bottom = bottomPadding, end = 20.dp)
+            ) {
+                items(dedupedItems, key = key) { item ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(itemHeight),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        itemContent(item, itemHeight)
+                    }
                 }
             }
+            DraggableScrollbar(listState, scrollbarColor)
         }
     }
 }
@@ -175,6 +330,7 @@ fun ListingScreen(
     var showEditDialog by remember { mutableStateOf(false) }
     var editingPlaylist by remember { mutableStateOf<com.ianocent.musicplayer.data.Playlist?>(null) }
     var selectedPlaylistId by remember { mutableStateOf<Long?>(null) }
+    var selectedAlbum by remember { mutableStateOf<String?>(null) }
     val playlists by viewModel.playlists.collectAsState()
     val selectedPlaylist = remember(playlists, selectedPlaylistId) {
         playlists.find { it.id == selectedPlaylistId }
@@ -185,6 +341,8 @@ fun ListingScreen(
     val isUpdateAvailable by viewModel.isUpdateAvailable.collectAsState()
     val updateInfo by viewModel.updateInfo.collectAsState()
     val isDownloading by viewModel.isDownloading.collectAsState()
+
+    val sortMode by viewModel.sortMode.collectAsState()
 
     val paletteColors by viewModel.paletteColors.collectAsState()
     var controlBgColor by remember { mutableStateOf<Color?>(null) }
@@ -206,6 +364,10 @@ fun ListingScreen(
     val filteredSongs = remember(songs, searchQuery) {
         if (searchQuery.isBlank()) songs
         else songs.filter { it.title.contains(searchQuery, true) || it.artist.contains(searchQuery, true) }
+    }
+
+    val sortedSongs = remember(filteredSongs, sortMode) {
+        viewModel.applySort(filteredSongs)
     }
 
     if (!hasPermission) {
@@ -597,19 +759,64 @@ fun ListingScreen(
                 when (tab) {
                     0 -> { // SONGS
                         val listState = rememberLazyListState()
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            LazyColumn(
-                                state = listState,
-                                modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp, end = 20.dp)
+                        var showSortMenu by remember { mutableStateOf(false) }
+                        val sortLabels = listOf("A - Z", "Recently Added", "Most Played")
+
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 20.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                items(filteredSongs, key = { it.id }) { song ->
-                                    SongRow(song, viewModel, customOnClick = {
-                                        viewModel.setQueue(filteredSongs, startSong = song)
-                                    })
+                                Box {
+                                    IconButton(
+                                        onClick = { showSortMenu = true },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.Sort, "Sort",
+                                            tint = adaptiveColor,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = showSortMenu,
+                                        onDismissRequest = { showSortMenu = false }
+                                    ) {
+                                        sortLabels.forEachIndexed { index, label ->
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        if (sortMode == index) {
+                                                            Icon(Icons.Rounded.Check, null, modifier = Modifier.size(16.dp), tint = adaptiveColor)
+                                                            Spacer(Modifier.width(8.dp))
+                                                        }
+                                                        Text(label)
+                                                    }
+                                                },
+                                                onClick = {
+                                                    viewModel.setSortMode(index)
+                                                    showSortMenu = false
+                                                }
+                                            )
+                                        }
+                                    }
                                 }
                             }
-                            DraggableScrollbar(listState, adaptiveColor)
+
+                            ResponsiveSnapList(
+                                items = sortedSongs,
+                                key = { it.id },
+                                scrollbarColor = adaptiveColor,
+                                modifier = Modifier.weight(1f),
+                                listState = listState
+                            ) { song, _ ->
+                                SwipeableSongRow(song, viewModel, customOnClick = {
+                                    viewModel.setQueue(sortedSongs, startSong = song)
+                                }, adaptiveColor = adaptiveColor)
+                            }
                         }
                     }
 
@@ -617,18 +824,38 @@ fun ListingScreen(
                         val albumGroups = remember(songs) {
                             songs.groupBy { it.album }.entries.toList()
                         }
-                        val listState = rememberLazyListState()
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            LazyColumn(
-                                state = listState,
-                                modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp, end = 20.dp)
-                            ) {
-                                items(albumGroups) { (albumName, groupSongs) ->
-                                    AlbumRow(album = albumName, songs = groupSongs, viewModel = viewModel, count = groupSongs.size)
+
+                        if (selectedAlbum != null) {
+                            val albumSongs = albumGroups.find { it.key == selectedAlbum }?.value ?: emptyList()
+                            AlbumDetailView(
+                                album = selectedAlbum!!,
+                                songs = albumSongs,
+                                viewModel = viewModel,
+                                adaptiveColor = adaptiveColor,
+                                minibarTextColor = minibarTextColor,
+                                onBack = { selectedAlbum = null },
+                                onShuffle = {
+                                    if (albumSongs.isNotEmpty()) {
+                                        if (!isShuffleOn) viewModel.toggleShuffle()
+                                        viewModel.setQueue(albumSongs)
+                                    }
                                 }
+                            )
+                        } else {
+                            ResponsiveSnapList(
+                                items = albumGroups,
+                                key = { it.key },
+                                scrollbarColor = adaptiveColor,
+                                topPadding = 16.dp
+                            ) { entry, _ ->
+                                AlbumRow(
+                                    album = entry.key,
+                                    songs = entry.value,
+                                    viewModel = viewModel,
+                                    count = entry.value.size,
+                                    onClick = { selectedAlbum = entry.key }
+                                )
                             }
-                            DraggableScrollbar(listState, adaptiveColor)
                         }
                     }
 
@@ -660,26 +887,22 @@ fun ListingScreen(
                                     if (shouldLoadMore) viewModel.loadMoreStreamSongs()
                                 }
 
-                                Box(modifier = Modifier.fillMaxSize()) {
-                                    LazyColumn(
-                                        state = listState,
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp, end = 20.dp)
-                                    ) {
-                                        items(streamSongs, key = { it.id }) { song ->
-                                            SongRow(song, viewModel, customOnClick = {
-                                                viewModel.setQueue(streamSongs, startSong = song)
-                                            })
-                                        }
-                                    }
-                                    DraggableScrollbar(listState, adaptiveColor)
+                                ResponsiveSnapList(
+                                    items = streamSongs,
+                                    key = { it.id },
+                                    scrollbarColor = adaptiveColor,
+                                    listState = listState,
+                                    topPadding = 16.dp
+                                ) { song, _ ->
+                                    SongRow(song, viewModel, customOnClick = {
+                                        viewModel.setQueue(streamSongs, startSong = song)
+                                    })
                                 }
                             }
                         }
                     }
 
                     3 -> { // PLAYLISTS
-                        val listState = rememberLazyListState()
                         Box(modifier = Modifier.fillMaxSize()) {
                             if (selectedPlaylist != null) {
                                 PlaylistDetailView(
@@ -702,27 +925,23 @@ fun ListingScreen(
                                         Text("No playlists yet. Tap + to create.", color = Color.Gray)
                                     }
                                 } else {
-                                    Box(modifier = Modifier.fillMaxSize()) {
-                                        LazyColumn(
-                                            state = listState,
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp, end = 20.dp)
-                                        ) {
-                                            items(playlists, key = { it.id }) { playlist ->
-                                                PlaylistCard(
-                                                    playlist = playlist,
-                                                    onClick = { selectedPlaylistId = playlist.id },
-                                                    onDelete = { viewModel.deletePlaylist(playlist) },
-                                                    onEdit = {
-                                                        editingPlaylist = playlist
-                                                        showEditDialog = true
-                                                    },
-                                                    viewModel = viewModel,
-                                                    accentColor = adaptiveColor
-                                                )
-                                            }
-                                        }
-                                        DraggableScrollbar(listState, adaptiveColor)
+                                    ResponsiveSnapList(
+                                        items = playlists,
+                                        key = { it.id },
+                                        scrollbarColor = adaptiveColor,
+                                        topPadding = 16.dp
+                                    ) { playlist, _ ->
+                                        SwipeablePlaylistCard(
+                                            playlist = playlist,
+                                            onClick = { selectedPlaylistId = playlist.id },
+                                            onDelete = { viewModel.deletePlaylist(playlist) },
+                                            onEdit = {
+                                                editingPlaylist = playlist
+                                                showEditDialog = true
+                                            },
+                                            viewModel = viewModel,
+                                            accentColor = adaptiveColor
+                                        )
                                     }
                                 }
                                 // State buat nentuin menu kebuka atau ketutup
@@ -976,7 +1195,8 @@ fun SongRow(
     song: Song,
     viewModel: MusicViewModel,
     customOnClick: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onShowMenu: ((Song) -> Unit)? = null
 ) {
     var art by remember(song.id) { mutableStateOf<ImageBitmap?>(null) }
 
@@ -984,7 +1204,6 @@ fun SongRow(
         viewModel.getCachedArt(song) { bitmap -> art = bitmap?.asImageBitmap() }
     }
 
-    // Animasi transisi warna teks biar sinkron sama background
     val animatedTitleColor by animateColorAsState(
         targetValue = MaterialTheme.colorScheme.onSurface,
         animationSpec = tween(500),
@@ -1023,19 +1242,19 @@ fun SongRow(
             }
         }
         Spacer(modifier = Modifier.width(16.dp))
-        Column {
+        Column(modifier = Modifier.weight(1f)) {
             Text(
                 song.title,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Bold,
-                color = animatedTitleColor, // <- Pake warna yang dianimasikan
+                color = animatedTitleColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
                 song.artist,
                 style = MaterialTheme.typography.bodySmall,
-                color = animatedArtistColor, // <- Pake warna yang dianimasikan
+                color = animatedArtistColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -1055,10 +1274,15 @@ fun PlaylistCard(
     var art by remember(playlist.id, playlist.imageUri) { mutableStateOf<ImageBitmap?>(null) }
 
     LaunchedEffect(playlist.id, playlist.imageUri) {
-        if (playlist.imageUri != null && playlist.songIds.isNotEmpty()) {
-            val firstSong = viewModel.getSongsInPlaylist(playlist).firstOrNull()
-            firstSong?.let { song ->
-                viewModel.getCachedArt(song) { bitmap -> art = bitmap?.asImageBitmap() }
+        if (playlist.imageUri != null) {
+            try {
+                val uri = android.net.Uri.parse(playlist.imageUri)
+                val inputStream = viewModel.getApplication<android.app.Application>().contentResolver.openInputStream(uri)
+                val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+                inputStream?.close()
+                art = bitmap?.asImageBitmap()
+            } catch (e: Exception) {
+                art = null
             }
         } else if (playlist.songIds.isNotEmpty()) {
             val firstSong = viewModel.getSongsInPlaylist(playlist).firstOrNull()
@@ -1105,7 +1329,7 @@ fun PlaylistCard(
                 playlist.name,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Bold,
-                color = animatedTitleColor, // <- Pake warna yang dianimasikan
+                color = animatedTitleColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -1115,12 +1339,201 @@ fun PlaylistCard(
                 color = Color.Gray
             )
         }
-        IconButton(onClick = onEdit) {
-            Icon(Icons.Rounded.Edit, contentDescription = "Edit playlist", tint = accentColor)
+    }
+}
+
+@Composable
+fun SwipeablePlaylistCard(
+    playlist: com.ianocent.musicplayer.data.Playlist,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+    onEdit: () -> Unit,
+    viewModel: MusicViewModel,
+    accentColor: Color = MaterialTheme.colorScheme.primary
+) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val swipeThresholdPx = with(density) { 72.dp.toPx() }
+    val maxSwipePx = with(density) { 88.dp.toPx() }
+
+    var offsetX by remember { mutableStateOf(0f) }
+    var isSwipedOpen by remember { mutableStateOf(false) }
+    var showMenuDialog by remember { mutableStateOf(false) }
+    var showPlaylistCardSheet by remember { mutableStateOf(false) }
+
+    val animatedOffsetX by animateFloatAsState(
+        targetValue = offsetX,
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = 400f),
+        label = "swipe_offset"
+    )
+
+    val revealProgress = (offsetX / swipeThresholdPx).coerceIn(0f, 1f)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+    ) {
+        if (offsetX > 4f) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 16.dp)
+                    .size(40.dp)
+                    .graphicsLayer {
+                        alpha = revealProgress
+                        scaleX = 0.6f + 0.4f * revealProgress
+                        scaleY = 0.6f + 0.4f * revealProgress
+                    }
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(accentColor.copy(alpha = 0.2f))
+                    .clickable(enabled = isSwipedOpen) {
+                        showMenuDialog = true
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Rounded.MoreVert,
+                    contentDescription = "Menu",
+                    tint = accentColor,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
-        IconButton(onClick = onDelete) {
-            Icon(Icons.Rounded.Delete, contentDescription = "Delete playlist", tint = accentColor.copy(alpha = 0.7f))
+
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(animatedOffsetX.roundToInt(), 0) }
+                .fillMaxWidth()
+                .pointerInput(playlist.id) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            offsetX = if (offsetX >= swipeThresholdPx) {
+                                isSwipedOpen = true
+                                swipeThresholdPx
+                            } else {
+                                isSwipedOpen = false
+                                0f
+                            }
+                        },
+                        onDragCancel = {
+                            offsetX = if (isSwipedOpen) swipeThresholdPx else 0f
+                        }
+                    ) { change, dragAmount ->
+                        change.consume()
+                        offsetX = (offsetX + dragAmount).coerceIn(0f, maxSwipePx)
+                    }
+                }
+        ) {
+            PlaylistCard(
+                playlist = playlist,
+                onClick = {
+                    if (isSwipedOpen) {
+                        offsetX = 0f
+                        isSwipedOpen = false
+                    } else {
+                        onClick()
+                    }
+                },
+                onDelete = {},
+                onEdit = {},
+                viewModel = viewModel,
+                accentColor = accentColor
+            )
         }
+    }
+
+    if (showMenuDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showMenuDialog = false
+                offsetX = 0f
+                isSwipedOpen = false
+            },
+            containerColor = accentColor.copy(alpha = 0.15f).compositeOver(
+                MaterialTheme.colorScheme.surface
+            ),
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Text(
+                    playlist.name,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        "${playlist.songIds.size} songs",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    RoundedClickableRow(
+                        onClick = {
+                            showMenuDialog = false
+                            showPlaylistCardSheet = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            Icons.Rounded.Photo,
+                            contentDescription = null,
+                            tint = accentColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text("Playlist Card", fontWeight = FontWeight.SemiBold)
+                    }
+
+                    RoundedClickableRow(
+                        onClick = {
+                            showMenuDialog = false
+                            onEdit()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            Icons.Rounded.Edit,
+                            contentDescription = null,
+                            tint = accentColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text("Edit Playlist", fontWeight = FontWeight.SemiBold)
+                    }
+
+                    RoundedClickableRow(
+                        onClick = {
+                            showMenuDialog = false
+                            onDelete()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            Icons.Rounded.Delete,
+                            contentDescription = null,
+                            tint = Color.Red.copy(alpha = 0.8f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text("Delete Playlist", fontWeight = FontWeight.SemiBold, color = Color.Red.copy(alpha = 0.8f))
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {}
+        )
+    }
+
+    if (showPlaylistCardSheet) {
+        com.ianocent.musicplayer.ui.PlaylistCardSheet(
+            playlist = playlist,
+            viewModel = viewModel,
+            accentColor = accentColor,
+            onDismiss = { showPlaylistCardSheet = false }
+        )
     }
 }
 
@@ -1161,7 +1574,7 @@ fun GroupRow(name: String, count: Int) {
 }
 
 @Composable
-fun AlbumRow(album: String, songs: List<Song>, viewModel: MusicViewModel, count: Int) {
+fun AlbumRow(album: String, songs: List<Song>, viewModel: MusicViewModel, count: Int, onClick: () -> Unit = {}) {
     var art by remember(album) { mutableStateOf<ImageBitmap?>(null) }
 
     LaunchedEffect(album, songs) {
@@ -1180,6 +1593,7 @@ fun AlbumRow(album: String, songs: List<Song>, viewModel: MusicViewModel, count:
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable { onClick() }
             .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1207,9 +1621,132 @@ fun AlbumRow(album: String, songs: List<Song>, viewModel: MusicViewModel, count:
                 album,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Bold,
-                color = animatedTitleColor // <- Pake warna yang dianimasikan
+                color = animatedTitleColor
             )
             Text("$count songs", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+        }
+    }
+}
+
+@Composable
+fun AlbumDetailView(
+    album: String,
+    songs: List<Song>,
+    viewModel: MusicViewModel,
+    adaptiveColor: Color,
+    minibarTextColor: Color,
+    onBack: () -> Unit,
+    onShuffle: () -> Unit
+) {
+    val lazyListState = rememberLazyListState()
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Text(
+                text = album,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 24.dp, bottom = 16.dp),
+                textAlign = TextAlign.Center
+            )
+
+            if (songs.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize().weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No songs in this album", color = Color.Gray)
+                }
+            } else {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        state = lazyListState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 12.dp),
+                        contentPadding = PaddingValues(bottom = 120.dp, end = 20.dp)
+                    ) {
+                        items(songs, key = { it.id }) { song ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
+                                        alpha = 0.3f
+                                    )
+                                ),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                SongRow(
+                                    song = song,
+                                    viewModel = viewModel,
+                                    customOnClick = {
+                                        viewModel.setQueue(songs, startSong = song)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    DraggableScrollbar(lazyListState, adaptiveColor)
+                }
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            var isMenuExpanded by remember { mutableStateOf(false) }
+
+            AnimatedVisibility(
+                visible = isMenuExpanded,
+                enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 })
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    SmallFloatingActionButton(
+                        onClick = onBack,
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ) { Icon(Icons.Rounded.ArrowBackIosNew, contentDescription = "Back") }
+
+                    SmallFloatingActionButton(
+                        onClick = {
+                            if (songs.isNotEmpty()) {
+                                viewModel.setQueue(songs)
+                            }
+                            isMenuExpanded = false
+                        },
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ) { Icon(Icons.Rounded.PlayArrow, contentDescription = "Play All") }
+
+                    SmallFloatingActionButton(
+                        onClick = { onShuffle(); isMenuExpanded = false },
+                        containerColor = adaptiveColor,
+                        contentColor = minibarTextColor
+                    ) { Icon(Icons.Rounded.Shuffle, contentDescription = "Shuffle") }
+                }
+            }
+
+            FloatingActionButton(
+                onClick = { isMenuExpanded = !isMenuExpanded },
+                containerColor = if (isMenuExpanded) MaterialTheme.colorScheme.surfaceVariant else adaptiveColor,
+                contentColor = if (isMenuExpanded) MaterialTheme.colorScheme.onSurfaceVariant else minibarTextColor,
+                shape = CircleShape
+            ) {
+                Icon(
+                    imageVector = if (isMenuExpanded) Icons.Rounded.Close else Icons.Rounded.Menu,
+                    contentDescription = "Menu"
+                )
+            }
         }
     }
 }
@@ -1803,6 +2340,278 @@ fun CreatePlaylistDialog(
                 onClick = { onCreate(name, selectedIds.toList()) },
                 enabled = name.isNotBlank()
             ) { Text("Create") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+@Composable
+fun SwipeableSongRow(
+    song: Song,
+    viewModel: MusicViewModel,
+    customOnClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+    adaptiveColor: Color
+) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val swipeThresholdPx = with(density) { 72.dp.toPx() }
+    val maxSwipePx = with(density) { 88.dp.toPx() }
+
+    var offsetX by remember { mutableStateOf(0f) }
+    var isSwipedOpen by remember { mutableStateOf(false) }
+    var showActionDialog by remember { mutableStateOf(false) }
+    var showSongCardSheet by remember { mutableStateOf(false) }
+    var showEditDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    
+    // Low-res for the list
+    var songArtLowRes by remember(song.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    // High-res for the card
+    var songArtHighRes by remember(song.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
+
+    LaunchedEffect(song.id) {
+        viewModel.getCachedArt(song) { bitmap -> songArtLowRes = bitmap }
+    }
+
+    // Load high-res only when card is about to be shown
+    LaunchedEffect(showSongCardSheet) {
+        if (showSongCardSheet && songArtHighRes == null) {
+            viewModel.getHighResArt(song) { bitmap -> songArtHighRes = bitmap }
+        }
+    }
+
+    val animatedOffsetX by animateFloatAsState(
+        targetValue = offsetX,
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = 400f),
+        label = "swipe_offset"
+    )
+
+    val revealProgress = (offsetX / swipeThresholdPx).coerceIn(0f, 1f)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+    ) {
+        if (offsetX > 4f) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 16.dp) // Symmetrical center in 72dp threshold
+                    .size(40.dp)
+                    .graphicsLayer {
+                        alpha = revealProgress
+                        scaleX = 0.6f + 0.4f * revealProgress
+                        scaleY = 0.6f + 0.4f * revealProgress
+                    }
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(adaptiveColor.copy(alpha = 0.2f))
+                    .clickable(enabled = isSwipedOpen) {
+                        showActionDialog = true
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Rounded.MoreVert,
+                    contentDescription = "Menu",
+                    tint = adaptiveColor,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(animatedOffsetX.roundToInt(), 0) }
+                .fillMaxWidth()
+                .pointerInput(song.id) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            offsetX = if (offsetX >= swipeThresholdPx) {
+                                isSwipedOpen = true
+                                swipeThresholdPx
+                            } else {
+                                isSwipedOpen = false
+                                0f
+                            }
+                        },
+                        onDragCancel = {
+                            offsetX = if (isSwipedOpen) swipeThresholdPx else 0f
+                        }
+                    ) { change, dragAmount ->
+                        change.consume()
+                        offsetX = (offsetX + dragAmount).coerceIn(0f, maxSwipePx)
+                    }
+                }
+        ) {
+            SongRow(
+                song = song,
+                viewModel = viewModel,
+                customOnClick = {
+                    if (isSwipedOpen) {
+                        offsetX = 0f
+                        isSwipedOpen = false
+                    } else {
+                        customOnClick?.invoke()
+                    }
+                }
+            )
+        }
+    }
+
+    if (showActionDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showActionDialog = false
+                offsetX = 0f
+                isSwipedOpen = false
+            },
+            containerColor = adaptiveColor.copy(alpha = 0.15f).compositeOver(
+                MaterialTheme.colorScheme.surface
+            ),
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Text(
+                    song.title,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        song.artist,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    RoundedClickableRow(
+                        onClick = {
+                            showActionDialog = false
+                            showSongCardSheet = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Rounded.Photo, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text("Song Card", fontWeight = FontWeight.SemiBold)
+                    }
+
+                    RoundedClickableRow(
+                        onClick = {
+                            showActionDialog = false
+                            showEditDialog = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Rounded.Edit, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text("Edit Song Info", fontWeight = FontWeight.SemiBold)
+                    }
+
+                    RoundedClickableRow(
+                        onClick = {
+                            showActionDialog = false
+                            showDeleteConfirm = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Rounded.Delete, contentDescription = null, tint = Color.Red.copy(alpha = 0.8f), modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text("Delete Song", fontWeight = FontWeight.SemiBold, color = Color.Red.copy(alpha = 0.8f))
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {}
+        )
+    }
+
+    if (showSongCardSheet) {
+        com.ianocent.musicplayer.ui.SongCardSheet(
+            song = song,
+            albumArt = songArtHighRes ?: songArtLowRes, // Use high-res if available
+            accentColor = adaptiveColor,
+            onDismiss = { showSongCardSheet = false }
+        )
+    }
+
+    if (showEditDialog) {
+        EditSongDialog(
+            song = song,
+            onDismiss = { showEditDialog = false },
+            onUpdate = { newTitle, newArtist ->
+                viewModel.updateSongInfo(song.id, newTitle, newArtist)
+                showEditDialog = false
+            }
+        )
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(24.dp),
+            title = { Text("Delete Song", fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to delete \"${song.title}\"?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteSong(song)
+                        showDeleteConfirm = false
+                    }
+                ) { Text("Delete", color = Color.Red) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+@Composable
+fun EditSongDialog(
+    song: Song,
+    onDismiss: () -> Unit,
+    onUpdate: (String, String) -> Unit
+) {
+    var title by remember { mutableStateOf(song.title) }
+    var artist by remember { mutableStateOf(song.artist) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(28.dp),
+        title = { Text("Edit Song Info", fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Title") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = artist,
+                    onValueChange = { artist = it },
+                    label = { Text("Artist") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onUpdate(title, artist) },
+                enabled = title.isNotBlank() && artist.isNotBlank()
+            ) { Text("Save") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }

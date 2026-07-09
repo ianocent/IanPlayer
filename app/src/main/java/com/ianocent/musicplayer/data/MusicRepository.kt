@@ -1,6 +1,7 @@
 package com.ianocent.musicplayer.data
 
 import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.provider.MediaStore
 
@@ -13,7 +14,8 @@ class MusicRepository(private val context: Context) {
             MediaStore.Audio.Media.TITLE,
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.DURATION,
-            MediaStore.Audio.Media.ALBUM
+            MediaStore.Audio.Media.ALBUM,
+            MediaStore.Audio.Media.DATE_ADDED
         )
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
 
@@ -22,13 +24,14 @@ class MusicRepository(private val context: Context) {
             projection,
             selection,
             null,
-            "${MediaStore.Audio.Media.TITLE} ASC"
+            null
         )?.use { cursor ->
             val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
             val titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
             val artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
             val durationCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
             val albumCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
+            val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
 
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idCol)
@@ -42,11 +45,42 @@ class MusicRepository(private val context: Context) {
                         artist = cursor.getString(artistCol) ?: "Unknown Artist",
                         duration = cursor.getLong(durationCol),
                         uri = uri,
-                        album = cursor.getString(albumCol) ?: "Unknown Album"
+                        album = cursor.getString(albumCol) ?: "Unknown Album",
+                        dateAdded = cursor.getLong(dateCol)
                     )
                 )
             }
         }
         return songs
+    }
+
+    fun deleteSong(song: Song): Boolean {
+        return try {
+            val deletedRows = context.contentResolver.delete(
+                song.uri,
+                null,
+                null
+            )
+            deletedRows > 0
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    fun updateSongInfo(songId: Long, newTitle: String, newArtist: String) {
+        try {
+            val uri = ContentUris.withAppendedId(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                songId
+            )
+            val values = ContentValues().apply {
+                put(MediaStore.Audio.Media.TITLE, newTitle)
+                put(MediaStore.Audio.Media.ARTIST, newArtist)
+            }
+            context.contentResolver.update(uri, values, null, null)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }

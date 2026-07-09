@@ -10,5 +10,6 @@ data class Song(
     val uri: Uri,
     val album: String = "Unknown Album",
     val isStream: Boolean = false,
-    val remoteArtUrl: String? = null
+    val remoteArtUrl: String? = null,
+    val dateAdded: Long = 0L
 )
