@@ -8,6 +8,9 @@ import com.ianocent.musicplayer.data.LyricRepository
 import com.ianocent.musicplayer.data.MusicRepository
 import com.ianocent.musicplayer.data.Song
 import com.ianocent.musicplayer.player.PlayerManager
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -53,7 +56,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private var searchJob: Job? = null
 
-    private val streamPageSize = 10
+    private val streamPageSize = 50
 
     private val _sortMode = MutableStateFlow(0)
     val sortMode: StateFlow<Int> = _sortMode
@@ -87,6 +90,132 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         counts[songId] = (counts[songId] ?: 0) + 1
         _playCounts.value = counts
         savePlayCounts(counts)
+        recordPlayHistory(songId)
+    }
+
+    private fun recordPlayHistory(songId: Long) {
+        val now = System.currentTimeMillis()
+        val history = loadPlayHistory().toMutableList()
+        history.add(Pair(songId, now))
+        // Keep only last 90 days of history
+        val cutoff = now - 90L * 24 * 60 * 60 * 1000
+        val trimmed = history.filter { it.second > cutoff }
+        savePlayHistory(trimmed)
+    }
+
+    private fun loadPlayHistory(): List<Pair<Long, Long>> {
+        val json = prefs.getString("play_history", null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(json)
+            val list = mutableListOf<Pair<Long, Long>>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                list.add(Pair(obj.getLong("id"), obj.getLong("ts")))
+            }
+            list
+        } catch (_: Exception) { emptyList() }
+    }
+
+    private fun savePlayHistory(history: List<Pair<Long, Long>>) {
+        val arr = JSONArray()
+        history.forEach { (id, ts) ->
+            val obj = JSONObject()
+            obj.put("id", id)
+            obj.put("ts", ts)
+            arr.put(obj)
+        }
+        prefs.edit().putString("play_history", arr.toString()).apply()
+    }
+
+    fun computeMonthlyRecap() {
+        viewModelScope.launch {
+            val recap = withContext(Dispatchers.IO) {
+                try {
+                    val now = System.currentTimeMillis()
+                    val monthStart = now - 30L * 24 * 60 * 60 * 1000
+                    val history = loadPlayHistory().filter { it.second >= monthStart }
+
+                    if (history.isEmpty()) return@withContext null
+
+                    // Count plays per song this month
+                    val songPlayCounts = history.groupBy { it.first }.mapValues { it.value.size }
+                    val totalPlays = history.size
+
+                    // Get all song IDs, cross-reference with song list
+                    val allSongs = _songs.value
+                    val monthSongs = songPlayCounts.mapNotNull { (id, count) ->
+                        allSongs.find { it.id == id }?.let { it to count }
+                    }.sortedByDescending { it.second }
+
+                    // Top 5 songs
+                    val topSongs = monthSongs.take(5).map { it.first }
+
+                    // Top artists
+                    val artistCounts = mutableMapOf<String, Int>()
+                    monthSongs.forEach { (song, count) ->
+                        artistCounts[song.artist] = (artistCounts[song.artist] ?: 0) + count
+                    }
+                    val topArtists = artistCounts.entries
+                        .sortedByDescending { it.value }
+                        .take(5)
+                        .map { it.key to it.value }
+
+                    // Total minutes (approximate, using average 3.5 min per song)
+                    val totalMinutes = (totalPlays * 3.5).toLong()
+
+                    // Genre/taste detection based on artist keywords
+                    val tasteComment = generateTasteComment(topArtists, monthSongs)
+
+                    val monthName = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(now))
+
+                    com.ianocent.musicplayer.data.MonthlyRecap(
+                        monthLabel = monthName,
+                        totalPlays = totalPlays,
+                        totalMinutes = totalMinutes,
+                        topSongs = topSongs,
+                        topArtists = topArtists,
+                        topGenres = emptyList(),
+                        tasteComment = tasteComment
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    null
+                }
+            }
+
+            if (recap != null && recap.totalPlays >= 5) {
+                _monthlyRecap.value = recap
+                _showRecap.value = true
+            }
+        }
+    }
+
+    fun dismissRecap() {
+        _showRecap.value = false
+    }
+
+    private fun generateTasteComment(
+        topArtists: List<Pair<String, Int>>,
+        monthSongs: List<Pair<Song, Int>>
+    ): String {
+        if (topArtists.isEmpty()) return "Start listening to discover your music taste!"
+
+        val artistNames = topArtists.take(3).map { it.first }
+        val totalSongs = monthSongs.distinctBy { it.first.id }.size
+        val topArtistName = artistNames.firstOrNull() ?: "music"
+
+        val comments = listOf(
+            "You've been vibing with $topArtistName a lot this month. Your taste is getting refined!",
+            "$topArtistName is clearly your go-to artist right now. Solid choice!",
+            "Your playlist is showing great variety with ${artistNames.joinToString(", ")}. Keep exploring!",
+            "You discovered $totalSongs different songs this month. Your music journey is on fire!",
+            "The vibes are strong this month! $topArtistName + ${artistNames.drop(1).firstOrNull() ?: "others"} = perfect combo.",
+            "Your music taste is uniquely you. Love the energy from $topArtistName!",
+            "What a month! You've been on a musical adventure with $totalSongs tracks. Respect the grind.",
+            "$topArtistName has been your soundtrack this month. Iconic taste!"
+        )
+
+        return comments[topArtists.hashCode().rem(comments.size).let { if (it < 0) it + comments.size else it }]
     }
 
     fun applySort(songs: List<Song>): List<Song> {
@@ -103,7 +232,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     // Fungsi khusus buat search di Tab Stream dengan sistem Debounce (Anti-lag)
     fun searchRemoteSongs(query: String) {
-        searchJob?.cancel() // Batalin pencarian sebelumnya kalau user ngetik cepet
+        searchJob?.cancel()
 
         if (query.isBlank()) {
             _allStreamSongs.value = emptyList()
@@ -113,20 +242,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         searchJob = viewModelScope.launch {
-            delay(500)
+            delay(400)
             _isSearchingRemote.value = true
-            var results = streamRepository.searchSongs(query)
-            if (results.isEmpty()) {
-                results = ytMusicRepository.searchSongs(query)
+            try {
+                // Jalankan ketiga sumber secara paralel biar cepat
+                val allResults = coroutineScope {
+                    val deferreds = listOf(
+                        async { streamRepository.searchSongs(query) },
+                        async { ytMusicRepository.searchSongs(query) },
+                        async { soundCloudRepository.searchSongs(query) }
+                    )
+                    val resultsLists = deferreds.awaitAll()
+                    resultsLists.flatten()
+                }
+                val distinctResults = allResults.distinctBy { it.id }
+                _allStreamSongs.value = distinctResults
+                _streamSongs.value = distinctResults.take(streamPageSize)
+            } catch (_: CancellationException) {
+                // search dibatalkan, abaikan
             }
-            if (results.isEmpty()) {
-                results = soundCloudRepository.searchSongs(query)
-            }
-            // distinctBy id: API kadang balikin track duplikat, kalau dibiarin bikin
-            // LazyColumn crash ("Key X was already used") pas key = it.id ketemu kembar
-            val distinctResults = results.distinctBy { it.id }
-            _allStreamSongs.value = distinctResults
-            _streamSongs.value = distinctResults.take(streamPageSize)
             _isSearchingRemote.value = false
         }
     }
@@ -276,6 +410,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _isDownloading = MutableStateFlow(false)
     val isDownloading: StateFlow<Boolean> = _isDownloading
 
+    private val _monthlyRecap = MutableStateFlow<com.ianocent.musicplayer.data.MonthlyRecap?>(null)
+    val monthlyRecap: StateFlow<com.ianocent.musicplayer.data.MonthlyRecap?> = _monthlyRecap
+
+    private val _showRecap = MutableStateFlow(false)
+    val showRecap: StateFlow<Boolean> = _showRecap
+
     private val artCache = mutableMapOf<Long, android.graphics.Bitmap?>()
 
     fun getCachedArt(song: Song, onLoaded: (android.graphics.Bitmap?) -> Unit) {
@@ -307,7 +447,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val art = withContext(Dispatchers.IO) {
                 if (song.isStream && !song.remoteArtUrl.isNullOrEmpty()) {
                     try {
-                        val url = java.net.URL(song.remoteArtUrl)
+                        // High-res fix for YT Music & common CDN thumbnails
+                        val highResUrl = when {
+                            song.remoteArtUrl.contains("=w") && song.remoteArtUrl.contains("-h") -> {
+                                song.remoteArtUrl.replace(Regex("=w\\d+-h\\d+.*"), "=w1000-h1000-l90-rj")
+                            }
+                            song.remoteArtUrl.contains("=s") -> {
+                                song.remoteArtUrl.replace(Regex("=s\\d+.*"), "=s1000-c-rj")
+                            }
+                            song.remoteArtUrl.contains("googleusercontent.com") && !song.remoteArtUrl.contains("=") -> {
+                                "${song.remoteArtUrl}=w1000-h1000-l90-rj"
+                            }
+                            song.remoteArtUrl.contains("ytimg.com") -> {
+                                song.remoteArtUrl.replace("default.jpg", "maxresdefault.jpg")
+                                    .replace("mqdefault.jpg", "maxresdefault.jpg")
+                                    .replace("hqdefault.jpg", "maxresdefault.jpg")
+                            }
+                            else -> song.remoteArtUrl
+                        }
+                        val url = java.net.URL(highResUrl)
                         val conn = url.openConnection() as java.net.HttpURLConnection
                         conn.doInput = true
                         conn.connect()
@@ -330,6 +488,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _playCounts.value = loadPlayCounts()
         _sortMode.value = prefs.getInt("sort_mode", 0)
         checkForUpdate()
+        viewModelScope.launch { computeMonthlyRecap() }
         playerManager.initialize {
             val player = playerManager.player
 
@@ -593,6 +752,78 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         downloadReceiver = UpdateManager.registerDownloadReceiver(context, downloadId) {
             _isDownloading.value = false
             UpdateManager.installApk(context)
+        }
+    }
+
+    fun getAudioFormats(song: Song, onResult: (List<com.ianocent.musicplayer.data.AudioFormat>) -> Unit) {
+        val remoteId = song.remoteId ?: run {
+            onResult(listOf(com.ianocent.musicplayer.data.AudioFormat(
+                url = song.uri.toString(),
+                mimeType = "audio/mpeg",
+                bitrate = 0,
+                qualityLabel = "Standard"
+            )))
+            return
+        }
+        viewModelScope.launch {
+            val formats = if (remoteId.length == 11 || (!song.uri.toString().contains("saavn") && !song.uri.toString().contains("soundcloud"))) {
+                ytMusicRepository.getAudioFormats(remoteId)
+            } else emptyList()
+            
+            if (formats.isEmpty()) {
+                onResult(listOf(com.ianocent.musicplayer.data.AudioFormat(
+                    url = song.uri.toString(),
+                    mimeType = "audio/mpeg",
+                    bitrate = 0,
+                    qualityLabel = "Standard"
+                )))
+            } else {
+                onResult(formats.sortedByDescending { it.bitrate })
+            }
+        }
+    }
+
+    fun downloadSong(song: Song, format: com.ianocent.musicplayer.data.AudioFormat) {
+        val context = getApplication<android.app.Application>()
+        val downloadManager = context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
+        
+        // Clean filename: remove illegal characters
+        val cleanTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        val cleanArtist = song.artist.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        val fileName = "$cleanTitle - $cleanArtist.mp3"
+
+        val request = android.app.DownloadManager.Request(android.net.Uri.parse(format.url))
+            .setTitle(song.title)
+            .setDescription("Downloading $cleanArtist - ${format.qualityLabel}")
+            .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_MUSIC, "IanPlayer/$fileName")
+            .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            .setAllowedOverMetered(true)
+            .setAllowedOverRoaming(true)
+
+        val downloadId = downloadManager.enqueue(request)
+        
+        // Register receiver for download completion
+        val completionReceiver = com.ianocent.musicplayer.data.DownloadCompletionReceiver(
+            downloadId,
+            song
+        ) {
+            refreshSongs()
+        }
+        
+        val filter = android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            context.registerReceiver(completionReceiver, filter, android.content.Context.RECEIVER_EXPORTED)
+        } else {
+            context.registerReceiver(completionReceiver, filter)
+        }
+    }
+    
+    private fun refreshSongs() {
+        viewModelScope.launch {
+            val list = withContext(Dispatchers.IO) { repository.getAllSongs() }
+            originalOrder = list
+            _songs.value = list
+            _queue.value = list
         }
     }
 

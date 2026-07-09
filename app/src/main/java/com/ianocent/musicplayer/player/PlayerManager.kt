@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -31,9 +32,20 @@ class PlayerManager(private val context: Context) {
 
     fun playSong(song: Song) {
         try {
+            val metadata = MediaMetadata.Builder()
+                .setTitle(song.title)
+                .setArtist(song.artist)
+                .setAlbumTitle(song.album)
+                .apply {
+                    if (!song.remoteArtUrl.isNullOrEmpty()) {
+                        setArtworkUri(android.net.Uri.parse(song.remoteArtUrl))
+                    }
+                }
+                .build()
             val mediaItem = MediaItem.Builder()
                 .setUri(song.uri)
                 .setMediaId(song.id.toString())
+                .setMediaMetadata(metadata)
                 .build()
             player?.let { p ->
                 p.repeatMode = Player.REPEAT_MODE_OFF

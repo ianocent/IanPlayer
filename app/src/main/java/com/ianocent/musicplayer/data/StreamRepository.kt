@@ -70,6 +70,9 @@ class StreamRepository {
                 val durationSec = item.optLong("duration", 0L)
                 val durationMs = durationSec * 1000L
 
+                val albumObj = item.optJSONObject("album")
+                val album = albumObj?.optString("name", "Unknown Album") ?: "Unknown Album"
+
                 val images = item.optJSONArray("image")
                 val artUrl = if (images != null && images.length() > 0) {
                     images.getJSONObject(images.length() - 1).optString("url", "")
@@ -86,10 +89,12 @@ class StreamRepository {
                             id = id.hashCode().toLong(),
                             title = title,
                             artist = artist,
+                            album = album,
                             duration = durationMs,
                             uri = Uri.parse(streamUrl),
                             isStream = true,
-                            remoteArtUrl = artUrl
+                            remoteArtUrl = artUrl,
+                            remoteId = id
                         )
                     )
                 }

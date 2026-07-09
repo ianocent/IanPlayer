@@ -15,8 +15,8 @@ android {
         applicationId = "com.ianocent.musicplayer"
         minSdk = 24
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.5.5"
+        versionCode = 6
+        versionName = "2.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -76,4 +76,7 @@ dependencies {
     // zemer-cipher logs via Timber but only "compileOnly" depends on it; without this it would
     // crash at runtime with NoClassDefFoundError the first time it logs.
     implementation("com.jakewharton.timber:timber:5.0.1")
+    
+    // For writing audio metadata tags (MP3)
+    implementation("com.mpatric:mp3agic:0.9.1")
 }

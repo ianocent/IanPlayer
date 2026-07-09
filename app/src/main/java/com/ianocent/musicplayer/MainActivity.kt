@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -322,6 +323,8 @@ fun ListingScreen(
     val duration by viewModel.duration.collectAsState()
     val isDarkMode by viewModel.isDarkMode.collectAsState()
     val ambientColor by viewModel.ambientColor.collectAsState()
+    val showRecap by viewModel.showRecap.collectAsState()
+    val monthlyRecap by viewModel.monthlyRecap.collectAsState()
 
     var selectedTab by remember { mutableStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
@@ -472,8 +475,8 @@ fun ListingScreen(
                             Icon(Icons.Rounded.Search, contentDescription = "Search")
                         }
                         Text(
-                            "ıanplayer",
-                            style = MaterialTheme.typography.titleLarge,
+                            "ıanplayer.",
+                            style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier.weight(0.5f),
@@ -803,6 +806,20 @@ fun ListingScreen(
                                             )
                                         }
                                     }
+                                }
+                            }
+
+                            AnimatedVisibility(
+                                visible = showRecap && monthlyRecap != null,
+                                enter = fadeIn() + slideInVertically(),
+                                exit = fadeOut() + slideOutVertically()
+                            ) {
+                                monthlyRecap?.let { recap ->
+                                    MusicRecapCard(
+                                        recap = recap,
+                                        accentColor = adaptiveColor,
+                                        onDismiss = { viewModel.dismissRecap() }
+                                    )
                                 }
                             }
 
@@ -2646,5 +2663,165 @@ fun RoundedCheckbox(
                 modifier = Modifier.size(16.dp)
             )
         }
+    }
+}
+
+@Composable
+fun MusicRecapCard(
+    recap: com.ianocent.musicplayer.data.MonthlyRecap,
+    accentColor: Color,
+    onDismiss: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = accentColor.copy(alpha = 0.08f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = recap.monthLabel,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = accentColor
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Your Recap",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = accentColor.copy(alpha = 0.6f)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.Close,
+                            contentDescription = "Dismiss",
+                            tint = accentColor.copy(alpha = 0.5f),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                RecapStat(label = "Plays", value = "${recap.totalPlays}", accentColor = accentColor)
+                RecapStat(label = "Minutes", value = "${recap.totalMinutes}", accentColor = accentColor)
+                RecapStat(label = "Artists", value = "${recap.topArtists.size}", accentColor = accentColor)
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            if (recap.topSongs.isNotEmpty()) {
+                Text(
+                    "Top Songs",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = accentColor
+                )
+                Spacer(Modifier.height(6.dp))
+                recap.topSongs.take(3).forEach { song ->
+                    Row(
+                        modifier = Modifier.padding(vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Rounded.MusicNote,
+                            contentDescription = null,
+                            tint = accentColor.copy(alpha = 0.7f),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "${song.title} — ${song.artist}",
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            if (recap.topArtists.isNotEmpty()) {
+                Text(
+                    "Top Artists",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = accentColor
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    recap.topArtists.take(4).forEach { (artist, _) ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = accentColor.copy(alpha = 0.12f)
+                        ) {
+                            Text(
+                                text = artist,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                color = accentColor
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = accentColor.copy(alpha = 0.06f)
+            ) {
+                Text(
+                    text = recap.tasteComment,
+                    modifier = Modifier.padding(12.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    lineHeight = MaterialTheme.typography.bodySmall.lineHeight,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                    fontStyle = FontStyle.Italic
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun RecapStat(label: String, value: String, accentColor: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = accentColor
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+        )
     }
 }

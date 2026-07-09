@@ -202,7 +202,8 @@ class SoundCloudRepository {
                                 duration = duration,
                                 uri = Uri.parse(streamUrl),
                                 isStream = true,
-                                remoteArtUrl = artUrl
+                                remoteArtUrl = artUrl,
+                                remoteId = track.optLong("id").toString()
                             )
                         )
                     } else {

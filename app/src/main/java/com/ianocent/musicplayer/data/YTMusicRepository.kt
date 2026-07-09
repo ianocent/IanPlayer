@@ -294,6 +294,30 @@ class YTMusicRepository {
         return total * 1000L
     }
 
+    private fun parseAlbum(item: JSONObject): String {
+        val flexCols = item.optJSONArray("flexColumns") ?: return "Unknown Album"
+        val runs = flexCols.optJSONObject(1)
+            ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+            ?.optJSONObject("text")
+            ?.optJSONArray("runs")
+            ?: return "Unknown Album"
+
+        for (i in 0 until runs.length()) {
+            val run = runs.optJSONObject(i) ?: continue
+            val text = run.optString("text", "")
+            if (text.isBlank() || text == " • ") continue
+            val pageType = run.optJSONObject("navigationEndpoint")
+                ?.optJSONObject("browseEndpoint")
+                ?.optJSONObject("browseEndpointContextSupportedConfigs")
+                ?.optJSONObject("browseEndpointContextMusicConfig")
+                ?.optString("pageType", "")
+            if (pageType == "MUSIC_PAGE_TYPE_ALBUM") {
+                return text
+            }
+        }
+        return "Unknown Album"
+    }
+
     private fun parseThumbnail(item: JSONObject): String {
         val thumbnails = item.optJSONObject("thumbnail")
             ?.optJSONObject("musicThumbnailRenderer")
@@ -491,7 +515,7 @@ class YTMusicRepository {
             val items = walkMusicContents(response)
             Log.d("YTMusicRepo", "Parsed ${items.length()} songs from search")
 
-            val limit = minOf(items.length(), 20)
+            val limit = minOf(items.length(), 50)
             if (limit == 0) {
                 Log.w("YTMusicRepo", "No musicShelfRenderer items found in response")
                 return@withContext emptyList()
@@ -505,6 +529,7 @@ class YTMusicRepository {
                             val videoId = parseVideoId(item) ?: return@async null
                             val title = parseTitle(item)
                             val artist = parseArtist(item)
+                            val album = parseAlbum(item)
                             val duration = parseDuration(item)
                             val artUrl = parseThumbnail(item)
 
@@ -519,10 +544,12 @@ class YTMusicRepository {
                                     id = videoId.hashCode().toLong(),
                                     title = title,
                                     artist = artist,
+                                    album = album,
                                     duration = duration,
                                     uri = Uri.parse(audioUrl),
                                     isStream = true,
-                                    remoteArtUrl = artUrl
+                                    remoteArtUrl = artUrl,
+                                    remoteId = videoId
                                 )
                             } else {
                                 Log.w("YTMusicRepo", "No audio URL for: $title ($videoId)")
@@ -677,10 +704,12 @@ class YTMusicRepository {
                                     id = videoId.hashCode().toLong(),
                                     title = title,
                                     artist = artist,
+                                    album = "YouTube",
                                     duration = duration,
                                     uri = Uri.parse(audioUrl),
                                     isStream = true,
-                                    remoteArtUrl = artUrl
+                                    remoteArtUrl = artUrl,
+                                    remoteId = videoId
                                 )
                             } else {
                                 Log.w("YTMusicRepo", "No audio URL for: $title ($videoId)")
@@ -700,5 +729,53 @@ class YTMusicRepository {
             Log.e("YTMusicRepo", "Regular YT search failed: ${e.message}", e)
             emptyList()
         }
+    }
+
+    suspend fun getAudioFormats(videoId: String): List<AudioFormat> = withContext(Dispatchers.IO) {
+        val formats = mutableListOf<AudioFormat>()
+        
+        // Use WEB_REMIX with PoToken to get full adaptive formats list
+        val sessionId = visitorData
+        var streamingDataPoToken: String? = null
+        if (!sessionId.isNullOrBlank()) {
+            try {
+                streamingDataPoToken = poTokenGenerator.getWebClientPoToken(videoId, sessionId)?.streamingDataPoToken
+            } catch (_: Exception) {}
+        }
+
+        val body = JSONObject().apply {
+            put("context", clientContext())
+            put("videoId", videoId)
+        }
+        val raw = post("player", body) ?: return@withContext emptyList()
+        val json = JSONObject(raw)
+        
+        val adaptiveFormats = json.optJSONObject("streamingData")?.optJSONArray("adaptiveFormats") ?: return@withContext emptyList()
+        
+        for (i in 0 until adaptiveFormats.length()) {
+            val fmt = adaptiveFormats.getJSONObject(i)
+            val mime = fmt.optString("mimeType", "")
+            if (!mime.startsWith("audio/")) continue
+            
+            val url = extractAudioUrl(fmt, videoId) ?: continue
+            val finalUrl = if (!streamingDataPoToken.isNullOrBlank()) "$url&pot=$streamingDataPoToken" else url
+            
+            val bitrate = fmt.optInt("bitrate", 0)
+            val label = when {
+                bitrate >= 250000 -> "High (256kbps)"
+                bitrate >= 128000 -> "Medium (128kbps)"
+                else -> "Low (${bitrate / 1000}kbps)"
+            }
+            
+            formats.add(AudioFormat(
+                url = finalUrl,
+                mimeType = mime,
+                bitrate = bitrate,
+                qualityLabel = label,
+                sizeBytes = fmt.optLong("contentLength", 0L)
+            ))
+        }
+        
+        formats.sortedByDescending { it.bitrate }
     }
 }
