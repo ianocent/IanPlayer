@@ -357,6 +357,8 @@ fun ListingScreen(
     val maxVolume = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
     var currentVolume by remember { mutableStateOf(audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)) }
 
+    val isBuffering by viewModel.isBuffering.collectAsState()
+
     val adaptiveColor = remember(ambientColor, isDarkMode) {
         com.ianocent.musicplayer.data.getAdaptiveControlColor(ambientColor, isDarkMode)
     }
@@ -624,6 +626,21 @@ fun ListingScreen(
                                         )
                                     } else {
                                         Icon(Icons.Rounded.MusicNote, contentDescription = null, modifier = Modifier.size(20.dp))
+                                    }
+                                    
+                                    if (isBuffering) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(Color.Black.copy(alpha = 0.3f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(20.dp),
+                                                color = Color.White,
+                                                strokeWidth = 2.dp
+                                            )
+                                        }
                                     }
                                 }
                                 Spacer(modifier = Modifier.width(12.dp))
@@ -911,9 +928,9 @@ fun ListingScreen(
                                     listState = listState,
                                     topPadding = 16.dp
                                 ) { song, _ ->
-                                    SongRow(song, viewModel, customOnClick = {
+                                    SwipeableSongRow(song, viewModel, customOnClick = {
                                         viewModel.setQueue(streamSongs, startSong = song)
-                                    })
+                                    }, adaptiveColor = adaptiveColor)
                                 }
                             }
                         }
@@ -2381,6 +2398,9 @@ fun SwipeableSongRow(
     var showSongCardSheet by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showDownloadDialog by remember { mutableStateOf(false) }
+    var downloadFormats by remember { mutableStateOf<List<com.ianocent.musicplayer.data.AudioFormat>>(emptyList()) }
+    var isLoadingFormats by remember { mutableStateOf(false) }
     
     // Low-res for the list
     var songArtLowRes by remember(song.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
@@ -2519,28 +2539,47 @@ fun SwipeableSongRow(
                         Text("Song Card", fontWeight = FontWeight.SemiBold)
                     }
 
-                    RoundedClickableRow(
-                        onClick = {
-                            showActionDialog = false
-                            showEditDialog = true
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Rounded.Edit, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(12.dp))
-                        Text("Edit Song Info", fontWeight = FontWeight.SemiBold)
-                    }
+                    if (song.isStream) {
+                        RoundedClickableRow(
+                            onClick = {
+                                showActionDialog = false
+                                isLoadingFormats = true
+                                viewModel.getAudioFormats(song) { formats ->
+                                    downloadFormats = formats
+                                    isLoadingFormats = false
+                                    showDownloadDialog = true
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.Download, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Text("Download", fontWeight = FontWeight.SemiBold)
+                        }
+                    } else {
+                        RoundedClickableRow(
+                            onClick = {
+                                showActionDialog = false
+                                showEditDialog = true
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.Edit, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Text("Edit Song Info", fontWeight = FontWeight.SemiBold)
+                        }
 
-                    RoundedClickableRow(
-                        onClick = {
-                            showActionDialog = false
-                            showDeleteConfirm = true
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Rounded.Delete, contentDescription = null, tint = Color.Red.copy(alpha = 0.8f), modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(12.dp))
-                        Text("Delete Song", fontWeight = FontWeight.SemiBold, color = Color.Red.copy(alpha = 0.8f))
+                        RoundedClickableRow(
+                            onClick = {
+                                showActionDialog = false
+                                showDeleteConfirm = true
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.Delete, contentDescription = null, tint = Color.Red.copy(alpha = 0.8f), modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Text("Delete Song", fontWeight = FontWeight.SemiBold, color = Color.Red.copy(alpha = 0.8f))
+                        }
                     }
                 }
             },
@@ -2586,6 +2625,54 @@ fun SwipeableSongRow(
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (isLoadingFormats) {
+        AlertDialog(
+            onDismissRequest = {},
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(24.dp),
+            title = { Text("Loading formats...", fontWeight = FontWeight.Bold) },
+            text = {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = adaptiveColor)
+                }
+            },
+            confirmButton = {},
+            dismissButton = {}
+        )
+    }
+
+    if (showDownloadDialog) {
+        AlertDialog(
+            onDismissRequest = { showDownloadDialog = false },
+            containerColor = adaptiveColor.copy(alpha = 0.15f).compositeOver(
+                MaterialTheme.colorScheme.surface
+            ),
+            shape = RoundedCornerShape(24.dp),
+            title = { Text("Download Quality", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    downloadFormats.forEach { format ->
+                        RoundedClickableRow(
+                            onClick = {
+                                viewModel.downloadSong(song, format)
+                                showDownloadDialog = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.Download, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Text("${format.qualityLabel} (${format.bitrate}kbps)", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showDownloadDialog = false }) { Text("Cancel") }
             }
         )
     }

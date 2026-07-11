@@ -4,9 +4,6 @@ import android.net.Uri
 import android.util.Log
 import com.zemer.cipher.CipherDeobfuscator
 import com.zemer.cipher.potoken.PoTokenGenerator
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -14,8 +11,11 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
+import java.util.concurrent.Semaphore
 
 class YTMusicRepository {
+
+    private val playerSemaphore = Semaphore(9)
 
     companion object {
         private const val WEB_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
@@ -485,21 +485,22 @@ class YTMusicRepository {
         return null
     }
 
-    suspend fun searchSongs(query: String): List<Song> = withContext(Dispatchers.IO) {
-        val results = searchMusicSongs(query)
-        if (results.isNotEmpty()) return@withContext results
-        searchRegularSongs(query)
-    }
+    suspend fun searchSongs(query: String, onPartial: (List<Song>) -> Unit): List<Song> =
+        withContext(Dispatchers.IO) {
+            val results = searchMusicSongs(query, onPartial)
+            if (results.isNotEmpty()) return@withContext results
+            searchRegularSongs(query, onPartial)
+        }
 
-    private suspend fun searchMusicSongs(query: String): List<Song> = withContext(Dispatchers.IO) {
+    private suspend fun searchMusicSongs(
+        query: String,
+        onPartial: (List<Song>) -> Unit
+    ): List<Song> = withContext(Dispatchers.IO) {
         try {
             Log.d("YTMusicRepo", "InnerTube search: $query")
             val body = JSONObject().apply {
                 put("context", clientContext())
                 put("query", query)
-                // "Songs" filter (verified live: gives a dedicated musicShelfRenderer with only
-                // Song-type items — the old params here mixed Artist/Album/Video results and
-                // only surfaced the ~3 items nested under the top-result card).
                 put("params", "EgWKAQIIAWoKEAMQBBAFEAoQCQ==")
             }
 
@@ -515,56 +516,44 @@ class YTMusicRepository {
             val items = walkMusicContents(response)
             Log.d("YTMusicRepo", "Parsed ${items.length()} songs from search")
 
-            val limit = minOf(items.length(), 50)
+            val limit = minOf(items.length(), 20)
             if (limit == 0) {
                 Log.w("YTMusicRepo", "No musicShelfRenderer items found in response")
                 return@withContext emptyList()
             }
 
-            coroutineScope {
-                val tasks = (0 until limit).map { i ->
-                    async {
-                        try {
-                            val item = items.getJSONObject(i)
-                            val videoId = parseVideoId(item) ?: return@async null
-                            val title = parseTitle(item)
-                            val artist = parseArtist(item)
-                            val album = parseAlbum(item)
-                            val duration = parseDuration(item)
-                            val artUrl = parseThumbnail(item)
+            // Parse metadata only - no stream URL fetching during search for instant results
+            val results = mutableListOf<Song>()
+            for (i in 0 until limit) {
+                try {
+                    val item = items.getJSONObject(i)
+                    val videoId = parseVideoId(item) ?: continue
+                    val title = parseTitle(item)
+                    val artist = parseArtist(item)
+                    val album = parseAlbum(item)
+                    val duration = parseDuration(item)
+                    val artUrl = parseThumbnail(item)
 
-                            var audioUrl = fetchViaInvidious(videoId)
-                            if (audioUrl == null) {
-                                audioUrl = fetchViaInnerTube(videoId)
-                            }
-
-                            if (audioUrl != null) {
-                                Log.d("YTMusicRepo", "Got stream: $title - $artist")
-                                Song(
-                                    id = videoId.hashCode().toLong(),
-                                    title = title,
-                                    artist = artist,
-                                    album = album,
-                                    duration = duration,
-                                    uri = Uri.parse(audioUrl),
-                                    isStream = true,
-                                    remoteArtUrl = artUrl,
-                                    remoteId = videoId
-                                )
-                            } else {
-                                Log.w("YTMusicRepo", "No audio URL for: $title ($videoId)")
-                                null
-                            }
-                        } catch (e: Exception) {
-                            Log.w("YTMusicRepo", "Parse item failed: ${e.message}")
-                            null
-                        }
-                    }
+                    // Use a placeholder URI - actual stream URL will be fetched on-demand when played
+                    val song = Song(
+                        id = videoId.hashCode().toLong(),
+                        title = title,
+                        artist = artist,
+                        album = album,
+                        duration = duration,
+                        uri = Uri.parse("ytmusic://placeholder/$videoId"),
+                        isStream = true,
+                        remoteArtUrl = artUrl,
+                        remoteId = videoId
+                    )
+                    results.add(song)
+                    onPartial(listOf(song))
+                } catch (e: Exception) {
+                    Log.w("YTMusicRepo", "Parse item failed: ${e.message}")
                 }
-                val results = tasks.awaitAll().filterNotNull()
-                Log.d("YTMusicRepo", "Final results: ${results.size} songs")
-                results
             }
+            Log.d("YTMusicRepo", "Final results: ${results.size} songs (metadata only)")
+            results
         } catch (e: Exception) {
             Log.e("YTMusicRepo", "Search gagal: ${e.message}", e)
             emptyList()
@@ -638,7 +627,10 @@ class YTMusicRepository {
         return best
     }
 
-    private suspend fun searchRegularSongs(query: String): List<Song> = withContext(Dispatchers.IO) {
+    private suspend fun searchRegularSongs(
+        query: String,
+        onPartial: (List<Song>) -> Unit
+    ): List<Song> = withContext(Dispatchers.IO) {
         try {
             Log.d("YTMusicRepo", "Regular YT search: $query")
             val webSearchContext = JSONObject().apply {
@@ -666,65 +658,40 @@ class YTMusicRepository {
             val items = walkVideoContents(response)
             Log.d("YTMusicRepo", "Regular YT found ${items.length()} videos")
 
-            val limit = minOf(items.length(), 10)
+            val limit = minOf(items.length(), 5)
             if (limit == 0) return@withContext emptyList()
 
-            coroutineScope {
-                val tasks = (0 until limit).map { i ->
-                    async {
-                        try {
-                            val item = items.getJSONObject(i)
-                            val videoId = item.optString("videoId", null)
-                            if (videoId.isNullOrBlank()) return@async null
-                            val title = parseVideoTitle(item)
-                            val artist = parseVideoArtist(item)
-                            val duration = parseVideoDuration(item)
-                            val artUrl = parseVideoThumbnail(item)
+            // Parse metadata only - no stream URL fetching during search for instant results
+            val results = mutableListOf<Song>()
+            for (i in 0 until limit) {
+                try {
+                    val item = items.getJSONObject(i)
+                    val videoId = item.optString("videoId", null)
+                    if (videoId.isNullOrBlank()) continue
+                    val title = parseVideoTitle(item)
+                    val artist = parseVideoArtist(item)
+                    val duration = parseVideoDuration(item)
+                    val artUrl = parseVideoThumbnail(item)
 
-                            var audioUrl = fetchViaInvidious(videoId)
-                            if (audioUrl == null) {
-                                audioUrl = tryPlayerContext(
-                                    videoId,
-                                    JSONObject().apply {
-                                        put("client", JSONObject().apply {
-                                            put("clientName", "WEB")
-                                            put("clientVersion", "2.20250610.01.00")
-                                            put("hl", "en")
-                                            put("gl", "ID")
-                                            visitorData?.let { put("visitorData", it) }
-                                        })
-                                    },
-                                    WEB_KEY, UA_WEB, "https://www.youtube.com", usePoToken = true
-                                )
-                            }
-
-                            if (audioUrl != null) {
-                                Log.d("YTMusicRepo", "Got stream (regular): $title - $artist")
-                                Song(
-                                    id = videoId.hashCode().toLong(),
-                                    title = title,
-                                    artist = artist,
-                                    album = "YouTube",
-                                    duration = duration,
-                                    uri = Uri.parse(audioUrl),
-                                    isStream = true,
-                                    remoteArtUrl = artUrl,
-                                    remoteId = videoId
-                                )
-                            } else {
-                                Log.w("YTMusicRepo", "No audio URL for: $title ($videoId)")
-                                null
-                            }
-                        } catch (e: Exception) {
-                            Log.w("YTMusicRepo", "Parse regular item failed: ${e.message}")
-                            null
-                        }
-                    }
+                    val song = Song(
+                        id = videoId.hashCode().toLong(),
+                        title = title,
+                        artist = artist,
+                        album = "YouTube",
+                        duration = duration,
+                        uri = Uri.parse("ytmusic://placeholder/$videoId"),
+                        isStream = true,
+                        remoteArtUrl = artUrl,
+                        remoteId = videoId
+                    )
+                    results.add(song)
+                    onPartial(listOf(song))
+                } catch (e: Exception) {
+                    Log.w("YTMusicRepo", "Parse regular item failed: ${e.message}")
                 }
-                val results = tasks.awaitAll().filterNotNull()
-                Log.d("YTMusicRepo", "Regular YT final: ${results.size} songs")
-                results
             }
+            Log.d("YTMusicRepo", "Regular YT final: ${results.size} songs (metadata only)")
+            results
         } catch (e: Exception) {
             Log.e("YTMusicRepo", "Regular YT search failed: ${e.message}", e)
             emptyList()
@@ -777,5 +744,35 @@ class YTMusicRepository {
         }
         
         formats.sortedByDescending { it.bitrate }
+    }
+
+    /**
+     * Fetch actual stream URL for a song with placeholder URI.
+     * Called on-demand when song is about to be played.
+     */
+    suspend fun resolveStreamUrl(song: Song): String? = withContext(Dispatchers.IO) {
+        val videoId = song.remoteId ?: return@withContext null
+
+        if (!song.uri.toString().startsWith("ytmusic://placeholder/")) {
+            // Already has real URL
+            return@withContext song.uri.toString()
+        }
+
+        Log.d("YTMusicRepo", "Resolving stream URL for: ${song.title}")
+        try {
+            playerSemaphore.acquire()
+            var audioUrl = fetchViaInvidious(videoId)
+            if (audioUrl == null) {
+                audioUrl = fetchViaInnerTube(videoId)
+            }
+            if (audioUrl != null) {
+                Log.d("YTMusicRepo", "Resolved stream: ${song.title} - ${song.artist}")
+            } else {
+                Log.w("YTMusicRepo", "Failed to resolve stream for: ${song.title}")
+            }
+            return@withContext audioUrl
+        } finally {
+            playerSemaphore.release()
+        }
     }
 }

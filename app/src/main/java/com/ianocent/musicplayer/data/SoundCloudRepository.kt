@@ -3,6 +3,9 @@ package com.ianocent.musicplayer.data
 import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -154,7 +157,10 @@ class SoundCloudRepository {
         }
     }
 
-    suspend fun searchSongs(query: String): List<Song> = withContext(Dispatchers.IO) {
+    suspend fun searchSongs(
+        query: String,
+        onPartial: (List<Song>) -> Unit = {}
+    ): List<Song> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
         Log.d("SoundCloudRepo", "Searching: $query")
         try {
@@ -173,48 +179,54 @@ class SoundCloudRepository {
             }
             Log.d("SoundCloudRepo", "Found ${collection.length()} tracks")
 
-            val songs = mutableListOf<Song>()
-            for (i in 0 until minOf(collection.length(), 10)) {
-                try {
-                    val track = collection.getJSONObject(i)
-                    val title = track.optString("title", "Unknown Title")
-                    val user = track.optJSONObject("user")
-                    val artist = user?.optString("username", "Unknown Artist") ?: "Unknown Artist"
-                    val duration = track.optLong("duration", 0L)
-                    val artwork = track.optString("artwork_url", "")
-                    val artUrl = if (artwork.isNotBlank()) {
-                        artwork.replace("large", "t500x500")
-                    } else ""
+            coroutineScope {
+                val tasks = (0 until minOf(collection.length(), 10)).map { i ->
+                    async {
+                        try {
+                            val track = collection.getJSONObject(i)
+                            val title = track.optString("title", "Unknown Title")
+                            val user = track.optJSONObject("user")
+                            val artist = user?.optString("username", "Unknown Artist") ?: "Unknown Artist"
+                            val duration = track.optLong("duration", 0L)
+                            val artwork = track.optString("artwork_url", "")
+                            val artUrl = if (artwork.isNotBlank()) {
+                                artwork.replace("large", "t500x500")
+                            } else ""
 
-                    val streamable = track.optBoolean("streamable", false)
-                    val streamUrl = if (streamable) {
-                        val trackId = track.optLong("id", 0L)
-                        if (trackId > 0) fetchStreamUrl(trackId) else null
-                    } else null
+                            val streamable = track.optBoolean("streamable", false)
+                            val streamUrl = if (streamable) {
+                                val trackId = track.optLong("id", 0L)
+                                if (trackId > 0) fetchStreamUrl(trackId) else null
+                            } else null
 
-                    if (streamUrl != null) {
-                        Log.d("SoundCloudRepo", "Got stream: $title - $artist")
-                        songs.add(
-                            Song(
-                                id = track.optLong("id", title.hashCode().toLong()),
-                                title = title,
-                                artist = artist,
-                                duration = duration,
-                                uri = Uri.parse(streamUrl),
-                                isStream = true,
-                                remoteArtUrl = artUrl,
-                                remoteId = track.optLong("id").toString()
-                            )
-                        )
-                    } else {
-                        Log.w("SoundCloudRepo", "Not streamable: $title")
+                            if (streamUrl != null) {
+                                Log.d("SoundCloudRepo", "Got stream: $title - $artist")
+                                val song = Song(
+                                    id = track.optLong("id", title.hashCode().toLong()),
+                                    title = title,
+                                    artist = artist,
+                                    duration = duration,
+                                    uri = Uri.parse(streamUrl),
+                                    isStream = true,
+                                    remoteArtUrl = artUrl,
+                                    remoteId = track.optLong("id").toString()
+                                )
+                                onPartial(listOf(song)) // <-- emit langsung tiap 1 lagu ready
+                                song
+                            } else {
+                                Log.w("SoundCloudRepo", "Not streamable: $title")
+                                null
+                            }
+                        } catch (e: Exception) {
+                            Log.w("SoundCloudRepo", "Parse track failed: ${e.message}")
+                            null
+                        }
                     }
-                } catch (e: Exception) {
-                    Log.w("SoundCloudRepo", "Parse track failed: ${e.message}")
                 }
+                val songs = tasks.awaitAll().filterNotNull()
+                Log.d("SoundCloudRepo", "Final results: ${songs.size} tracks")
+                songs
             }
-            Log.d("SoundCloudRepo", "Final results: ${songs.size} tracks")
-            songs
         } catch (e: Exception) {
             Log.e("SoundCloudRepo", "Search failed: ${e.message}", e)
             emptyList()

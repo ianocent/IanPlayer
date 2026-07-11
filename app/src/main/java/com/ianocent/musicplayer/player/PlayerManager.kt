@@ -48,6 +48,9 @@ class PlayerManager(private val context: Context) {
                 .setMediaMetadata(metadata)
                 .build()
             player?.let { p ->
+                if (p.playbackState == Player.STATE_IDLE && p.playerError != null) {
+                    p.stop()
+                }
                 p.repeatMode = Player.REPEAT_MODE_OFF
                 p.setMediaItem(mediaItem)
                 p.prepare()

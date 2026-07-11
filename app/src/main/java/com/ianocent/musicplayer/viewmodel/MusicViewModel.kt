@@ -1,6 +1,9 @@
 package com.ianocent.musicplayer.viewmodel
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Player
@@ -8,10 +11,6 @@ import com.ianocent.musicplayer.data.LyricRepository
 import com.ianocent.musicplayer.data.MusicRepository
 import com.ianocent.musicplayer.data.Song
 import com.ianocent.musicplayer.player.PlayerManager
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
@@ -30,11 +29,12 @@ import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Job
-import android.content.BroadcastReceiver
-import android.app.DownloadManager
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val streamRepository = StreamRepository()
@@ -241,27 +241,42 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        _isSearchingRemote.value = true
+        _allStreamSongs.value = emptyList()
+        _streamSongs.value = emptyList()
+
         searchJob = viewModelScope.launch {
             delay(400)
-            _isSearchingRemote.value = true
+            val mutex = kotlinx.coroutines.sync.Mutex()
+
             try {
-                // Jalankan ketiga sumber secara paralel biar cepat
-                val allResults = coroutineScope {
-                    val deferreds = listOf(
-                        async { streamRepository.searchSongs(query) },
-                        async { ytMusicRepository.searchSongs(query) },
-                        async { soundCloudRepository.searchSongs(query) }
+                coroutineScope {
+                    // fun ini non-suspend, tapi punya akses ke `this` (CoroutineScope dari coroutineScope di atas)
+                    // biar bisa launch coroutine baru tiap kali dipanggil dari callback non-suspend.
+                    fun appendPartial(newSongs: List<Song>) {
+                        launch {
+                            mutex.withLock {
+                                val merged = (_allStreamSongs.value + newSongs).distinctBy { it.id }
+                                _allStreamSongs.value = merged
+                                _streamSongs.value = merged.take(
+                                    maxOf(_streamSongs.value.size + newSongs.size, streamPageSize)
+                                )
+                            }
+                        }
+                    }
+
+                    val jobs = listOf(
+                        launch { streamRepository.searchSongs(query) { appendPartial(it) } },
+                        launch { ytMusicRepository.searchSongs(query) { appendPartial(it) } },
+                        launch { soundCloudRepository.searchSongs(query) { appendPartial(it) } }
                     )
-                    val resultsLists = deferreds.awaitAll()
-                    resultsLists.flatten()
+                    jobs.joinAll()
                 }
-                val distinctResults = allResults.distinctBy { it.id }
-                _allStreamSongs.value = distinctResults
-                _streamSongs.value = distinctResults.take(streamPageSize)
             } catch (_: CancellationException) {
-                // search dibatalkan, abaikan
+                return@launch
+            } finally {
+                _isSearchingRemote.value = false
             }
-            _isSearchingRemote.value = false
         }
     }
 
@@ -401,6 +416,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _isLyricLoading = MutableStateFlow(false)
     val isLyricLoading: StateFlow<Boolean> = _isLyricLoading
 
+    private val _isBuffering = MutableStateFlow(false)
+    val isBuffering: StateFlow<Boolean> = _isBuffering
+
     private val _updateInfo = MutableStateFlow<UpdateInfo?>(null)
     val updateInfo: StateFlow<UpdateInfo?> = _updateInfo
 
@@ -500,12 +518,24 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     _duration.value = playerManager.getDuration()
                 }
                 override fun onPlaybackStateChanged(playbackState: Int) {
+                    _isBuffering.value = playbackState == Player.STATE_BUFFERING
                     if (playbackState == Player.STATE_ENDED) {
                         playNext()
+                    }
+                    if (playbackState == Player.STATE_IDLE && player?.playerError != null) {
+                        _isPlaying.value = false
+                        try {
+                            player?.prepare()
+                            player?.play()
+                        } catch (_: Exception) {
+                            playNext()
+                        }
                     }
                 }
                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                     error.printStackTrace()
+                    _isPlaying.value = false
+                    player?.stop()
                 }
             })
 
@@ -585,42 +615,101 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
 
     fun playSong(song: Song) {
-        val index = _queue.value.indexOf(song)
-        _currentIndex.value = index
-        _currentSong.value = song
-        playerManager.playSong(song)
-        incrementPlayCount(song.id)
-        loadArt(song)
-        loadLyric(song)
+        viewModelScope.launch {
+            val index = _queue.value.indexOf(song)
+            _currentIndex.value = index
+            _currentSong.value = song
+
+            // Resolve stream URL if needed (for songs from optimized search)
+            val resolvedSong = if (song.isStream && song.uri.toString().startsWith("ytmusic://placeholder/")) {
+                _isBuffering.value = true
+                withContext(Dispatchers.IO) {
+                    val streamUrl = ytMusicRepository.resolveStreamUrl(song)
+                    _isBuffering.value = false
+                    if (streamUrl != null) {
+                        song.copy(uri = Uri.parse(streamUrl))
+                    } else {
+                        song // fallback to original if resolution fails
+                    }
+                }
+            } else {
+                song
+            }
+
+            playerManager.playSong(resolvedSong)
+            incrementPlayCount(song.id)
+            loadArt(song)
+            loadLyric(song)
+        }
     }
 
     fun playNext() {
-        val list = _queue.value
-        if (list.isEmpty()) return
-        val isLast = _currentIndex.value >= list.size - 1
+        viewModelScope.launch {
+            val list = _queue.value
+            if (list.isEmpty()) return@launch
+            val isLast = _currentIndex.value >= list.size - 1
 
-        val nextIndex = when {
-            _repeatMode.value == Player.REPEAT_MODE_ONE -> _currentIndex.value
-            isLast && _repeatMode.value == Player.REPEAT_MODE_ALL -> 0
-            isLast -> return
-            else -> _currentIndex.value + 1
+            val nextIndex = when {
+                _repeatMode.value == Player.REPEAT_MODE_ONE -> _currentIndex.value
+                isLast && _repeatMode.value == Player.REPEAT_MODE_ALL -> 0
+                isLast -> return@launch
+                else -> _currentIndex.value + 1
+            }
+            _currentIndex.value = nextIndex
+            val song = list[nextIndex]
+            _currentSong.value = song
+
+            // Resolve stream URL if needed
+            val resolvedSong = if (song.isStream && song.uri.toString().startsWith("ytmusic://placeholder/")) {
+                _isBuffering.value = true
+                withContext(Dispatchers.IO) {
+                    val streamUrl = ytMusicRepository.resolveStreamUrl(song)
+                    _isBuffering.value = false
+                    if (streamUrl != null) {
+                        song.copy(uri = Uri.parse(streamUrl))
+                    } else {
+                        song
+                    }
+                }
+            } else {
+                song
+            }
+
+            playerManager.playSong(resolvedSong)
+            loadArt(song)
+            loadLyric(song)
         }
-        _currentIndex.value = nextIndex
-        _currentSong.value = list[nextIndex]
-        playerManager.playSong(list[nextIndex])
-        loadArt(list[nextIndex])
-        loadLyric(list[nextIndex])
     }
 
     fun playPrevious() {
-        val list = _queue.value
-        if (list.isEmpty()) return
-        val prevIndex = (_currentIndex.value - 1).coerceAtLeast(0)
-        _currentIndex.value = prevIndex
-        _currentSong.value = list[prevIndex]
-        playerManager.playSong(list[prevIndex])
-        loadArt(list[prevIndex])
-        loadLyric(list[prevIndex])
+        viewModelScope.launch {
+            val list = _queue.value
+            if (list.isEmpty()) return@launch
+            val prevIndex = (_currentIndex.value - 1).coerceAtLeast(0)
+            _currentIndex.value = prevIndex
+            val song = list[prevIndex]
+            _currentSong.value = song
+
+            // Resolve stream URL if needed
+            val resolvedSong = if (song.isStream && song.uri.toString().startsWith("ytmusic://placeholder/")) {
+                _isBuffering.value = true
+                withContext(Dispatchers.IO) {
+                    val streamUrl = ytMusicRepository.resolveStreamUrl(song)
+                    _isBuffering.value = false
+                    if (streamUrl != null) {
+                        song.copy(uri = Uri.parse(streamUrl))
+                    } else {
+                        song
+                    }
+                }
+            } else {
+                song
+            }
+
+            playerManager.playSong(resolvedSong)
+            loadArt(song)
+            loadLyric(song)
+        }
     }
 
     private val _ambientColor = MutableStateFlow(Color(0xFF333333))
@@ -689,7 +778,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
-        downloadReceiver?.let { appContext.unregisterReceiver(it) }
+        downloadReceiver?.let { receiver ->
+            appContext.unregisterReceiver(receiver)
+        }
         playerManager.release()
     }
 
@@ -766,13 +857,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch {
-            val formats = if (remoteId.length == 11 || (!song.uri.toString().contains("saavn") && !song.uri.toString().contains("soundcloud"))) {
+            var formats = if (remoteId.length == 11 || (!song.uri.toString().contains("saavn") && !song.uri.toString().contains("soundcloud"))) {
                 ytMusicRepository.getAudioFormats(remoteId)
             } else emptyList()
             
             if (formats.isEmpty()) {
+                val resolvedUrl = if (song.uri.toString().startsWith("ytmusic://placeholder/")) {
+                    withContext(Dispatchers.IO) { ytMusicRepository.resolveStreamUrl(song) }
+                } else song.uri.toString()
+
                 onResult(listOf(com.ianocent.musicplayer.data.AudioFormat(
-                    url = song.uri.toString(),
+                    url = resolvedUrl ?: song.uri.toString(),
                     mimeType = "audio/mpeg",
                     bitrate = 0,
                     qualityLabel = "Standard"
@@ -783,43 +878,73 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    @android.annotation.SuppressLint("UnspecifiedRegisterReceiverFlag")
     fun downloadSong(song: Song, format: com.ianocent.musicplayer.data.AudioFormat) {
-        val context = getApplication<android.app.Application>()
-        val downloadManager = context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
-        
-        // Clean filename: remove illegal characters
-        val cleanTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-        val cleanArtist = song.artist.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-        val fileName = "$cleanTitle - $cleanArtist.mp3"
+        viewModelScope.launch {
+            // 1. Resolve URL if it's a placeholder
+            val realUrl = if (format.url.startsWith("ytmusic://placeholder/")) {
+                withContext(Dispatchers.IO) {
+                    ytMusicRepository.resolveStreamUrl(song)
+                }
+            } else {
+                format.url
+            }
 
-        val request = android.app.DownloadManager.Request(android.net.Uri.parse(format.url))
-            .setTitle(song.title)
-            .setDescription("Downloading $cleanArtist - ${format.qualityLabel}")
-            .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_MUSIC, "IanPlayer/$fileName")
-            .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setAllowedOverMetered(true)
-            .setAllowedOverRoaming(true)
+            if (realUrl == null || !realUrl.startsWith("http")) {
+                Log.e("MusicViewModel", "Could not resolve download URL for: ${song.title}")
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(appContext, "Download failed: URL could not be resolved", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                return@launch
+            }
 
-        val downloadId = downloadManager.enqueue(request)
-        
-        // Register receiver for download completion
-        val completionReceiver = com.ianocent.musicplayer.data.DownloadCompletionReceiver(
-            downloadId,
-            song
-        ) {
-            refreshSongs()
-        }
-        
-        val filter = android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            context.registerReceiver(completionReceiver, filter, android.content.Context.RECEIVER_EXPORTED)
-        } else {
-            context.registerReceiver(completionReceiver, filter)
+            val context = getApplication<android.app.Application>()
+            val downloadManager = context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
+            
+            // Clean filename: remove illegal characters
+            val cleanTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+            val cleanArtist = song.artist.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+            val fileName = "$cleanTitle - $cleanArtist.mp3"
+
+            val request = android.app.DownloadManager.Request(android.net.Uri.parse(realUrl))
+                .setTitle(song.title)
+                .setDescription("Downloading $cleanArtist - ${format.qualityLabel}")
+                .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_MUSIC, "IanPlayer/$fileName")
+                .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setAllowedOverMetered(true)
+                .setAllowedOverRoaming(true)
+
+            val downloadId = downloadManager.enqueue(request)
+            
+            val completionReceiver = com.ianocent.musicplayer.data.DownloadCompletionReceiver(
+                downloadId,
+                song
+            ) {
+                refreshSongs()
+            }
+            
+            val filter = android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(completionReceiver, filter, android.content.Context.RECEIVER_EXPORTED)
+            } else {
+                context.registerReceiver(completionReceiver, filter)
+            }
         }
     }
-    
-    private fun refreshSongs() {
+
+    private fun refreshSongs(scannedFilePath: String? = null) {
         viewModelScope.launch {
+            if (scannedFilePath != null) {
+                withContext(Dispatchers.IO) {
+                    suspendCancellableCoroutine<Unit> { cont ->
+                        android.media.MediaScannerConnection.scanFile(
+                            appContext,
+                            arrayOf(scannedFilePath),
+                            arrayOf("audio/mpeg")
+                        ) { _, _ -> if (cont.isActive) cont.resume(Unit) {} }
+                    }
+                }
+            }
             val list = withContext(Dispatchers.IO) { repository.getAllSongs() }
             originalOrder = list
             _songs.value = list

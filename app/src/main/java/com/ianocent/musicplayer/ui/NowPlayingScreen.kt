@@ -92,6 +92,7 @@ fun NowPlayingScreen(
     val coroutineScope = rememberCoroutineScope()
     val screenHeight = with(LocalDensity.current) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
     val dragProgress = (offsetY.value / screenHeight).coerceIn(0f, 1f)
+    val isBuffering by viewModel.isBuffering.collectAsState()
 
     val heroAnimProgress = remember { Animatable(0f) }
     var targetAlbumArtRect by remember { mutableStateOf<ElementRect?>(null) }
@@ -264,15 +265,31 @@ fun NowPlayingScreen(
                         modifier = Modifier.align(Alignment.Center),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text(timerMins, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                        Text(timerSecs, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                        if (isBuffering) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(32.dp).padding(bottom = 8.dp),
+                                color = Color.White,
+                                strokeWidth = 3.dp
+                            )
+                        } else {
+                            Text(timerMins, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                            Text(timerSecs, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 } else {
-                    Text(
-                        text = formatTime(currentPosition),
-                        color = Color.White, fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold, textAlign = TextAlign.Center
-                    )
+                    if (isBuffering) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(32.dp),
+                            color = Color.White,
+                            strokeWidth = 3.dp
+                        )
+                    } else {
+                        Text(
+                            text = formatTime(currentPosition),
+                            color = Color.White, fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
 

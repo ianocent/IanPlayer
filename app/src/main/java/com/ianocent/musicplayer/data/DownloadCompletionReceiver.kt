@@ -28,90 +28,101 @@ class DownloadCompletionReceiver(
         val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
         if (id != downloadId) return
 
-        context?.let { ctx ->
-            val downloadManager = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        val ctx = context ?: return
+        
+        // Unregister immediately to avoid multiple triggers and leaks
+        try {
+            ctx.unregisterReceiver(this)
+        } catch (e: Exception) {
+            Log.w("DownloadCompletion", "Failed to unregister receiver: ${e.message}")
+        }
+
+        val pendingResult = goAsync()
+        
+        val downloadManager = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        
+        try {
+            val query = DownloadManager.Query().setFilterById(downloadId)
+            val cursor = downloadManager.query(query)
             
-            try {
-                val query = DownloadManager.Query().setFilterById(downloadId)
-                val cursor = downloadManager.query(query)
+            if (cursor?.moveToFirst() == true) {
+                val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                val status = cursor.getInt(statusIndex)
                 
-                if (cursor?.moveToFirst() == true) {
-                    val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
-                    val status = cursor.getInt(statusIndex)
-                    
-                    var filePath: String? = null
-                    
-                    // Try multiple ways to get the file path (compatible with scoped storage)
-                    val fileNameIdx = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_FILENAME)
-                    if (fileNameIdx >= 0) {
-                        filePath = cursor.getString(fileNameIdx)
-                    }
-                    
-                    // Fallback: try local URI
-                    if (filePath.isNullOrEmpty()) {
-                        val uriIdx = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
-                        if (uriIdx >= 0) {
-                            val uriStr = cursor.getString(uriIdx)
-                            if (!uriStr.isNullOrEmpty()) {
-                                filePath = uriToFilePath(ctx, Uri.parse(uriStr))
-                            }
+                var filePath: String? = null
+                
+                // Try multiple ways to get the file path
+                val fileNameIdx = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_FILENAME)
+                if (fileNameIdx >= 0) {
+                    filePath = cursor.getString(fileNameIdx)
+                }
+                
+                if (filePath.isNullOrEmpty()) {
+                    val uriIdx = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
+                    if (uriIdx >= 0) {
+                        val uriStr = cursor.getString(uriIdx)
+                        if (!uriStr.isNullOrEmpty()) {
+                            filePath = uriToFilePath(ctx, Uri.parse(uriStr))
                         }
                     }
-                    
-                    // Fallback: try media provider URI
-                    if (filePath.isNullOrEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        val mediaUriIdx = cursor.getColumnIndex(DownloadManager.COLUMN_MEDIAPROVIDER_URI)
-                        if (mediaUriIdx >= 0) {
-                            val uriStr = cursor.getString(mediaUriIdx)
-                            if (!uriStr.isNullOrEmpty()) {
-                                filePath = uriToFilePath(ctx, Uri.parse(uriStr))
-                            }
+                }
+                
+                if (filePath.isNullOrEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val mediaUriIdx = cursor.getColumnIndex(DownloadManager.COLUMN_MEDIAPROVIDER_URI)
+                    if (mediaUriIdx >= 0) {
+                        val uriStr = cursor.getString(mediaUriIdx)
+                        if (!uriStr.isNullOrEmpty()) {
+                            filePath = uriToFilePath(ctx, Uri.parse(uriStr))
                         }
                     }
-                    
-                    // Last fallback: reconstruct path from download destination
-                    if (filePath.isNullOrEmpty()) {
-                        filePath = reconstructPath(ctx, cursor)
-                    }
-                    
-                    cursor.close()
-                    
-                    if (status == DownloadManager.STATUS_SUCCESSFUL && !filePath.isNullOrEmpty()) {
-                        Log.d("DownloadCompletion", "Downloaded file path: $filePath, song: ${song.title} - ${song.artist}")
-                        
-                        GlobalScope.launch(Dispatchers.IO) {
-                            try {
-                                val success = MetadataWriter.writeMetadata(ctx, filePath!!, song)
-                                Log.d("DownloadCompletion", "Metadata write result: $success")
-                                
-                                // Scan the file so MediaStore picks it up with updated metadata
+                }
+                
+                if (filePath.isNullOrEmpty()) {
+                    filePath = reconstructPath(ctx, cursor)
+                }
+                
+                cursor.close()
+                
+                if (status == DownloadManager.STATUS_SUCCESSFUL && !filePath.isNullOrEmpty()) {
+                    GlobalScope.launch(Dispatchers.IO) {
+                        try {
+                            // 1. Write ID3 tags directly to the file
+                            MetadataWriter.writeMetadata(ctx, filePath!!, song)
+
+                            // 2. Scan the file so MediaStore picks up the new tags
+                            kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
                                 MediaScannerConnection.scanFile(
                                     ctx,
                                     arrayOf(filePath),
-                                    arrayOf("audio/mpeg"),
-                                    null
-                                )
-                                
-                                // Also try to update the MediaStore entry directly
-                                updateMediaStoreEntry(ctx, filePath!!, song)
-                                
-                                onComplete()
-                            } catch (e: Exception) {
-                                Log.e("DownloadCompletion", "Error processing download: ${e.message}")
-                                e.printStackTrace()
-                                onComplete() // still refresh even on partial failure
+                                    arrayOf("audio/mpeg")
+                                ) { _, _ ->
+                                    if (cont.isActive) cont.resume(Unit) {}
+                                }
                             }
+
+                            // 3. Optional: Direct MediaStore update for immediate result
+                            updateMediaStoreEntry(ctx, filePath!!, song)
+
+                            onComplete()
+                        } catch (e: Exception) {
+                            Log.e("DownloadCompletion", "Error processing download: ${e.message}")
+                            onComplete()
+                        } finally {
+                            pendingResult.finish()
                         }
-                    } else {
-                        Log.w("DownloadCompletion", "Download failed or path is null. status=$status, path=$filePath")
                     }
                 } else {
-                    cursor?.close()
+                    pendingResult.finish()
+                    onComplete()
                 }
-            } catch (e: Exception) {
-                Log.e("DownloadCompletion", "Error in onReceive: ${e.message}")
-                e.printStackTrace()
+            } else {
+                cursor?.close()
+                pendingResult.finish()
+                onComplete()
             }
+        } catch (e: Exception) {
+            Log.e("DownloadCompletion", "Error in onReceive: ${e.message}")
+            pendingResult.finish()
         }
     }
 

@@ -44,7 +44,10 @@ class StreamRepository {
         return null
     }
 
-    suspend fun searchSongs(query: String): List<Song> = withContext(Dispatchers.IO) {
+    suspend fun searchSongs(
+        query: String,
+        onPartial: (List<Song>) -> Unit = {}
+    ): List<Song> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
 
         try {
@@ -54,7 +57,6 @@ class StreamRepository {
             val json = JSONObject(response)
             val data = json.optJSONObject("data") ?: return@withContext emptyList()
             val results = data.optJSONArray("results") ?: return@withContext emptyList()
-
             val songs = mutableListOf<Song>()
             for (i in 0 until results.length()) {
                 val item = results.getJSONObject(i)
@@ -84,19 +86,19 @@ class StreamRepository {
                 } else ""
 
                 if (streamUrl.isNotBlank() && id.isNotBlank()) {
-                    songs.add(
-                        Song(
-                            id = id.hashCode().toLong(),
-                            title = title,
-                            artist = artist,
-                            album = album,
-                            duration = durationMs,
-                            uri = Uri.parse(streamUrl),
-                            isStream = true,
-                            remoteArtUrl = artUrl,
-                            remoteId = id
-                        )
+                    val song = Song(
+                        id = id.hashCode().toLong(),
+                        title = title,
+                        artist = artist,
+                        album = album,
+                        duration = durationMs,
+                        uri = Uri.parse(streamUrl),
+                        isStream = true,
+                        remoteArtUrl = artUrl,
+                        remoteId = id
                     )
+                    songs.add(song)
+                    onPartial(listOf(song)) // <-- emit langsung tiap 1 lagu ready
                 }
             }
             songs
