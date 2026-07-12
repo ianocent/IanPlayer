@@ -127,7 +127,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putString("play_history", arr.toString()).apply()
     }
 
-    fun computeMonthlyRecap() {
+    fun checkMonthlyRecap() {
+        val now = System.currentTimeMillis()
+        val lastCheck = prefs.getLong("last_recap_check_ts", 0L)
+        val ONE_MONTH = 30L * 24 * 60 * 60 * 1000
+        if (now - lastCheck < ONE_MONTH) return
+        prefs.edit().putLong("last_recap_check_ts", now).apply()
+        computeMonthlyRecap()
+    }
+
+    private fun computeMonthlyRecap() {
+        if (_songs.value.isEmpty()) return
         viewModelScope.launch {
             val recap = withContext(Dispatchers.IO) {
                 try {
@@ -137,33 +147,29 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
                     if (history.isEmpty()) return@withContext null
 
-                    // Count plays per song this month
                     val songPlayCounts = history.groupBy { it.first }.mapValues { it.value.size }
                     val totalPlays = history.size
 
-                    // Get all song IDs, cross-reference with song list
                     val allSongs = _songs.value
-                    val monthSongs = songPlayCounts.mapNotNull { (id, count) ->
-                        allSongs.find { it.id == id }?.let { it to count }
+                    val playedSongs = allSongs.filter { s -> songPlayCounts.containsKey(s.id) }
+                    val monthSongs = playedSongs.map { song ->
+                        song to (songPlayCounts[song.id] ?: 0)
                     }.sortedByDescending { it.second }
 
-                    // Top 5 songs
                     val topSongs = monthSongs.take(5).map { it.first }
 
-                    // Top artists
                     val artistCounts = mutableMapOf<String, Int>()
                     monthSongs.forEach { (song, count) ->
-                        artistCounts[song.artist] = (artistCounts[song.artist] ?: 0) + count
+                        val artistKey = song.artist.ifBlank { "Unknown Artist" }
+                        artistCounts[artistKey] = (artistCounts[artistKey] ?: 0) + count
                     }
                     val topArtists = artistCounts.entries
                         .sortedByDescending { it.value }
                         .take(5)
                         .map { it.key to it.value }
 
-                    // Total minutes (approximate, using average 3.5 min per song)
                     val totalMinutes = (totalPlays * 3.5).toLong()
 
-                    // Genre/taste detection based on artist keywords
                     val tasteComment = generateTasteComment(topArtists, monthSongs)
 
                     val monthName = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(now))
@@ -185,13 +191,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
             if (recap != null && recap.totalPlays >= 5) {
                 _monthlyRecap.value = recap
-                _showRecap.value = true
+                _showRecapBanner.value = true
             }
         }
     }
 
-    fun dismissRecap() {
-        _showRecap.value = false
+    fun dismissRecapBanner() {
+        _showRecapBanner.value = false
     }
 
     private fun generateTasteComment(
@@ -396,7 +402,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _duration = MutableStateFlow(0L)
     val duration: StateFlow<Long> = _duration
 
-    private val _isShuffleOn = MutableStateFlow(false)
+    private val _isShuffleOn = MutableStateFlow(prefs.getBoolean("is_shuffle_on", false))
 
     val isShuffleOn: StateFlow<Boolean> = _isShuffleOn
 
@@ -431,8 +437,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _monthlyRecap = MutableStateFlow<com.ianocent.musicplayer.data.MonthlyRecap?>(null)
     val monthlyRecap: StateFlow<com.ianocent.musicplayer.data.MonthlyRecap?> = _monthlyRecap
 
-    private val _showRecap = MutableStateFlow(false)
-    val showRecap: StateFlow<Boolean> = _showRecap
+    private val _showRecapBanner = MutableStateFlow(false)
+    val showRecapBanner: StateFlow<Boolean> = _showRecapBanner
+
+    private val _showRecapCard = MutableStateFlow(false)
+    val showRecapCard: StateFlow<Boolean> = _showRecapCard
+
+    fun openRecapCard() {
+        _showRecapCard.value = true
+    }
+
+    fun closeRecapCard() {
+        _showRecapCard.value = false
+    }
 
     private val artCache = mutableMapOf<Long, android.graphics.Bitmap?>()
 
@@ -506,7 +523,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _playCounts.value = loadPlayCounts()
         _sortMode.value = prefs.getInt("sort_mode", 0)
         checkForUpdate()
-        viewModelScope.launch { computeMonthlyRecap() }
         playerManager.initialize {
             val player = playerManager.player
 
@@ -584,12 +600,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             originalOrder = list
             _songs.value = list
             _queue.value = list
+            checkMonthlyRecap()
         }
     }
     private var baseQueueBeforeShuffle: List<Song> = emptyList()
 
     fun toggleShuffle() {
         _isShuffleOn.value = !_isShuffleOn.value
+        prefs.edit().putBoolean("is_shuffle_on", _isShuffleOn.value).apply()
         val current = _currentSong.value
         if (_isShuffleOn.value) {
             baseQueueBeforeShuffle = _queue.value
@@ -620,7 +638,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _currentIndex.value = index
             _currentSong.value = song
 
-            // Resolve stream URL if needed (for songs from optimized search)
             val resolvedSong = if (song.isStream && song.uri.toString().startsWith("ytmusic://placeholder/")) {
                 _isBuffering.value = true
                 withContext(Dispatchers.IO) {
@@ -629,14 +646,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     if (streamUrl != null) {
                         song.copy(uri = Uri.parse(streamUrl))
                     } else {
-                        song // fallback to original if resolution fails
+                        song
                     }
                 }
             } else {
                 song
             }
 
-            playerManager.playSong(resolvedSong)
+            val queue = _queue.value.toMutableList()
+            if (index >= 0 && index < queue.size) {
+                queue[index] = resolvedSong
+            }
+            playerManager.playSong(resolvedSong, queue, maxOf(index, 0))
             incrementPlayCount(song.id)
             loadArt(song)
             loadLyric(song)
@@ -659,7 +680,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val song = list[nextIndex]
             _currentSong.value = song
 
-            // Resolve stream URL if needed
             val resolvedSong = if (song.isStream && song.uri.toString().startsWith("ytmusic://placeholder/")) {
                 _isBuffering.value = true
                 withContext(Dispatchers.IO) {
@@ -675,7 +695,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 song
             }
 
-            playerManager.playSong(resolvedSong)
+            val queue = _queue.value.toMutableList()
+            if (nextIndex >= 0 && nextIndex < queue.size) {
+                queue[nextIndex] = resolvedSong
+            }
+            playerManager.playSong(resolvedSong, queue, nextIndex)
             loadArt(song)
             loadLyric(song)
         }
@@ -690,7 +714,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val song = list[prevIndex]
             _currentSong.value = song
 
-            // Resolve stream URL if needed
             val resolvedSong = if (song.isStream && song.uri.toString().startsWith("ytmusic://placeholder/")) {
                 _isBuffering.value = true
                 withContext(Dispatchers.IO) {
@@ -706,7 +729,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 song
             }
 
-            playerManager.playSong(resolvedSong)
+            val queue = _queue.value.toMutableList()
+            if (prevIndex >= 0 && prevIndex < queue.size) {
+                queue[prevIndex] = resolvedSong
+            }
+            playerManager.playSong(resolvedSong, queue, prevIndex)
             loadArt(song)
             loadLyric(song)
         }

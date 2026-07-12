@@ -323,8 +323,9 @@ fun ListingScreen(
     val duration by viewModel.duration.collectAsState()
     val isDarkMode by viewModel.isDarkMode.collectAsState()
     val ambientColor by viewModel.ambientColor.collectAsState()
-    val showRecap by viewModel.showRecap.collectAsState()
+    val showRecapBanner by viewModel.showRecapBanner.collectAsState()
     val monthlyRecap by viewModel.monthlyRecap.collectAsState()
+    val showRecapCard by viewModel.showRecapCard.collectAsState()
 
     var selectedTab by remember { mutableStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
@@ -827,15 +828,16 @@ fun ListingScreen(
                             }
 
                             AnimatedVisibility(
-                                visible = showRecap && monthlyRecap != null,
+                                visible = showRecapBanner && monthlyRecap != null,
                                 enter = fadeIn() + slideInVertically(),
                                 exit = fadeOut() + slideOutVertically()
                             ) {
                                 monthlyRecap?.let { recap ->
-                                    MusicRecapCard(
+                                    MusicRecapBanner(
                                         recap = recap,
                                         accentColor = adaptiveColor,
-                                        onDismiss = { viewModel.dismissRecap() }
+                                        onGenerateCard = { viewModel.openRecapCard() },
+                                        onDismiss = { viewModel.dismissRecapBanner() }
                                     )
                                 }
                             }
@@ -1109,6 +1111,14 @@ fun ListingScreen(
             isDownloading = isDownloading,
             onUpdate = { viewModel.downloadUpdate() },
             onDismiss = { viewModel.dismissUpdate() }
+        )
+    }
+
+    if (showRecapCard && monthlyRecap != null) {
+        com.ianocent.musicplayer.ui.RecapCardSheet(
+            recap = monthlyRecap!!,
+            accentColor = adaptiveColor,
+            onDismiss = { viewModel.closeRecapCard() }
         )
     }
 }
@@ -2754,9 +2764,10 @@ fun RoundedCheckbox(
 }
 
 @Composable
-fun MusicRecapCard(
+fun MusicRecapBanner(
     recap: com.ianocent.musicplayer.data.MonthlyRecap,
     accentColor: Color,
+    onGenerateCard: () -> Unit,
     onDismiss: () -> Unit
 ) {
     Card(
@@ -2891,6 +2902,19 @@ fun MusicRecapCard(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
                     fontStyle = FontStyle.Italic
                 )
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            Button(
+                onClick = onGenerateCard,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Rounded.Image, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Generate Recap Card")
             }
         }
     }

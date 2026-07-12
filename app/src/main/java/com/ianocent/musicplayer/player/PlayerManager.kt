@@ -30,29 +30,52 @@ class PlayerManager(private val context: Context) {
         )
     }
 
-    fun playSong(song: Song) {
+    fun playSong(song: Song, queueSongs: List<Song> = emptyList(), startIndex: Int = 0) {
         try {
-            val metadata = MediaMetadata.Builder()
-                .setTitle(song.title)
-                .setArtist(song.artist)
-                .setAlbumTitle(song.album)
-                .apply {
-                    if (!song.remoteArtUrl.isNullOrEmpty()) {
-                        setArtworkUri(android.net.Uri.parse(song.remoteArtUrl))
-                    }
+            val mediaItems = if (queueSongs.isNotEmpty()) {
+                var idx = 0
+                queueSongs.map { s ->
+                    val meta = MediaMetadata.Builder()
+                        .setTitle(s.title)
+                        .setArtist(s.artist)
+                        .setAlbumTitle(s.album)
+                        .apply {
+                            if (!s.remoteArtUrl.isNullOrEmpty()) {
+                                setArtworkUri(android.net.Uri.parse(s.remoteArtUrl))
+                            }
+                        }
+                        .build()
+                    MediaItem.Builder()
+                        .setUri(s.uri)
+                        .setMediaId(s.id.toString())
+                        .setMediaMetadata(meta)
+                        .build()
                 }
-                .build()
-            val mediaItem = MediaItem.Builder()
-                .setUri(song.uri)
-                .setMediaId(song.id.toString())
-                .setMediaMetadata(metadata)
-                .build()
+            } else {
+                val metadata = MediaMetadata.Builder()
+                    .setTitle(song.title)
+                    .setArtist(song.artist)
+                    .setAlbumTitle(song.album)
+                    .apply {
+                        if (!song.remoteArtUrl.isNullOrEmpty()) {
+                            setArtworkUri(android.net.Uri.parse(song.remoteArtUrl))
+                        }
+                    }
+                    .build()
+                listOf(
+                    MediaItem.Builder()
+                        .setUri(song.uri)
+                        .setMediaId(song.id.toString())
+                        .setMediaMetadata(metadata)
+                        .build()
+                )
+            }
             player?.let { p ->
                 if (p.playbackState == Player.STATE_IDLE && p.playerError != null) {
                     p.stop()
                 }
                 p.repeatMode = Player.REPEAT_MODE_OFF
-                p.setMediaItem(mediaItem)
+                p.setMediaItems(mediaItems, if (queueSongs.isNotEmpty()) startIndex else 0, 0L)
                 p.prepare()
                 p.play()
             }
