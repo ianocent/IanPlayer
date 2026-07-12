@@ -706,7 +706,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val list = withContext(Dispatchers.IO) { repository.getAllSongs() }
             originalOrder = list
             _songs.value = list
-            if (_queue.value.isEmpty() || pendingMediaId == null) {
+            if (_queue.value.isEmpty()) {
                 _queue.value = list
             }
             checkMonthlyRecap()
@@ -1004,24 +1004,31 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 url = song.uri.toString(),
                 mimeType = "audio/mpeg",
                 bitrate = 0,
-                qualityLabel = "Standard"
+                qualityLabel = "Download"
             )))
             return
         }
         viewModelScope.launch {
-            val formats = ytMusicRepository.getAudioFormats(remoteId)
+            var formats = ytMusicRepository.getAudioFormats(remoteId)
 
             if (formats.isEmpty()) {
                 val resolvedUrl = if (song.uri.toString().startsWith("ytmusic://placeholder/")) {
                     withContext(Dispatchers.IO) { ytMusicRepository.resolveStreamUrl(song) }
                 } else song.uri.toString()
 
-                onResult(listOf(com.ianocent.musicplayer.data.AudioFormat(
-                    url = resolvedUrl ?: song.uri.toString(),
-                    mimeType = "audio/mpeg",
-                    bitrate = 0,
-                    qualityLabel = "Standard"
-                )))
+                // Retry: resolveStreamUrl will have set visitorData via player request
+                formats = ytMusicRepository.getAudioFormats(remoteId)
+
+                if (formats.isEmpty()) {
+                    onResult(listOf(com.ianocent.musicplayer.data.AudioFormat(
+                        url = resolvedUrl ?: song.uri.toString(),
+                        mimeType = "audio/mpeg",
+                        bitrate = 0,
+                        qualityLabel = "Download"
+                    )))
+                } else {
+                    onResult(formats.sortedByDescending { it.bitrate })
+                }
             } else {
                 onResult(formats.sortedByDescending { it.bitrate })
             }

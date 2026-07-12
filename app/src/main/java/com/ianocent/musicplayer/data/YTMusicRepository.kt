@@ -720,22 +720,40 @@ class YTMusicRepository {
     suspend fun getAudioFormats(videoId: String): List<AudioFormat> = withContext(Dispatchers.IO) {
         val formats = mutableListOf<AudioFormat>()
         
-        // Use WEB_REMIX with PoToken to get full adaptive formats list
         val sessionId = visitorData
+        if (sessionId.isNullOrBlank()) return@withContext emptyList()
+
+        var playerRequestPoToken: String? = null
         var streamingDataPoToken: String? = null
-        if (!sessionId.isNullOrBlank()) {
-            try {
-                streamingDataPoToken = poTokenGenerator.getWebClientPoToken(videoId, sessionId)?.streamingDataPoToken
-            } catch (_: Exception) {}
-        }
+        try {
+            val result = withContext(Dispatchers.IO) {
+                poTokenGenerator.getWebClientPoToken(videoId, sessionId)
+            }
+            playerRequestPoToken = result?.playerRequestPoToken
+            streamingDataPoToken = result?.streamingDataPoToken
+        } catch (_: Exception) {}
 
         val body = JSONObject().apply {
             put("context", clientContext())
             put("videoId", videoId)
+            put("playbackContext", JSONObject().apply {
+                put("contentPlaybackContext", JSONObject().apply {
+                    put("html5Preference", "HTML5_PREF_WANTS")
+                    CipherDeobfuscator.signatureTimestamp()?.let { put("signatureTimestamp", it) }
+                })
+            })
+            put("contentCheckOk", true)
+            put("racyCheckOk", true)
+            playerRequestPoToken?.let { put("poToken", it) }
         }
         val raw = post("player", body) ?: return@withContext emptyList()
         val json = JSONObject(raw)
-        
+        updateVisitorData(json)
+
+        val playability = json.optJSONObject("playabilityStatus")
+        val status = playability?.optString("status", "OK")
+        if (status != "OK") return@withContext emptyList()
+
         val adaptiveFormats = json.optJSONObject("streamingData")?.optJSONArray("adaptiveFormats") ?: return@withContext emptyList()
         
         for (i in 0 until adaptiveFormats.length()) {
