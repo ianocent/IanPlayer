@@ -32,3 +32,9 @@ data class MonthlyRecap(
     val topGenres: List<String>,
     val tasteComment: String
 )
+
+sealed class StreamSearchResult {
+    data class Success(val songs: List<Song>) : StreamSearchResult()
+    object Empty : StreamSearchResult()
+    object ParsingFailed : StreamSearchResult()
+}

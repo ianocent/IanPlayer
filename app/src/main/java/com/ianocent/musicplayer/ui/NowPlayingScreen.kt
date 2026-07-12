@@ -72,6 +72,12 @@ import androidx.compose.animation.core.*
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.material.icons.rounded.DragHandle
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.zIndex
 
 @Composable
 fun NowPlayingScreen(
@@ -419,10 +425,20 @@ fun NowPlayingScreen(
             Spacer(modifier = Modifier.height(6.dp))
 
             val songs by viewModel.queue.collectAsState()
-            val upNextList = remember(songs, song) {
-                val idx = songs.indexOf(song)
-                if (idx == -1) songs else songs.drop(idx + 1)
+            val upNextSongs = remember(songs, song) {
+                val idx = songs.indexOfFirst { it.id == song?.id }
+                (if (idx == -1) songs else songs.drop(idx + 1)).toMutableStateList()
             }
+            val upnextListState = rememberLazyListState()
+            val upnextReorderableState = rememberReorderableLazyListState(
+                lazyListState = upnextListState,
+                onMove = { from, to ->
+                    // 1. Update UI instan
+                    upNextSongs.add(to.index, upNextSongs.removeAt(from.index))
+                    // 2. Sync ke ViewModel (queue + ExoPlayer timeline)
+                    viewModel.reorderUpNext(from.index, to.index)
+                }
+            )
 
             AnimatedVisibility(
                 visible = isUpnextExpanded,
@@ -440,18 +456,59 @@ fun NowPlayingScreen(
                             RoundedCornerShape(24.dp)
                         )
                 ) {
-                    // Sama kayak listing di MainActivity: item dibagi rata biar full keliatan,
-                    // ga ada row yang kepotong setengah, + snap fling biar scroll-nya pas per-item.
                     ResponsiveSnapList(
-                        items = upNextList,
+                        items = upNextSongs,
                         key = { it.id },
                         scrollbarColor = adaptiveColor,
                         modifier = Modifier.padding(12.dp),
+                        listState = upnextListState,
                         minItemHeight = 64.dp,
                         bottomPadding = 4.dp
                     ) { upSong, _ ->
-                        UpnextSongRow(upSong = upSong, viewModel = viewModel, isDarkMode = isDarkMode) {
-                            viewModel.playSong(upSong)
+                        ReorderableItem(upnextReorderableState, key = upSong.id) { isDragging ->
+                            val elevation by animateDpAsState(
+                                if (isDragging) 8.dp else 0.dp,
+                                label = "upnext_drag_elevation"
+                            )
+                            // Warna solid biar item yang lagi di-drag beneran nutupin item di bawahnya,
+                            // bukan cuma numpuk transparan (itu penyebab visual "tembus-tembusan" pas drag).
+                            val rowBg = if (isDarkMode) Color(0xFF1E1E1E) else Color.White
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .zIndex(if (isDragging) 1f else 0f)
+                                    .shadow(elevation, RoundedCornerShape(12.dp))
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(rowBg),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(start = 8.dp)
+                                        .size(24.dp)
+                                        .clip(RoundedCornerShape(50))
+                                        .background(adaptiveColor.copy(alpha = 0.2f))
+                                        .draggableHandle(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.DragHandle,
+                                        contentDescription = "Drag",
+                                        tint = adaptiveColor,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                UpnextSongRow(
+                                    upSong = upSong,
+                                    viewModel = viewModel,
+                                    isDarkMode = isDarkMode,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    viewModel.playSong(upSong)
+                                }
+                            }
                         }
                     }
                 }
@@ -528,7 +585,13 @@ fun NowPlayingScreen(
 }
 
 @Composable
-fun UpnextSongRow(upSong: Song, viewModel: MusicViewModel, isDarkMode: Boolean, onClick: () -> Unit) {
+fun UpnextSongRow(
+    upSong: Song,
+    viewModel: MusicViewModel,
+    isDarkMode: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
     var art by remember(upSong.id) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(upSong.id) {
         viewModel.getCachedArt(upSong) { bitmap -> art = bitmap?.asImageBitmap() }
@@ -537,7 +600,7 @@ fun UpnextSongRow(upSong: Song, viewModel: MusicViewModel, isDarkMode: Boolean, 
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
+            .padding(vertical = 8.dp, horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Album art kecil ala Figma

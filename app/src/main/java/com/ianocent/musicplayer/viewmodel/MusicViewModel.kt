@@ -32,7 +32,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
-    private val ytMusicRepository = YTMusicRepository()
+    private val ytMusicRepository = YTMusicRepository(application.applicationContext)
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         if (throwable !is CancellationException) {
@@ -46,6 +46,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isSearchingRemote = MutableStateFlow(false)
     val isSearchingRemote: StateFlow<Boolean> = _isSearchingRemote
+
+    private val _streamParsingFailed = MutableStateFlow(false)
+    val streamParsingFailed: StateFlow<Boolean> = _streamParsingFailed
 
     private var searchJob: Job? = null
 
@@ -232,6 +235,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     // Fungsi khusus buat search di Tab Stream dengan sistem Debounce (Anti-lag)
     fun searchRemoteSongs(query: String) {
         searchJob?.cancel()
+        _streamParsingFailed.value = false
 
         if (query.isBlank()) {
             _allStreamSongs.value = emptyList()
@@ -247,12 +251,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         searchJob = viewModelScope.launch {
             delay(400)
             try {
-                ytMusicRepository.searchSongs(query) { newSongs ->
+                val result = ytMusicRepository.searchSongs(query) { newSongs ->
                     val merged = (_allStreamSongs.value + newSongs).distinctBy { it.id }
                     _allStreamSongs.value = merged
                     _streamSongs.value = merged.take(
                         maxOf(_streamSongs.value.size + newSongs.size, streamPageSize)
                     )
+                }
+                if (result is com.ianocent.musicplayer.data.StreamSearchResult.ParsingFailed) {
+                    _streamParsingFailed.value = true
                 }
             } catch (_: CancellationException) {
                 return@launch
@@ -353,6 +360,29 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _playlists.value = currentList
             savePlaylistsToPrefs()
         }
+    }
+    fun reorderUpNext(fromIndexInUpNext: Int, toIndexInUpNext: Int) {
+        val cur = _currentSong.value ?: return
+        val list = _queue.value
+        // Pake id, BUKAN equality objek penuh — lagu stream yang uri-nya udah keburu
+        // di-resolve (placeholder -> URL asli lewat prefetch/resolveAndPlayStream)
+        // bakal punya field 'uri' beda dari _currentSong.value, jadi indexOf() structural
+        // equality gagal match dan reorder silently no-op.
+        val curIdx = list.indexOfFirst { it.id == cur.id }
+        if (curIdx == -1) return
+
+        val actualFrom = curIdx + 1 + fromIndexInUpNext
+        val actualTo = curIdx + 1 + toIndexInUpNext
+        if (actualFrom !in list.indices || actualTo !in list.indices) return
+
+        val newQueue = list.toMutableList()
+        val movedItem = newQueue.removeAt(actualFrom)
+        newQueue.add(actualTo, movedItem)
+        _queue.value = newQueue
+        _currentIndex.value = newQueue.indexOfFirst { it.id == cur.id }.coerceAtLeast(0)
+
+        playerManager.moveQueuedItem(actualFrom, actualTo)
+        savePlayerState()
     }
 
     private fun savePlayerState() {
@@ -558,6 +588,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _sortMode.value = prefs.getInt("sort_mode", 0)
         restorePlayerState()
         checkForUpdate()
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                ytMusicRepository.cleanupExpiredCache()
+            } catch (_: Exception) {}
+        }
         playerManager.initialize {
             val player = playerManager.player
 

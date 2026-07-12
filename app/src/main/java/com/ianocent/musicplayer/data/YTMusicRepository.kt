@@ -13,14 +13,32 @@ import java.net.URL
 import java.net.URLDecoder
 import java.util.LinkedHashMap
 import java.util.concurrent.Semaphore
+import android.content.Context
 
-class YTMusicRepository {
+class YTMusicRepository(context: Context) {
 
     private val playerSemaphore = Semaphore(9)
 
+    private val streamCacheDao = AppDatabase.getInstance(context).streamCacheDao()
+
+    // In-memory cache tetap dipertahankan sebagai layer tercepat (hindari hit DB
+    // berkali-kali dalam 1 sesi aktif); Room jadi layer kedua yang persist antar
+    // sesi app (survive app-kill), yang gak bisa dicover LinkedHashMap doang.
     private val streamUrlCache = object : LinkedHashMap<String, String>(50, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean {
             return size > 50
+        }
+    }
+
+    // Coba parse 'expire=<unix_epoch_detik>' dari URL googlevideo (paling akurat).
+    // Kalau gak ketemu (misal dari fallback Invidious), asumsi aman 5 jam dari sekarang.
+    private fun computeExpiryMs(url: String, resolvedAtMs: Long): Long {
+        val match = Regex("[?&]expire=(\\d+)").find(url)
+        val expireEpochSeconds = match?.groupValues?.get(1)?.toLongOrNull()
+        return if (expireEpochSeconds != null) {
+            expireEpochSeconds * 1000L
+        } else {
+            resolvedAtMs + (5 * 60 * 60 * 1000L)
         }
     }
 
@@ -504,65 +522,76 @@ class YTMusicRepository {
         return null
     }
 
-    suspend fun searchSongs(query: String, onPartial: (List<Song>) -> Unit): List<Song> =
+    suspend fun searchSongs(query: String, onPartial: (List<Song>) -> Unit): StreamSearchResult =
         withContext(Dispatchers.IO) {
-            val results = searchMusicSongs(query, onPartial)
-            if (results.isNotEmpty()) return@withContext results
-            searchRegularSongs(query, onPartial)
+            val musicResult = searchMusicSongsSafe(query, onPartial)
+            if (musicResult is StreamSearchResult.Success) return@withContext musicResult
+
+            val regularResult = searchRegularSongsSafe(query, onPartial)
+            if (regularResult is StreamSearchResult.Success) return@withContext regularResult
+
+            // Kedua jalur gagal. Kalau SALAH SATU dari keduanya nunjukin ParsingFailed (bukan
+            // cuma Empty), berarti kemungkinan besar struktur JSON YouTube berubah, bukan sekadar
+            // query yang gak ketemu apa-apa — user berhak tau bedanya.
+            if (musicResult is StreamSearchResult.ParsingFailed || regularResult is StreamSearchResult.ParsingFailed) {
+                StreamSearchResult.ParsingFailed
+            } else {
+                StreamSearchResult.Empty
+            }
         }
 
-    private suspend fun searchMusicSongs(
+    // Wrapper aman di sekitar fungsi lama, supaya walkMusicContents() dkk gak perlu diubek-ubek --
+// cukup diperiksa exception & sinyal "0 item ditemukan padahal request sukses" dari sini.
+    private suspend fun searchMusicSongsSafe(
         query: String,
         onPartial: (List<Song>) -> Unit
-    ): List<Song> = withContext(Dispatchers.IO) {
+    ): StreamSearchResult = withContext(Dispatchers.IO) {
         try {
-            Log.d("YTMusicRepo", "InnerTube search: $query")
             val body = JSONObject().apply {
                 put("context", clientContext())
                 put("query", query)
                 put("params", "EgWKAQIIAWoKEAMQBBAFEAoQCQ==")
             }
-
             val raw = post("search", body)
             if (raw == null) {
                 Log.e("YTMusicRepo", "InnerTube search POST returned null")
-                return@withContext emptyList()
+                return@withContext StreamSearchResult.ParsingFailed
             }
-            Log.d("YTMusicRepo", "InnerTube search response len=${raw.length}")
 
             val response = JSONObject(raw)
             updateVisitorData(response)
-            val items = walkMusicContents(response)
-            Log.d("YTMusicRepo", "Parsed ${items.length()} songs from search")
 
-            val limit = minOf(items.length(), 50)
-            if (limit == 0) {
-                Log.w("YTMusicRepo", "No musicShelfRenderer items found in response")
-                return@withContext emptyList()
+            // Kalau top-level "contents" sendiri gak ada, itu jelas bukan "hasil kosong" biasa --
+            // response-nya berubah bentuk total.
+            if (!response.has("contents")) {
+                Log.w("YTMusicRepo", "Response missing 'contents' key entirely - structure likely changed")
+                return@withContext StreamSearchResult.ParsingFailed
             }
 
-            // Parse metadata only - no stream URL fetching during search for instant results
+            val items = walkMusicContents(response)
+            val limit = minOf(items.length(), 50)
+            if (limit == 0) {
+                // "contents" ADA tapi walkMusicContents() gak nemu satupun renderer yang dikenal
+                // (musicShelfRenderer/musicCardShelfRenderer/dst) -> kemungkinan besar YouTube
+                // ganti nama/skema renderer-nya, bukan sekadar "gak ada lagu yang cocok".
+                Log.w("YTMusicRepo", "Zero items parsed from non-empty contents - possible structure change")
+                return@withContext StreamSearchResult.ParsingFailed
+            }
+
             val results = mutableListOf<Song>()
             for (i in 0 until limit) {
                 try {
                     val item = items.getJSONObject(i)
                     val videoId = parseVideoId(item) ?: continue
-                    val title = parseTitle(item)
-                    val artist = parseArtist(item)
-                    val album = parseAlbum(item)
-                    val duration = parseDuration(item)
-                    val artUrl = parseThumbnail(item)
-
-                    // Use a placeholder URI - actual stream URL will be fetched on-demand when played
                     val song = Song(
                         id = videoId.hashCode().toLong(),
-                        title = title,
-                        artist = artist,
-                        album = album,
-                        duration = duration,
+                        title = parseTitle(item),
+                        artist = parseArtist(item),
+                        album = parseAlbum(item),
+                        duration = parseDuration(item),
                         uri = Uri.parse("ytmusic://placeholder/$videoId"),
                         isStream = true,
-                        remoteArtUrl = artUrl,
+                        remoteArtUrl = parseThumbnail(item),
                         remoteId = videoId
                     )
                     results.add(song)
@@ -571,11 +600,71 @@ class YTMusicRepository {
                     Log.w("YTMusicRepo", "Parse item failed: ${e.message}")
                 }
             }
-            Log.d("YTMusicRepo", "Final results: ${results.size} songs (metadata only)")
-            results
+
+            // Kalau limit>0 (ada item mentah) tapi SEMUA parsing per-item gagal (results kosong),
+            // itu juga sinyal kuat field internal item berubah struktur.
+            if (results.isEmpty()) StreamSearchResult.ParsingFailed else StreamSearchResult.Success(results)
         } catch (e: Exception) {
             Log.e("YTMusicRepo", "Search gagal: ${e.message}", e)
-            emptyList()
+            StreamSearchResult.ParsingFailed
+        }
+    }
+
+    private suspend fun searchRegularSongsSafe(
+        query: String,
+        onPartial: (List<Song>) -> Unit
+    ): StreamSearchResult = withContext(Dispatchers.IO) {
+        try {
+            val webSearchContext = JSONObject().apply {
+                put("client", JSONObject().apply {
+                    put("clientName", "WEB")
+                    put("clientVersion", "2.20250610.01.00")
+                    put("hl", "en")
+                    put("gl", "ID")
+                })
+            }
+            val body = JSONObject().apply {
+                put("context", webSearchContext)
+                put("query", query)
+            }
+            val raw = post("search", body)
+            if (raw == null) return@withContext StreamSearchResult.ParsingFailed
+
+            val response = JSONObject(raw)
+            updateVisitorData(response)
+            if (!response.has("contents")) return@withContext StreamSearchResult.ParsingFailed
+
+            val items = walkVideoContents(response)
+            val limit = minOf(items.length(), 20)
+            if (limit == 0) return@withContext StreamSearchResult.ParsingFailed
+
+            val results = mutableListOf<Song>()
+            for (i in 0 until limit) {
+                try {
+                    val item = items.getJSONObject(i)
+                    val videoId = item.optString("videoId", null) ?: continue
+                    val song = Song(
+                        id = videoId.hashCode().toLong(),
+                        title = parseVideoTitle(item),
+                        artist = parseVideoArtist(item),
+                        album = "YouTube",
+                        duration = parseVideoDuration(item),
+                        uri = Uri.parse("ytmusic://placeholder/$videoId"),
+                        isStream = true,
+                        remoteArtUrl = parseVideoThumbnail(item),
+                        remoteId = videoId
+                    )
+                    results.add(song)
+                    onPartial(listOf(song))
+                } catch (e: Exception) {
+                    Log.w("YTMusicRepo", "Parse regular item failed: ${e.message}")
+                }
+            }
+
+            if (results.isEmpty()) StreamSearchResult.ParsingFailed else StreamSearchResult.Success(results)
+        } catch (e: Exception) {
+            Log.e("YTMusicRepo", "Regular YT search failed: ${e.message}", e)
+            StreamSearchResult.ParsingFailed
         }
     }
 
@@ -644,77 +733,6 @@ class YTMusicRepository {
             }
         }
         return best
-    }
-
-    private suspend fun searchRegularSongs(
-        query: String,
-        onPartial: (List<Song>) -> Unit
-    ): List<Song> = withContext(Dispatchers.IO) {
-        try {
-            Log.d("YTMusicRepo", "Regular YT search: $query")
-            val webSearchContext = JSONObject().apply {
-                put("client", JSONObject().apply {
-                    put("clientName", "WEB")
-                    put("clientVersion", "2.20250610.01.00")
-                    put("hl", "en")
-                    put("gl", "ID")
-                })
-            }
-            val body = JSONObject().apply {
-                put("context", webSearchContext)
-                put("query", query)
-            }
-
-            val raw = post("search", body)
-            if (raw == null) {
-                Log.e("YTMusicRepo", "Regular YT search POST returned null")
-                return@withContext emptyList()
-            }
-            Log.d("YTMusicRepo", "Regular YT search response len=${raw.length}")
-
-            val response = JSONObject(raw)
-            updateVisitorData(response)
-            val items = walkVideoContents(response)
-            Log.d("YTMusicRepo", "Regular YT found ${items.length()} videos")
-
-            val limit = minOf(items.length(), 20)
-            if (limit == 0) return@withContext emptyList()
-
-            // Parse metadata only - no stream URL fetching during search for instant results
-            val results = mutableListOf<Song>()
-            for (i in 0 until limit) {
-                try {
-                    val item = items.getJSONObject(i)
-                    val videoId = item.optString("videoId", null)
-                    if (videoId.isNullOrBlank()) continue
-                    val title = parseVideoTitle(item)
-                    val artist = parseVideoArtist(item)
-                    val duration = parseVideoDuration(item)
-                    val artUrl = parseVideoThumbnail(item)
-
-                    val song = Song(
-                        id = videoId.hashCode().toLong(),
-                        title = title,
-                        artist = artist,
-                        album = "YouTube",
-                        duration = duration,
-                        uri = Uri.parse("ytmusic://placeholder/$videoId"),
-                        isStream = true,
-                        remoteArtUrl = artUrl,
-                        remoteId = videoId
-                    )
-                    results.add(song)
-                    onPartial(listOf(song))
-                } catch (e: Exception) {
-                    Log.w("YTMusicRepo", "Parse regular item failed: ${e.message}")
-                }
-            }
-            Log.d("YTMusicRepo", "Regular YT final: ${results.size} songs (metadata only)")
-            results
-        } catch (e: Exception) {
-            Log.e("YTMusicRepo", "Regular YT search failed: ${e.message}", e)
-            emptyList()
-        }
     }
 
     suspend fun getAudioFormats(videoId: String): List<AudioFormat> = withContext(Dispatchers.IO) {
@@ -795,9 +813,22 @@ class YTMusicRepository {
             return@withContext song.uri.toString()
         }
 
+        // 1. In-memory cache dulu (tercepat, hidup selama proses app masih jalan)
         streamUrlCache[videoId]?.let {
-            Log.d("YTMusicRepo", "Cache hit for: ${song.title}")
+            Log.d("YTMusicRepo", "Memory cache hit for: ${song.title}")
             return@withContext it
+        }
+
+        // 2. Room DB (persist antar sesi/app-kill), cek masih valid apa udah expired
+        try {
+            val cached = streamCacheDao.getById(videoId)
+            if (cached != null && cached.expiresAtMs > System.currentTimeMillis()) {
+                Log.d("YTMusicRepo", "DB cache hit for: ${song.title}")
+                streamUrlCache[videoId] = cached.url
+                return@withContext cached.url
+            }
+        } catch (e: Exception) {
+            Log.w("YTMusicRepo", "Cache read failed: ${e.message}")
         }
 
         Log.d("YTMusicRepo", "Resolving stream URL for: ${song.title}")
@@ -809,6 +840,19 @@ class YTMusicRepository {
             }
             if (audioUrl != null) {
                 streamUrlCache[videoId] = audioUrl
+                try {
+                    val now = System.currentTimeMillis()
+                    streamCacheDao.insert(
+                        CachedStreamUrl(
+                            videoId = videoId,
+                            url = audioUrl,
+                            resolvedAtMs = now,
+                            expiresAtMs = computeExpiryMs(audioUrl, now)
+                        )
+                    )
+                } catch (e: Exception) {
+                    Log.w("YTMusicRepo", "Cache write failed: ${e.message}")
+                }
                 Log.d("YTMusicRepo", "Resolved stream: ${song.title} - ${song.artist}")
             } else {
                 Log.w("YTMusicRepo", "Failed to resolve stream for: ${song.title}")
@@ -817,5 +861,8 @@ class YTMusicRepository {
         } finally {
             playerSemaphore.release()
         }
+    }
+    suspend fun cleanupExpiredCache() = withContext(Dispatchers.IO) {
+        streamCacheDao.deleteExpired(System.currentTimeMillis())
     }
 }

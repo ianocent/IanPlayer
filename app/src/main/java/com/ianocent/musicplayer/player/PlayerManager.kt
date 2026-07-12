@@ -30,6 +30,16 @@ class PlayerManager(private val context: Context) {
         )
     }
 
+    fun moveQueuedItem(from: Int, to: Int) {
+        try {
+            val p = player ?: return
+            if (from !in 0 until p.mediaItemCount || to !in 0 until p.mediaItemCount) return
+            p.moveMediaItem(from, to)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     fun replaceQueuedItem(index: Int, song: Song) {
         try {
             val p = player ?: return

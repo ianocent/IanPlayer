@@ -1,15 +1,13 @@
 plugins {
     alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
 }
 
 android {
     namespace = "com.ianocent.musicplayer"
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.ianocent.musicplayer"
@@ -42,6 +40,9 @@ android {
         compose = true
         buildConfig = true
     }
+    kotlinOptions {
+        jvmTarget = "11"
+    }
 }
 
 dependencies {
@@ -69,14 +70,15 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.5.0")
     implementation("com.google.accompanist:accompanist-systemuicontroller:0.32.0")
     implementation("sh.calvin.reorderable:reorderable:2.4.0")
-
     // YouTube PoToken (BotGuard) generation + signature cipher deobfuscation for streaming.
     // Pinned to a specific commit (not master-SNAPSHOT) for reproducible builds.
     implementation("com.github.ZemerTeam:zemer-cipher:55ef918b75")
     // zemer-cipher logs via Timber but only "compileOnly" depends on it; without this it would
     // crash at runtime with NoClassDefFoundError the first time it logs.
     implementation("com.jakewharton.timber:timber:5.0.1")
-    
     // For writing audio metadata tags (MP3)
     implementation("com.mpatric:mp3agic:0.9.1")
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
 }

@@ -77,6 +77,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.compositeOver
 import kotlin.math.roundToInt
+import androidx.compose.material.icons.rounded.CloudOff
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -222,7 +223,11 @@ fun <T> ResponsiveSnapList(
     minItemHeight: Dp = 72.dp,
     topPadding: Dp = 0.dp,
     bottomPadding: Dp = 90.dp,
-    itemContent: @Composable (T, Dp) -> Unit
+    // Sekarang extension lambda dari LazyItemScope, biar composable yang butuh
+    // scope itu (misalnya ReorderableItem dari library sh.calvin.reorderable)
+    // bisa dipanggil langsung di dalam itemContent tanpa error "invocations can
+    // only happen from context of @Composable function".
+    itemContent: @Composable androidx.compose.foundation.lazy.LazyItemScope.(T, Dp) -> Unit
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val availableHeight = (maxHeight - topPadding).coerceAtLeast(minItemHeight)
@@ -230,9 +235,6 @@ fun <T> ResponsiveSnapList(
         val itemHeight = availableHeight / itemsPerScreen
         val snapBehavior = rememberSnapFlingBehavior(lazyListState = listState)
 
-        // Safety net: kalau sumber data (misalnya hasil search stream) kebetulan
-        // ngasih key yang kembar, LazyColumn bakal crash ("Key X was already used").
-        // Jadi di-dedupe dulu di sini biar UI ga pernah force close gara-gara itu.
         val dedupedItems = remember(items) {
             val seenKeys = HashSet<Any>()
             items.filter { seenKeys.add(key(it)) }
@@ -252,6 +254,7 @@ fun <T> ResponsiveSnapList(
                             .height(itemHeight),
                         contentAlignment = Alignment.CenterStart
                     ) {
+                        // 'this' di sini = LazyItemScope, diterusin ke itemContent
                         itemContent(item, itemHeight)
                     }
                 }
@@ -762,6 +765,7 @@ fun ListingScreen(
 
         val streamSongs by viewModel.streamSongs.collectAsState()
         val isSearchingRemote by viewModel.isSearchingRemote.collectAsState()
+        val streamParsingFailed by viewModel.streamParsingFailed.collectAsState()
         LaunchedEffect(searchQuery, selectedTab) {
             if (selectedTab == 2) {
                 viewModel.searchRemoteSongs(searchQuery)
@@ -902,6 +906,32 @@ fun ListingScreen(
                                     modifier = Modifier.align(Alignment.Center),
                                     color = adaptiveColor
                                 )
+                            } else if (streamParsingFailed) {
+                                Column(
+                                    modifier = Modifier.align(Alignment.Center).padding(horizontal = 32.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.CloudOff,
+                                        contentDescription = null,
+                                        tint = Color.Gray,
+                                        modifier = Modifier.size(40.dp)
+                                    )
+                                    Spacer(Modifier.height(12.dp))
+                                    Text(
+                                        "Streaming lagi bermasalah",
+                                        color = Color.Gray,
+                                        fontWeight = FontWeight.SemiBold,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        "YouTube mungkin lagi update sistemnya. Coba lagi nanti ya.",
+                                        color = Color.Gray.copy(alpha = 0.7f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
                             } else if (streamSongs.isEmpty()) {
                                 Text(
                                     text = if (searchQuery.isBlank()) "Search songs to stream" else "Not found.",
