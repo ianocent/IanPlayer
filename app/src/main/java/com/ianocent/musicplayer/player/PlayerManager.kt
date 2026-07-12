@@ -32,26 +32,13 @@ class PlayerManager(private val context: Context) {
 
     fun playSong(song: Song, queueSongs: List<Song> = emptyList(), startIndex: Int = 0, startPositionMs: Long = 0) {
         try {
-            val mediaItems = if (queueSongs.isNotEmpty()) {
-                queueSongs.map { s ->
-                    val meta = MediaMetadata.Builder()
-                        .setTitle(s.title)
-                        .setArtist(s.artist)
-                        .setAlbumTitle(s.album)
-                        .apply {
-                            if (!s.remoteArtUrl.isNullOrEmpty()) {
-                                setArtworkUri(android.net.Uri.parse(s.remoteArtUrl))
-                            }
-                        }
-                        .build()
-                    MediaItem.Builder()
-                        .setUri(s.uri)
-                        .setMediaId(s.id.toString())
-                        .setMediaMetadata(meta)
-                        .build()
-                }
-            } else {
-                val metadata = MediaMetadata.Builder()
+            val p = player ?: return
+
+            if (p.currentMediaItem?.mediaId == song.id.toString() && 
+                p.currentMediaItem?.localConfiguration?.uri?.toString()?.startsWith("ytmusic://placeholder/") == true &&
+                !song.uri.toString().startsWith("ytmusic://placeholder/")) {
+                
+                val meta = MediaMetadata.Builder()
                     .setTitle(song.title)
                     .setArtist(song.artist)
                     .setAlbumTitle(song.album)
@@ -61,25 +48,62 @@ class PlayerManager(private val context: Context) {
                         }
                     }
                     .build()
-                listOf(
-                    MediaItem.Builder()
-                        .setUri(song.uri)
-                        .setMediaId(song.id.toString())
-                        .setMediaMetadata(metadata)
-                        .build()
-                )
-            }
-            player?.let { p ->
-                if (p.playbackState == Player.STATE_IDLE && p.playerError != null) {
-                    p.stop()
-                }
-                p.setMediaItems(mediaItems, if (queueSongs.isNotEmpty()) startIndex else 0, startPositionMs)
+                val newItem = MediaItem.Builder()
+                    .setUri(song.uri)
+                    .setMediaId(song.id.toString())
+                    .setMediaMetadata(meta)
+                    .build()
+                
+                p.replaceMediaItem(p.currentMediaItemIndex, newItem)
                 p.prepare()
                 p.play()
+                return
             }
+
+            val mediaItems = buildMediaItems(song, queueSongs)
+
+            p.setMediaItems(mediaItems, if (queueSongs.isNotEmpty()) startIndex else 0, startPositionMs)
+            p.prepare()
+            p.play()
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    fun setPlaylist(song: Song, queueSongs: List<Song>, startIndex: Int) {
+        try {
+            val p = player ?: return
+            val mediaItems = buildMediaItems(song, queueSongs)
+            p.setMediaItems(mediaItems, startIndex, 0)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun buildMediaItems(song: Song, queueSongs: List<Song>): List<MediaItem> {
+        return if (queueSongs.isNotEmpty()) {
+            queueSongs.map { s -> buildMediaItem(s) }
+        } else {
+            listOf(buildMediaItem(song))
+        }
+    }
+
+    private fun buildMediaItem(s: Song): MediaItem {
+        val meta = MediaMetadata.Builder()
+            .setTitle(s.title)
+            .setArtist(s.artist)
+            .setAlbumTitle(s.album)
+            .apply {
+                if (!s.remoteArtUrl.isNullOrEmpty()) {
+                    setArtworkUri(android.net.Uri.parse(s.remoteArtUrl))
+                }
+            }
+            .build()
+        return MediaItem.Builder()
+            .setUri(s.uri)
+            .setMediaId(s.id.toString())
+            .setMediaMetadata(meta)
+            .build()
     }
 
     fun togglePlayPause() {

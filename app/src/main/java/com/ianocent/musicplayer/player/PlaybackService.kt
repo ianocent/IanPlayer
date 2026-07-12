@@ -35,11 +35,19 @@ class PlaybackService : MediaSessionService() {
         }
         mediaSession = MediaSession.Builder(this, player!!)
             .setSessionActivity(sessionIntent)
+            .setId("IanPlayerSession")
             .build()
         setupAudioFocus()
         player?.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (isPlaying) requestAudioFocus() else abandonAudioFocus()
+                if (isPlaying) {
+                    requestAudioFocus()
+                } else {
+                    // Only abandon if we are NOT in a transient loss state
+                    if (!wasPlayingBeforeFocusLoss) {
+                        abandonAudioFocus()
+                    }
+                }
             }
         })
     }
@@ -57,6 +65,11 @@ class PlaybackService : MediaSessionService() {
         if (!p.playWhenReady || p.mediaItemCount == 0) {
             stopSelf()
         }
+    }
+
+    override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
+        // Force notification update to ensure it stays visible during stream resolution
+        super.onUpdateNotification(session, true)
     }
 
     override fun onDestroy() {

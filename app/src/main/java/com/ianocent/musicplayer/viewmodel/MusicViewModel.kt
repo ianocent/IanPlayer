@@ -566,6 +566,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
                     _duration.value = playerManager.getDuration()
                     syncStateFromPlayer()
+                    
+                    val currentItem = player?.currentMediaItem
+                    if (currentItem != null && currentItem.localConfiguration?.uri?.toString()?.startsWith("ytmusic://placeholder/") == true) {
+                        _currentSong.value?.let { resolveAndPlayStream(it) }
+                    }
                 }
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     _isBuffering.value = playbackState == Player.STATE_BUFFERING
@@ -576,6 +581,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     if (playbackState == Player.STATE_IDLE && player?.playerError != null) {
                         _isPlaying.value = false
+                        
+                        val currentUri = player?.currentMediaItem?.localConfiguration?.uri?.toString()
+                        if (currentUri?.startsWith("ytmusic://placeholder/") == true) {
+                            return 
+                        }
+                        
                         try {
                             player?.prepare()
                             player?.play()
@@ -587,7 +598,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                     error.printStackTrace()
                     _isPlaying.value = false
-                    player?.stop()
+                    
+                    // Mencegah auto-skip jika error disebabkan oleh URI placeholder yang sedang di-resolve
+                    val currentUri = player?.currentMediaItem?.localConfiguration?.uri?.toString()
+                    if (currentUri?.startsWith("ytmusic://placeholder/") == true) {
+                        return 
+                    }
+
+                    playNext()
                 }
             })
 
@@ -697,8 +715,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun isUriPlayable(song: Song): Boolean {
-        val uri = song.uri.toString()
-        return !song.isStream || !uri.startsWith("ytmusic://placeholder/")
+        // Allow all songs in the queue to show Next/Prev buttons in notification
+        return true 
     }
 
     fun loadSongs() {
@@ -750,17 +768,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun playSong(song: Song) {
         viewModelScope.launch {
             val index = _queue.value.indexOf(song)
+            if (index == -1) return@launch
+
             _currentIndex.value = index
             _currentSong.value = song
 
             val resolvedSong = if (song.isStream && song.uri.toString().startsWith("ytmusic://placeholder/")) {
                 _isBuffering.value = true
                 withContext(Dispatchers.IO) {
-                    val streamUrl = ytMusicRepository.resolveStreamUrl(song)
-                    _isBuffering.value = false
-                    if (streamUrl != null) {
-                        song.copy(uri = Uri.parse(streamUrl))
-                    } else {
+                    try {
+                        val streamUrl = ytMusicRepository.resolveStreamUrl(song)
+                        _isBuffering.value = false
+                        if (streamUrl != null) song.copy(uri = Uri.parse(streamUrl)) else song
+                    } catch (e: Exception) {
+                        _isBuffering.value = false
                         song
                     }
                 }
@@ -771,97 +792,60 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val queue = _queue.value.toMutableList()
             if (index >= 0 && index < queue.size) {
                 queue[index] = resolvedSong
+                _queue.value = queue
             }
-            val playableQueue = queue.filter { isUriPlayable(it) }
-            val playableIndex = if (playableQueue.isNotEmpty()) playableQueue.indexOf(resolvedSong).coerceAtLeast(0) else 0
-            playerManager.playSong(resolvedSong, playableQueue, playableIndex)
+            playerManager.playSong(resolvedSong, _queue.value, index)
             incrementPlayCount(song.id)
             savePlayerState()
             loadArt(song)
             loadLyric(song)
+        }
+    }
+
+    private fun resolveAndPlayStream(song: Song) {
+        viewModelScope.launch {
+            val resolvedSong = withContext(Dispatchers.IO) {
+                try {
+                    val streamUrl = ytMusicRepository.resolveStreamUrl(song)
+                    if (streamUrl != null) song.copy(uri = Uri.parse(streamUrl)) else song
+                } catch (e: Exception) {
+                    song
+                }
+            }
+            if (resolvedSong.uri != song.uri) {
+                val index = _queue.value.indexOf(song)
+                val queue = _queue.value.toMutableList()
+                if (index >= 0 && index < queue.size) {
+                    queue[index] = resolvedSong
+                    _queue.value = queue
+                }
+            }
+            playerManager.playSong(
+                if (resolvedSong.uri != song.uri) resolvedSong else song,
+                _queue.value,
+                startIndex = _queue.value.indexOf(resolvedSong).coerceAtLeast(0)
+            )
         }
     }
 
     fun playNext() {
-        viewModelScope.launch {
-            val list = _queue.value
-            if (list.isEmpty()) return@launch
-            val isLast = _currentIndex.value >= list.size - 1
+        val list = _queue.value
+        if (list.isEmpty()) return
+        val isLast = _currentIndex.value >= list.size - 1
 
-            val nextIndex = when {
-                isLast && _repeatMode.value == Player.REPEAT_MODE_ALL -> 0
-                isLast -> return@launch
-                else -> _currentIndex.value + 1
-            }
-            _currentIndex.value = nextIndex
-            val song = list[nextIndex]
-            _currentSong.value = song
-
-            val resolvedSong = if (song.isStream && song.uri.toString().startsWith("ytmusic://placeholder/")) {
-                _isBuffering.value = true
-                withContext(Dispatchers.IO) {
-                    val streamUrl = ytMusicRepository.resolveStreamUrl(song)
-                    _isBuffering.value = false
-                    if (streamUrl != null) {
-                        song.copy(uri = Uri.parse(streamUrl))
-                    } else {
-                        song
-                    }
-                }
-            } else {
-                song
-            }
-
-            val queue = _queue.value.toMutableList()
-            if (nextIndex >= 0 && nextIndex < queue.size) {
-                queue[nextIndex] = resolvedSong
-            }
-            val playableQueue = queue.filter { isUriPlayable(it) }
-            val playableIndex = if (playableQueue.isNotEmpty()) playableQueue.indexOf(resolvedSong).coerceAtLeast(0) else 0
-            playerManager.playSong(resolvedSong, playableQueue, playableIndex)
-            incrementPlayCount(song.id)
-            savePlayerState()
-            loadArt(song)
-            loadLyric(song)
+        val nextIndex = when {
+            isLast && _repeatMode.value == Player.REPEAT_MODE_ALL -> 0
+            isLast -> return
+            else -> _currentIndex.value + 1
         }
+        playSong(list[nextIndex])
     }
 
     fun playPrevious() {
-        viewModelScope.launch {
-            val list = _queue.value
-            if (list.isEmpty()) return@launch
-            val prevIndex = (_currentIndex.value - 1).coerceAtLeast(0)
-            _currentIndex.value = prevIndex
-            val song = list[prevIndex]
-            _currentSong.value = song
-
-            val resolvedSong = if (song.isStream && song.uri.toString().startsWith("ytmusic://placeholder/")) {
-                _isBuffering.value = true
-                withContext(Dispatchers.IO) {
-                    val streamUrl = ytMusicRepository.resolveStreamUrl(song)
-                    _isBuffering.value = false
-                    if (streamUrl != null) {
-                        song.copy(uri = Uri.parse(streamUrl))
-                    } else {
-                        song
-                    }
-                }
-            } else {
-                song
-            }
-
-            val queue = _queue.value.toMutableList()
-            if (prevIndex >= 0 && prevIndex < queue.size) {
-                queue[prevIndex] = resolvedSong
-            }
-            val playableQueue = queue.filter { isUriPlayable(it) }
-            val playableIndex = if (playableQueue.isNotEmpty()) playableQueue.indexOf(resolvedSong).coerceAtLeast(0) else 0
-            playerManager.playSong(resolvedSong, playableQueue, playableIndex)
-            incrementPlayCount(song.id)
-            savePlayerState()
-            loadArt(song)
-            loadLyric(song)
-        }
+        val list = _queue.value
+        if (list.isEmpty()) return
+        val prevIndex = (_currentIndex.value - 1).coerceAtLeast(0)
+        playSong(list[prevIndex])
     }
 
     private val _ambientColor = MutableStateFlow(Color(0xFF333333))

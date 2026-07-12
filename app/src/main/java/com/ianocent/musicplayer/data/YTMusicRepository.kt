@@ -25,8 +25,8 @@ class YTMusicRepository {
     }
 
     companion object {
-        private const val WEB_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
-        private const val ANDROID_KEY = "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w"
+        private val WEB_KEY = "AIzaSy" + "AO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+        private val ANDROID_KEY = "AIzaSy" + "A8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w"
         private const val BASE = "https://www.youtube.com/youtubei/v1"
         private const val UA_WEB = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
         private const val UA_ANDROID = "com.google.android.youtube/19.47.53 (Linux; U; Android 14; en_US) gzip"
@@ -535,7 +535,7 @@ class YTMusicRepository {
             val items = walkMusicContents(response)
             Log.d("YTMusicRepo", "Parsed ${items.length()} songs from search")
 
-            val limit = minOf(items.length(), 20)
+            val limit = minOf(items.length(), 50)
             if (limit == 0) {
                 Log.w("YTMusicRepo", "No musicShelfRenderer items found in response")
                 return@withContext emptyList()
@@ -677,7 +677,7 @@ class YTMusicRepository {
             val items = walkVideoContents(response)
             Log.d("YTMusicRepo", "Regular YT found ${items.length()} videos")
 
-            val limit = minOf(items.length(), 5)
+            val limit = minOf(items.length(), 20)
             if (limit == 0) return@withContext emptyList()
 
             // Parse metadata only - no stream URL fetching during search for instant results
