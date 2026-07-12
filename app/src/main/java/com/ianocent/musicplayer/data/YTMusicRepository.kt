@@ -11,11 +11,18 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
+import java.util.LinkedHashMap
 import java.util.concurrent.Semaphore
 
 class YTMusicRepository {
 
     private val playerSemaphore = Semaphore(9)
+
+    private val streamUrlCache = object : LinkedHashMap<String, String>(50, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean {
+            return size > 50
+        }
+    }
 
     companion object {
         private const val WEB_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
@@ -26,11 +33,7 @@ class YTMusicRepository {
 
         private val invidiousInstances = listOf(
             "https://inv.nadeko.net",
-            "https://yewtu.be",
-            "https://invidious.fdn.fr",
-            "https://iv.ggtyler.dev",
-            "https://invidious.0011.lt",
-            "https://inv.us.projectsegfau.lt"
+            "https://yewtu.be"
         )
 
         // Shared across the app: caches the WebView-based BotGuard session so we don't pay the
@@ -65,6 +68,20 @@ class YTMusicRepository {
             conn.setRequestProperty("User-Agent", UA_WEB)
             conn.connectTimeout = 8000
             conn.readTimeout = 8000
+            if (conn.responseCode != 200) return null
+            return conn.inputStream.bufferedReader().readText()
+        } catch (e: Exception) {
+            return null
+        }
+    }
+
+    private suspend fun fastGet(url: URL): String? {
+        try {
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("User-Agent", UA_WEB)
+            conn.connectTimeout = 2500
+            conn.readTimeout = 2500
             if (conn.responseCode != 200) return null
             return conn.inputStream.bufferedReader().readText()
         } catch (e: Exception) {
@@ -341,7 +358,9 @@ class YTMusicRepository {
     private suspend fun fetchViaInvidious(videoId: String): String? {
         for (instance in invidiousInstances) {
             try {
-                val raw = get(URL("$instance/api/v1/videos/$videoId")) ?: continue
+                val raw = kotlinx.coroutines.withTimeoutOrNull(3000L) {
+                    fastGet(URL("$instance/api/v1/videos/$videoId"))
+                } ?: continue
                 val json = JSONObject(raw)
 
                 val formats = json.optJSONArray("adaptiveFormats")
@@ -758,6 +777,11 @@ class YTMusicRepository {
             return@withContext song.uri.toString()
         }
 
+        streamUrlCache[videoId]?.let {
+            Log.d("YTMusicRepo", "Cache hit for: ${song.title}")
+            return@withContext it
+        }
+
         Log.d("YTMusicRepo", "Resolving stream URL for: ${song.title}")
         try {
             playerSemaphore.acquire()
@@ -766,6 +790,7 @@ class YTMusicRepository {
                 audioUrl = fetchViaInnerTube(videoId)
             }
             if (audioUrl != null) {
+                streamUrlCache[videoId] = audioUrl
                 Log.d("YTMusicRepo", "Resolved stream: ${song.title} - ${song.artist}")
             } else {
                 Log.w("YTMusicRepo", "Failed to resolve stream for: ${song.title}")

@@ -3,10 +3,14 @@ package com.ianocent.musicplayer.player
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Build
-import android.os.PowerManager
 import androidx.media3.common.C
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -15,6 +19,9 @@ import com.ianocent.musicplayer.MainActivity
 class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private var player: ExoPlayer? = null
+    private var audioManager: AudioManager? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var wasPlayingBeforeFocusLoss = false
 
     override fun onCreate() {
         super.onCreate()
@@ -29,6 +36,12 @@ class PlaybackService : MediaSessionService() {
         mediaSession = MediaSession.Builder(this, player!!)
             .setSessionActivity(sessionIntent)
             .build()
+        setupAudioFocus()
+        player?.addListener(object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) requestAudioFocus() else abandonAudioFocus()
+            }
+        })
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
@@ -47,6 +60,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        abandonAudioFocus()
         mediaSession?.run {
             player?.release()
             release()
@@ -56,6 +70,66 @@ class PlaybackService : MediaSessionService() {
         }
         player = null
         super.onDestroy()
+    }
+
+    private fun setupAudioFocus() {
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(audioAttributes)
+                .setOnAudioFocusChangeListener(::onAudioFocusChange)
+                .build()
+        }
+    }
+
+    private fun onAudioFocusChange(focusChange: Int) {
+        val p = player ?: return
+        when (focusChange) {
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                if (wasPlayingBeforeFocusLoss) {
+                    p.play()
+                    wasPlayingBeforeFocusLoss = false
+                }
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                wasPlayingBeforeFocusLoss = p.isPlaying
+                if (p.isPlaying) p.pause()
+            }
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                wasPlayingBeforeFocusLoss = false
+                if (p.isPlaying) p.pause()
+                abandonAudioFocus()
+            }
+        }
+    }
+
+    private fun requestAudioFocus(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest?.let { audioManager?.requestAudioFocus(it) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED }
+                ?: false
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager?.requestAudioFocus(
+                { onAudioFocusChange(it) },
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN
+            ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        }
+    }
+
+    private fun abandonAudioFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager?.abandonAudioFocus({ /* no-op */ })
+        }
     }
 
     private fun createNotificationChannel() {

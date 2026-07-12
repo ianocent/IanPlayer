@@ -21,25 +21,18 @@ import androidx.compose.ui.graphics.Color
 import com.ianocent.musicplayer.data.Playlist
 import com.ianocent.musicplayer.data.UpdateInfo
 import com.ianocent.musicplayer.data.YTMusicRepository
-import com.ianocent.musicplayer.data.StreamRepository
-import com.ianocent.musicplayer.data.SoundCloudRepository
 import com.ianocent.musicplayer.UpdateManager
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
-    private val streamRepository = StreamRepository()
     private val ytMusicRepository = YTMusicRepository()
-    private val soundCloudRepository = SoundCloudRepository()
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         if (throwable !is CancellationException) {
@@ -253,30 +246,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         searchJob = viewModelScope.launch {
             delay(400)
-            val mutex = kotlinx.coroutines.sync.Mutex()
-
             try {
-                coroutineScope {
-                    // fun ini non-suspend, tapi punya akses ke `this` (CoroutineScope dari coroutineScope di atas)
-                    // biar bisa launch coroutine baru tiap kali dipanggil dari callback non-suspend.
-                    fun appendPartial(newSongs: List<Song>) {
-                        launch {
-                            mutex.withLock {
-                                val merged = (_allStreamSongs.value + newSongs).distinctBy { it.id }
-                                _allStreamSongs.value = merged
-                                _streamSongs.value = merged.take(
-                                    maxOf(_streamSongs.value.size + newSongs.size, streamPageSize)
-                                )
-                            }
-                        }
-                    }
-
-                    val jobs = listOf(
-                        launch { streamRepository.searchSongs(query) { appendPartial(it) } },
-                        launch { ytMusicRepository.searchSongs(query) { appendPartial(it) } },
-                        launch { soundCloudRepository.searchSongs(query) { appendPartial(it) } }
+                ytMusicRepository.searchSongs(query) { newSongs ->
+                    val merged = (_allStreamSongs.value + newSongs).distinctBy { it.id }
+                    _allStreamSongs.value = merged
+                    _streamSongs.value = merged.take(
+                        maxOf(_streamSongs.value.size + newSongs.size, streamPageSize)
                     )
-                    jobs.joinAll()
                 }
             } catch (_: CancellationException) {
                 return@launch
@@ -594,7 +570,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     _isBuffering.value = playbackState == Player.STATE_BUFFERING
                     if (playbackState == Player.STATE_ENDED) {
-                        playNext()
+                        if (player?.repeatMode != Player.REPEAT_MODE_ONE) {
+                            playNext()
+                        }
                     }
                     if (playbackState == Player.STATE_IDLE && player?.playerError != null) {
                         _isPlaying.value = false
@@ -742,17 +720,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val current = _currentSong.value
         if (_isShuffleOn.value) {
             baseQueueBeforeShuffle = _queue.value
-            _queue.value = _queue.value.shuffled()
+            // Pindahkan lagu yang sekarang ke index 0 dulu, lalu shuffle sisanya,
+            // agar current lagu tetap di posisi pertama dan tidak restart.
+            val currentSong = current
+            val others = _queue.value.filter { it.id != currentSong?.id }.shuffled()
+            _queue.value = if (currentSong != null) listOf(currentSong) + others else others
         } else {
             _queue.value = baseQueueBeforeShuffle.ifEmpty { _songs.value }
         }
-        _currentIndex.value = _queue.value.indexOf(current)
-        current?.let { c ->
-            val pos = playerManager.getCurrentPosition()
-            val playable = _queue.value.toList().filter { isUriPlayable(it) }
-            val idx = playable.indexOf(c).coerceAtLeast(0)
-            playerManager.playSong(c, playable, idx, pos)
-        }
+        _currentIndex.value = _queue.value.indexOf(current).coerceAtLeast(0)
         savePlayerState()
     }
     fun setQueue(newQueue: List<Song>, startSong: Song? = null) {
@@ -813,7 +789,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val isLast = _currentIndex.value >= list.size - 1
 
             val nextIndex = when {
-                _repeatMode.value == Player.REPEAT_MODE_ONE -> _currentIndex.value
                 isLast && _repeatMode.value == Player.REPEAT_MODE_ALL -> 0
                 isLast -> return@launch
                 else -> _currentIndex.value + 1
@@ -1034,10 +1009,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch {
-            var formats = if (remoteId.length == 11 || (!song.uri.toString().contains("saavn") && !song.uri.toString().contains("soundcloud"))) {
-                ytMusicRepository.getAudioFormats(remoteId)
-            } else emptyList()
-            
+            val formats = ytMusicRepository.getAudioFormats(remoteId)
+
             if (formats.isEmpty()) {
                 val resolvedUrl = if (song.uri.toString().startsWith("ytmusic://placeholder/")) {
                     withContext(Dispatchers.IO) { ytMusicRepository.resolveStreamUrl(song) }
