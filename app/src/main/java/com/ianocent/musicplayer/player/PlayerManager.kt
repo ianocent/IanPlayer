@@ -30,10 +30,9 @@ class PlayerManager(private val context: Context) {
         )
     }
 
-    fun playSong(song: Song, queueSongs: List<Song> = emptyList(), startIndex: Int = 0) {
+    fun playSong(song: Song, queueSongs: List<Song> = emptyList(), startIndex: Int = 0, startPositionMs: Long = 0) {
         try {
             val mediaItems = if (queueSongs.isNotEmpty()) {
-                var idx = 0
                 queueSongs.map { s ->
                     val meta = MediaMetadata.Builder()
                         .setTitle(s.title)
@@ -74,8 +73,7 @@ class PlayerManager(private val context: Context) {
                 if (p.playbackState == Player.STATE_IDLE && p.playerError != null) {
                     p.stop()
                 }
-                p.repeatMode = Player.REPEAT_MODE_OFF
-                p.setMediaItems(mediaItems, if (queueSongs.isNotEmpty()) startIndex else 0, 0L)
+                p.setMediaItems(mediaItems, if (queueSongs.isNotEmpty()) startIndex else 0, startPositionMs)
                 p.prepare()
                 p.play()
             }
@@ -116,6 +114,7 @@ class PlayerManager(private val context: Context) {
             Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
             else -> Player.REPEAT_MODE_OFF
         }
+        player?.repeatMode = currentRepeatMode
         return currentRepeatMode
     }
 

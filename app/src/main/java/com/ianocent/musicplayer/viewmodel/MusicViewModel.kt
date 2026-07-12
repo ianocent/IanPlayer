@@ -379,6 +379,62 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun savePlayerState() {
+        val current = _currentSong.value ?: return
+        val arr = JSONArray()
+        _queue.value.forEach { s ->
+            val obj = JSONObject()
+            obj.put("id", s.id)
+            obj.put("title", s.title)
+            obj.put("artist", s.artist)
+            obj.put("album", s.album)
+            obj.put("uri", s.uri.toString())
+            obj.put("isStream", s.isStream)
+            s.remoteArtUrl?.let { obj.put("remoteArtUrl", it) }
+            s.remoteId?.let { obj.put("remoteId", it) }
+            obj.put("duration", s.duration)
+            arr.put(obj)
+        }
+        prefs.edit()
+            .putString("last_queue", arr.toString())
+            .putLong("last_song_id", current.id)
+            .putInt("last_index", _currentIndex.value)
+            .apply()
+    }
+
+    private fun restorePlayerState() {
+        if (_queue.value.isNotEmpty()) return
+        val queueJson = prefs.getString("last_queue", null) ?: return
+        val savedSongId = prefs.getLong("last_song_id", -1L)
+        val savedIndex = prefs.getInt("last_index", -1)
+        if (savedSongId < 0 || savedIndex < 0) return
+        try {
+            val arr = JSONArray(queueJson)
+            val restoredQueue = mutableListOf<Song>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                restoredQueue.add(
+                    Song(
+                        id = obj.getLong("id"),
+                        title = obj.getString("title"),
+                        artist = obj.getString("artist"),
+                        duration = obj.optLong("duration", 0L),
+                        uri = android.net.Uri.parse(obj.getString("uri")),
+                        album = obj.optString("album", "Unknown Album"),
+                        isStream = obj.optBoolean("isStream", false),
+                        remoteArtUrl = if (obj.has("remoteArtUrl")) obj.getString("remoteArtUrl") else null,
+                        remoteId = if (obj.has("remoteId")) obj.getString("remoteId") else null
+                    )
+                )
+            }
+            if (restoredQueue.isNotEmpty()) {
+                _queue.value = restoredQueue
+                _currentIndex.value = savedIndex.coerceIn(0, restoredQueue.size - 1)
+                pendingMediaId = savedSongId
+            }
+        } catch (_: Exception) {}
+    }
+
     private val repository = MusicRepository(application)
     val playerManager = PlayerManager(application)
 
@@ -406,7 +462,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     val isShuffleOn: StateFlow<Boolean> = _isShuffleOn
 
-    private val _repeatMode = MutableStateFlow(Player.REPEAT_MODE_OFF)
+    private val _repeatMode = MutableStateFlow(prefs.getInt("repeat_mode", Player.REPEAT_MODE_OFF))
 
     val repeatMode: StateFlow<Int> = _repeatMode
 
@@ -522,6 +578,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         loadPlaylistsFromPrefs()
         _playCounts.value = loadPlayCounts()
         _sortMode.value = prefs.getInt("sort_mode", 0)
+        restorePlayerState()
         checkForUpdate()
         playerManager.initialize {
             val player = playerManager.player
@@ -532,6 +589,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
                     _duration.value = playerManager.getDuration()
+                    syncStateFromPlayer()
                 }
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     _isBuffering.value = playbackState == Player.STATE_BUFFERING
@@ -581,12 +639,78 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+    private fun syncStateFromPlayer() {
+        try {
+            val p = playerManager.player ?: return
+            val item = p.currentMediaItem ?: return
+            val mediaId = item.mediaId.toLongOrNull() ?: return
+            if (_currentSong.value?.id == mediaId) return
+
+            var song = _queue.value.find { it.id == mediaId }
+                ?: _songs.value.find { it.id == mediaId }
+                ?: _allStreamSongs.value.find { it.id == mediaId }
+
+            if (song == null) {
+                val meta = item.mediaMetadata
+                val songUri = item.localConfiguration?.uri ?: android.net.Uri.EMPTY
+                song = com.ianocent.musicplayer.data.Song(
+                    id = mediaId,
+                    title = meta.title?.toString() ?: "Unknown",
+                    artist = meta.artist?.toString() ?: "Unknown Artist",
+                    duration = p.duration,
+                    uri = songUri,
+                    album = meta.albumTitle?.toString() ?: "Unknown Album",
+                    isStream = songUri.scheme == "http" || songUri.scheme == "https",
+                    remoteArtUrl = meta.artworkUri?.toString(),
+                    remoteId = item.mediaId.takeIf { it.toLongOrNull() == null || it.toLongOrNull()!! < 0 }
+                )
+            }
+            _currentSong.value = song
+            _currentIndex.value = _queue.value.indexOf(song).coerceAtLeast(0)
+            incrementPlayCount(song.id)
+            savePlayerState()
+            loadArt(song)
+            loadLyric(song)
+        } catch (_: Exception) {}
+    }
+
     private fun tryRestoreCurrentSong() {
+        if (playerManager.player == null) return
+        try {
+            tryRestoreCurrentSongInternal()
+        } catch (_: Exception) {}
+    }
+
+    private fun tryRestoreCurrentSongInternal() {
         val mediaId = pendingMediaId ?: return
-        val activeSong = _songs.value.find { it.id == mediaId }
+        var activeSong = _songs.value.find { it.id == mediaId }
+        if (activeSong == null) {
+            activeSong = _allStreamSongs.value.find { it.id == mediaId }
+        }
+        if (activeSong == null) {
+            activeSong = _queue.value.find { it.id == mediaId }
+        }
+        if (activeSong == null) {
+            val p = playerManager.player ?: return
+            val item = p.currentMediaItem ?: return
+            val meta = item.mediaMetadata
+            val songUri = item.localConfiguration?.uri ?: android.net.Uri.EMPTY
+            activeSong = com.ianocent.musicplayer.data.Song(
+                id = item.mediaId.toLongOrNull() ?: mediaId,
+                title = meta.title?.toString() ?: "Unknown",
+                artist = meta.artist?.toString() ?: "Unknown Artist",
+                duration = p.duration,
+                uri = songUri,
+                album = meta.albumTitle?.toString() ?: "Unknown Album",
+                isStream = songUri.scheme == "http" || songUri.scheme == "https" ||
+                    (item.mediaId.toLongOrNull()?.let { it < 0 } == true),
+                remoteArtUrl = meta.artworkUri?.toString(),
+                remoteId = item.mediaId.takeIf { it.toLongOrNull() == null || it.toLongOrNull()!! < 0 }
+            )
+        }
         if (activeSong != null) {
             _currentSong.value = activeSong
-            _currentIndex.value = _queue.value.indexOf(activeSong)
+            _currentIndex.value = _queue.value.indexOf(activeSong).coerceAtLeast(0)
             _isPlaying.value = playerManager.player?.isPlaying ?: false
             loadArt(activeSong)
             loadLyric(activeSong)
@@ -594,12 +718,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun isUriPlayable(song: Song): Boolean {
+        val uri = song.uri.toString()
+        return !song.isStream || !uri.startsWith("ytmusic://placeholder/")
+    }
+
     fun loadSongs() {
         viewModelScope.launch {
             val list = withContext(Dispatchers.IO) { repository.getAllSongs() }
             originalOrder = list
             _songs.value = list
-            _queue.value = list
+            if (_queue.value.isEmpty() || pendingMediaId == null) {
+                _queue.value = list
+            }
             checkMonthlyRecap()
         }
     }
@@ -616,6 +747,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _queue.value = baseQueueBeforeShuffle.ifEmpty { _songs.value }
         }
         _currentIndex.value = _queue.value.indexOf(current)
+        current?.let { c ->
+            val pos = playerManager.getCurrentPosition()
+            val playable = _queue.value.toList().filter { isUriPlayable(it) }
+            val idx = playable.indexOf(c).coerceAtLeast(0)
+            playerManager.playSong(c, playable, idx, pos)
+        }
+        savePlayerState()
     }
     fun setQueue(newQueue: List<Song>, startSong: Song? = null) {
         _queue.value = newQueue
@@ -629,6 +767,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleRepeat() {
         _repeatMode.value = playerManager.toggleRepeat()
+        prefs.edit().putInt("repeat_mode", _repeatMode.value).apply()
     }
 
 
@@ -657,8 +796,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             if (index >= 0 && index < queue.size) {
                 queue[index] = resolvedSong
             }
-            playerManager.playSong(resolvedSong, queue, maxOf(index, 0))
+            val playableQueue = queue.filter { isUriPlayable(it) }
+            val playableIndex = if (playableQueue.isNotEmpty()) playableQueue.indexOf(resolvedSong).coerceAtLeast(0) else 0
+            playerManager.playSong(resolvedSong, playableQueue, playableIndex)
             incrementPlayCount(song.id)
+            savePlayerState()
             loadArt(song)
             loadLyric(song)
         }
@@ -699,7 +841,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             if (nextIndex >= 0 && nextIndex < queue.size) {
                 queue[nextIndex] = resolvedSong
             }
-            playerManager.playSong(resolvedSong, queue, nextIndex)
+            val playableQueue = queue.filter { isUriPlayable(it) }
+            val playableIndex = if (playableQueue.isNotEmpty()) playableQueue.indexOf(resolvedSong).coerceAtLeast(0) else 0
+            playerManager.playSong(resolvedSong, playableQueue, playableIndex)
+            incrementPlayCount(song.id)
+            savePlayerState()
             loadArt(song)
             loadLyric(song)
         }
@@ -733,7 +879,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             if (prevIndex >= 0 && prevIndex < queue.size) {
                 queue[prevIndex] = resolvedSong
             }
-            playerManager.playSong(resolvedSong, queue, prevIndex)
+            val playableQueue = queue.filter { isUriPlayable(it) }
+            val playableIndex = if (playableQueue.isNotEmpty()) playableQueue.indexOf(resolvedSong).coerceAtLeast(0) else 0
+            playerManager.playSong(resolvedSong, playableQueue, playableIndex)
+            incrementPlayCount(song.id)
+            savePlayerState()
             loadArt(song)
             loadLyric(song)
         }
@@ -975,11 +1125,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val list = withContext(Dispatchers.IO) { repository.getAllSongs() }
             originalOrder = list
             _songs.value = list
-            _queue.value = list
+            if (_currentSong.value == null) {
+                _queue.value = list
+            }
         }
-    }
-
-    fun dismissUpdate() {
+    }    fun dismissUpdate() {
         _isUpdateAvailable.value = false
         _updateInfo.value = null
     }
