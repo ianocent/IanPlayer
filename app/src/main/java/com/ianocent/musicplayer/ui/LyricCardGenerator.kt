@@ -185,7 +185,7 @@ fun LyricCardSheet(
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Simpan ke Galeri")
+                Text("Save to Gallery")
             }
         }
     }

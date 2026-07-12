@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -54,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
@@ -207,62 +210,6 @@ fun FastScroller(
     }
 }
 
-/**
- * List responsif yang selalu nampilin item secara utuh (ga ada yang kepotong),
- * ngitung tinggi tiap item berdasarkan sisa ruang layar yang tersedia (BoxWithConstraints)
- * dan pake snap fling behavior biar scroll-nya "magnet" ke item terdekat, jadi pas
- * discroll ga ada moment nanggung/kepotong setengah item.
- */
-@Composable
-fun <T> ResponsiveSnapList(
-    items: List<T>,
-    key: (T) -> Any,
-    scrollbarColor: Color,
-    modifier: Modifier = Modifier,
-    listState: androidx.compose.foundation.lazy.LazyListState = rememberLazyListState(),
-    minItemHeight: Dp = 72.dp,
-    topPadding: Dp = 0.dp,
-    bottomPadding: Dp = 90.dp,
-    // Sekarang extension lambda dari LazyItemScope, biar composable yang butuh
-    // scope itu (misalnya ReorderableItem dari library sh.calvin.reorderable)
-    // bisa dipanggil langsung di dalam itemContent tanpa error "invocations can
-    // only happen from context of @Composable function".
-    itemContent: @Composable androidx.compose.foundation.lazy.LazyItemScope.(T, Dp) -> Unit
-) {
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val availableHeight = (maxHeight - topPadding).coerceAtLeast(minItemHeight)
-        val itemsPerScreen = (availableHeight / minItemHeight).toInt().coerceAtLeast(1)
-        val itemHeight = availableHeight / itemsPerScreen
-        val snapBehavior = rememberSnapFlingBehavior(lazyListState = listState)
-
-        val dedupedItems = remember(items) {
-            val seenKeys = HashSet<Any>()
-            items.filter { seenKeys.add(key(it)) }
-        }
-
-        Box(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(
-                state = listState,
-                flingBehavior = snapBehavior,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(top = topPadding, bottom = bottomPadding, end = 20.dp)
-            ) {
-                items(dedupedItems, key = key) { item ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(itemHeight),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        // 'this' di sini = LazyItemScope, diterusin ke itemContent
-                        itemContent(item, itemHeight)
-                    }
-                }
-            }
-            DraggableScrollbar(listState, scrollbarColor)
-        }
-    }
-}
 
 @Composable
 fun AppNavHost(viewModel: MusicViewModel, innerPadding: PaddingValues) {
@@ -527,15 +474,11 @@ fun ListingScreen(
                         .clip(RoundedCornerShape(28.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                         .pointerInput(Unit) {
-                            var dragSum = 0f
-                            detectHorizontalDragGestures(
-                                onDragEnd = {
-                                    if (dragSum > 60f) showVolumeControl = true
-                                    else if (dragSum < -60f) showVolumeControl = false
-                                    dragSum = 0f
+                            detectHorizontalDragGestures { change, dragAmount ->
+                                if (dragAmount < -20) { // Swipe left to show volume
+                                    showVolumeControl = true
+                                    change.consume()
                                 }
-                            ) { _, dragAmount ->
-                                dragSum += dragAmount
                             }
                         }
                         .padding(horizontal = 12.dp),
@@ -554,12 +497,24 @@ fun ListingScreen(
                                 modifier = Modifier.fillMaxSize(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    Icons.Rounded.VolumeDown,
-                                    contentDescription = "Vol min",
-                                    tint = adaptiveColor,
-                                    modifier = Modifier.size(20.dp)
-                                )
+                                // Tombol back eksplisit (gantiin swipe gesture), style sama kayak
+                                // chevron prev/next di tab Songs/Albums biar konsisten.
+                                Box(
+                                    modifier = Modifier
+                                        .padding(end = 8.dp)
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                        .clickable { showVolumeControl = false },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.ChevronLeft,
+                                        contentDescription = "Back",
+                                        tint = Color.Gray,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                                 Slider(
                                     value = currentVolume.toFloat(),
                                     onValueChange = { v ->
@@ -695,10 +650,10 @@ fun ListingScreen(
                                     Text(text = minStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                     Text(text = secStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                 }
+                            }
+                        }
                     }
                 }
-            }
-        }
             }
         }
 
@@ -792,9 +747,21 @@ fun ListingScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(start = 20.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
-                                horizontalArrangement = Arrangement.End,
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                // DEBUG: trigger recap card manual, tanpa nunggu interval 30 hari asli.
+                                IconButton(
+                                    onClick = { viewModel.debugTriggerRecap() },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Analytics, "Debug Recap",
+                                        tint = adaptiveColor,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+
                                 Box {
                                     IconButton(
                                         onClick = { showSortMenu = true },
@@ -1148,6 +1115,7 @@ fun ListingScreen(
         com.ianocent.musicplayer.ui.RecapCardSheet(
             recap = monthlyRecap!!,
             accentColor = adaptiveColor,
+            viewModel = viewModel,
             onDismiss = { viewModel.closeRecapCard() }
         )
     }
@@ -2212,63 +2180,6 @@ fun AddSongsToPlaylistDialog(
     )
 }
 
-@Composable
-fun BoxScope.DraggableScrollbar(
-    listState: androidx.compose.foundation.lazy.LazyListState,
-    color: Color,
-    thumbWidth: Dp = 6.dp
-) {
-    val coroutineScope = rememberCoroutineScope()
-    var containerHeightPx by remember { mutableStateOf(0f) }
-    var isDragging by remember { mutableStateOf(false) }
-    val density = androidx.compose.ui.platform.LocalDensity.current
-
-    val totalItems = listState.layoutInfo.totalItemsCount
-    if (totalItems <= 0) return
-
-    val visibleCount = listState.layoutInfo.visibleItemsInfo.size.coerceAtLeast(1)
-    val thumbFraction = (visibleCount.toFloat() / totalItems).coerceIn(0.08f, 1f)
-    val firstVisible = listState.firstVisibleItemIndex
-    val maxScrollableIndex = (totalItems - 1).coerceAtLeast(1)
-    val scrollFraction = firstVisible.toFloat() / maxScrollableIndex
-
-    Box(
-        modifier = Modifier
-            .align(Alignment.CenterEnd)
-            .fillMaxHeight()
-            .width(28.dp) // area sentuh lebih lebar dari thumb, biar gampang di-drag
-            .onGloballyPositioned { containerHeightPx = it.size.height.toFloat() }
-            .pointerInput(totalItems) {
-                detectDragGestures(
-                    onDragStart = { isDragging = true },
-                    onDragEnd = { isDragging = false },
-                    onDragCancel = { isDragging = false },
-                    onDrag = { change, _ ->
-                        change.consume()
-                        if (containerHeightPx > 0) {
-                            val fraction = (change.position.y / containerHeightPx).coerceIn(0f, 1f)
-                            val targetIndex = (fraction * maxScrollableIndex).toInt().coerceIn(0, maxScrollableIndex)
-                            coroutineScope.launch { listState.scrollToItem(targetIndex) }
-                        }
-                    }
-                )
-            }
-    ) {
-        val thumbHeightDp = with(density) { (containerHeightPx * thumbFraction).toDp() }
-        val offsetYDp = with(density) { (containerHeightPx * scrollFraction * (1 - thumbFraction)).toDp() }
-
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(end = 4.dp)
-                .offset(y = offsetYDp)
-                .width(thumbWidth)
-                .height(thumbHeightDp.coerceAtLeast(24.dp))
-                .clip(RoundedCornerShape(thumbWidth / 2))
-                .background(color.copy(alpha = if (isDragging) 0.9f else 0.4f))
-        )
-    }
-}
 
 @Composable
 fun RoundedClickableRow(
@@ -2863,7 +2774,7 @@ fun MusicRecapBanner(
                     color = accentColor
                 )
                 Spacer(Modifier.height(6.dp))
-                recap.topSongs.take(3).forEach { song ->
+                recap.topSongs.take(5).forEach { song ->
                     Row(
                         modifier = Modifier.padding(vertical = 3.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -2917,24 +2828,58 @@ fun MusicRecapBanner(
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
 
+            val commentScrollState = rememberScrollState()
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(max = 70.dp),
                 shape = RoundedCornerShape(16.dp),
                 color = accentColor.copy(alpha = 0.06f)
             ) {
-                Text(
-                    text = recap.tasteComment,
-                    modifier = Modifier.padding(12.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    lineHeight = MaterialTheme.typography.bodySmall.lineHeight,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
-                    fontStyle = FontStyle.Italic
-                )
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Text(
+                        text = recap.tasteComment,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .padding(end = 12.dp)
+                            .verticalScroll(commentScrollState),
+                        style = MaterialTheme.typography.bodySmall,
+                        lineHeight = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                        fontStyle = FontStyle.Italic
+                    )
+                    
+                    if (commentScrollState.maxValue > 0) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .padding(end = 4.dp, top = 8.dp, bottom = 8.dp)
+                                .fillMaxHeight()
+                                .width(4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(accentColor.copy(alpha = 0.1f))
+                        ) {
+                            val scrollFraction = commentScrollState.value.toFloat() / commentScrollState.maxValue.toFloat()
+                            val thumbHeightFraction = 0.3f
+                            
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .fillMaxHeight(thumbHeightFraction)
+                                    .align(Alignment.TopCenter)
+                                    .graphicsLayer {
+                                        translationY = (size.height * (1f - thumbHeightFraction) * scrollFraction)
+                                    }
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(accentColor.copy(alpha = 0.5f))
+                            )
+                        }
+                    }
+                }
             }
 
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(10.dp))
 
             Button(
                 onClick = onGenerateCard,
@@ -2942,9 +2887,9 @@ fun MusicRecapBanner(
                 colors = ButtonDefaults.buttonColors(containerColor = accentColor),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Icon(Icons.Rounded.Image, contentDescription = null, modifier = Modifier.size(18.dp))
+//                Icon(Icons.Rounded.Image, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Generate Recap Card")
+                Text("Save to Gallery")
             }
         }
     }

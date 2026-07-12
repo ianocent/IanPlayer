@@ -5,8 +5,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -16,7 +14,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -62,7 +59,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
@@ -78,6 +74,9 @@ import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.zIndex
+import kotlin.math.cos
+import kotlin.math.sin
+
 
 @Composable
 fun NowPlayingScreen(
@@ -93,13 +92,15 @@ fun NowPlayingScreen(
     val isShuffleOn by viewModel.isShuffleOn.collectAsState()
     val repeatMode by viewModel.repeatMode.collectAsState()
     val ambientColor by viewModel.ambientColor.collectAsState()
+    val paletteColors by viewModel.paletteColors.collectAsState()
     val offsetY = remember { Animatable(0f) }
     val dismissThreshold = 300f
     val coroutineScope = rememberCoroutineScope()
-    val screenHeight = with(LocalDensity.current) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
+    val density = LocalDensity.current
+    val screenHeight = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
+    val screenWidth = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
     val dragProgress = (offsetY.value / screenHeight).coerceIn(0f, 1f)
     val isBuffering by viewModel.isBuffering.collectAsState()
-
     val heroAnimProgress = remember { Animatable(0f) }
     var targetAlbumArtRect by remember { mutableStateOf<ElementRect?>(null) }
     var heroInitScale by remember { mutableStateOf(1f) }
@@ -161,10 +162,70 @@ fun NowPlayingScreen(
     val isLyricLoading by viewModel.isLyricLoading.collectAsState()
     val rootBackgroundColor = remember(animatedAmbient, isDarkMode) {
         if (isDarkMode) {
-            Color(ColorUtils.blendARGB(animatedAmbient.toArgb(), android.graphics.Color.BLACK, 0.6f))
+            Color(ColorUtils.blendARGB(animatedAmbient.toArgb(), android.graphics.Color.BLACK, 0.85f))
         } else {
             Color(ColorUtils.blendARGB(animatedAmbient.toArgb(), android.graphics.Color.WHITE, 0.75f))
         }
+    }
+
+    val targetPaletteBlend = remember(paletteColors, isDarkMode) {
+        val base = paletteColors.ifEmpty { listOf(animatedAmbient) }
+        List(3) { i ->
+            val c = base.getOrElse(i) { base.last() }
+            if (isDarkMode) Color(ColorUtils.blendARGB(c.toArgb(), android.graphics.Color.BLACK, 0.8f))
+            else Color(ColorUtils.blendARGB(c.toArgb(), android.graphics.Color.WHITE, 0.65f))
+        }
+    }
+
+    val paletteTransitionProgress = remember { Animatable(0f) }
+    var prevPaletteBlend by remember { mutableStateOf(targetPaletteBlend) }
+    var nextPaletteBlend by remember { mutableStateOf(targetPaletteBlend) }
+
+    LaunchedEffect(targetPaletteBlend) {
+        prevPaletteBlend = List(3) { i ->
+            androidx.compose.ui.graphics.lerp(
+                prevPaletteBlend[i], nextPaletteBlend[i], paletteTransitionProgress.value
+            )
+        }
+        nextPaletteBlend = targetPaletteBlend
+        paletteTransitionProgress.snapTo(0f)
+        paletteTransitionProgress.animateTo(1f, tween(1400, easing = FastOutSlowInEasing))
+    }
+
+    val currentSlot0 = androidx.compose.ui.graphics.lerp(prevPaletteBlend[0], nextPaletteBlend[0], paletteTransitionProgress.value)
+    val currentSlot1 = androidx.compose.ui.graphics.lerp(prevPaletteBlend[1], nextPaletteBlend[1], paletteTransitionProgress.value)
+    val currentSlot2 = androidx.compose.ui.graphics.lerp(prevPaletteBlend[2], nextPaletteBlend[2], paletteTransitionProgress.value)
+
+    val gradientTransition = rememberInfiniteTransition(label = "ambientGradient")
+    val gradientAngle by gradientTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 30000, easing = LinearEasing)
+        ),
+        label = "gradientAngle"
+    )
+
+    val animatedBackgroundBrush = remember(
+        currentSlot0, currentSlot1, currentSlot2,
+        rootBackgroundColor, gradientAngle, screenWidth, screenHeight
+    ) {
+        val rad = Math.toRadians(gradientAngle.toDouble())
+        val dx = (cos(rad).toFloat()) * screenWidth
+        val dy = (sin(rad).toFloat()) * screenHeight
+        val cx = screenWidth / 2f
+        val cy = screenHeight / 2f
+        Brush.linearGradient(
+            colors = listOf(
+                rootBackgroundColor,
+                currentSlot0,
+                currentSlot1,
+                currentSlot2,
+                rootBackgroundColor
+            ),
+            start = Offset(cx - dx, cy - dy),
+            end = Offset(cx + dx, cy + dy)
+        )
     }
 
     Column(
@@ -175,7 +236,7 @@ fun NowPlayingScreen(
                 scaleX = 1f - dragProgress * 0.05f
                 scaleY = 1f - dragProgress * 0.05f
             }
-            .background(rootBackgroundColor)
+            .background(animatedBackgroundBrush)
             .statusBarsPadding()
             .navigationBarsPadding()
             .padding(20.dp)

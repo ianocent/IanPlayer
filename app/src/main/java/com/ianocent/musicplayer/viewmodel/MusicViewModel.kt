@@ -195,6 +195,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun dismissRecapBanner() {
         _showRecapBanner.value = false
     }
+    fun debugTriggerRecap() {
+        computeMonthlyRecap()
+    }
 
     private fun generateTasteComment(
         topArtists: List<Pair<String, Int>>,

@@ -12,8 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -21,8 +20,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -34,12 +35,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ianocent.musicplayer.data.MonthlyRecap
 import com.ianocent.musicplayer.data.Song
+import com.ianocent.musicplayer.viewmodel.MusicViewModel
 import kotlinx.coroutines.launch
 
 @Composable
 fun RecapCardContent(
     recap: MonthlyRecap,
-    accentColor: Color
+    accentColor: Color,
+    topArts: List<ImageBitmap> = emptyList()
 ) {
     Box(
         modifier = Modifier
@@ -47,37 +50,60 @@ fun RecapCardContent(
             .height(480.dp)
             .clip(RoundedCornerShape(24.dp))
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            accentColor.copy(alpha = 0.9f),
-                            Color.Black.copy(alpha = 0.95f),
-                            Color.Black
+        // Abstract Background using Blurred Album Arts
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (topArts.isNotEmpty()) {
+                topArts.take(4).forEachIndexed { index, bitmap ->
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                alpha = 0.35f
+                                translationX = if (index % 2 == 0) -100f else 100f
+                                translationY = if (index / 2 == 0) -100f else 100f
+                                scaleX = 2.5f
+                                scaleY = 2.5f
+                            }
+                            .blur(60.dp),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.4f),
+                                Color.Black.copy(alpha = 0.8f),
+                                Color.Black
+                            )
                         )
                     )
-                )
-        )
+            )
+        }
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(28.dp),
+                .padding(24.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Column {
                 Text(
                     text = "YOUR",
-                    fontSize = 12.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Black,
                     color = Color.White.copy(alpha = 0.5f),
                     letterSpacing = 2.sp
                 )
                 Text(
                     text = "MONTHLY RECAP",
-                    fontSize = 12.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Black,
                     color = Color.White.copy(alpha = 0.5f),
                     letterSpacing = 2.sp
@@ -91,7 +117,7 @@ fun RecapCardContent(
                     fontWeight = FontWeight.ExtraBold,
                     color = Color.White
                 )
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(4.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -102,30 +128,30 @@ fun RecapCardContent(
                     RecapStatItem("Artists", "${recap.topArtists.size}")
                 }
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(14.dp))
 
                 if (recap.topSongs.isNotEmpty()) {
                     Text(
                         text = "TOP SONGS",
-                        fontSize = 11.sp,
+                        fontSize = 9.sp,
                         fontWeight = FontWeight.Black,
                         color = Color.White.copy(alpha = 0.4f),
                         letterSpacing = 1.5.sp
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(4.dp))
                     recap.topSongs.take(5).forEachIndexed { index, song ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 2.dp),
+                                .padding(vertical = 1.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
                                 text = "${index + 1}",
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White.copy(alpha = 0.5f),
-                                modifier = Modifier.width(20.dp)
+                                modifier = Modifier.width(18.dp)
                             )
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
@@ -148,7 +174,7 @@ fun RecapCardContent(
                     }
                 }
 
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
 
                 if (recap.topArtists.isNotEmpty()) {
                     Row(
@@ -180,7 +206,7 @@ fun RecapCardContent(
                     fontSize = 11.sp,
                     color = Color.White.copy(alpha = 0.5f),
                     fontStyle = FontStyle.Italic,
-                    maxLines = 3,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -191,7 +217,7 @@ fun RecapCardContent(
             ) {
                 Text(
                     text = "Ian Player",
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Black,
                     color = Color.White.copy(alpha = 0.3f),
                     letterSpacing = 1.sp
@@ -206,7 +232,7 @@ fun RecapStatItem(label: String, value: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = value,
-            fontSize = 24.sp,
+            fontSize = 22.sp,
             fontWeight = FontWeight.ExtraBold,
             color = Color.White
         )
@@ -225,17 +251,27 @@ fun RecapStatItem(label: String, value: String) {
 fun RecapCardSheet(
     recap: MonthlyRecap,
     accentColor: Color,
+    viewModel: MusicViewModel,
     onDismiss: () -> Unit
 ) {
     val graphicsLayer = rememberGraphicsLayer()
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
+    val topArts = remember { mutableStateListOf<ImageBitmap>() }
+
+    LaunchedEffect(recap.topSongs) {
+        recap.topSongs.take(4).forEach { song ->
+            viewModel.getCachedArt(song) { bitmap ->
+                bitmap?.let { topArts.add(it.asImageBitmap()) }
+            }
+        }
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(bottom = 32.dp, start = 16.dp, end = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Box(
@@ -244,10 +280,10 @@ fun RecapCardSheet(
                     drawLayer(graphicsLayer)
                 }
             ) {
-                RecapCardContent(recap, accentColor)
+                RecapCardContent(recap, accentColor, topArts)
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(24.dp))
 
             Button(
                 onClick = {
@@ -257,7 +293,7 @@ fun RecapCardSheet(
                         onDismiss()
                     }
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().height(48.dp)
             ) {
                 Text("Save to Gallery")
             }

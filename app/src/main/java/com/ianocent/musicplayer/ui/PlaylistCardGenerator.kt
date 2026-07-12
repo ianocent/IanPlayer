@@ -236,7 +236,7 @@ fun PlaylistCardSheet(
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Save & Share")
+                Text("Save to Gallery")
             }
         }
     }
