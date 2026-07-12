@@ -550,6 +550,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingMediaId: Long? = null
     private var downloadReceiver: BroadcastReceiver? = null
 
+    private val prefetchingIds = mutableSetOf<Long>()
+
     init {
         loadPlaylistsFromPrefs()
         _playCounts.value = loadPlayCounts()
@@ -630,9 +632,39 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     _currentPosition.value = playerManager.getCurrentPosition()
                     _duration.value = playerManager.getDuration()
+                    val remaining = _duration.value - _currentPosition.value
+                    if (_duration.value > 0 && remaining in 0..8000) {
+                        prefetchNextIfNeeded()
+                    }
                 } catch (_: Exception) {}
                 delay(500)
             }
+        }
+    }
+    private fun prefetchNextIfNeeded() {
+        val list = _queue.value
+        val idx = _currentIndex.value
+        if (idx < 0 || idx >= list.size - 1) return
+
+        val next = list[idx + 1]
+        if (!next.isStream || !next.uri.toString().startsWith("ytmusic://placeholder/")) return
+        if (!prefetchingIds.add(next.id)) return // udah lagi diproses, skip
+
+        viewModelScope.launch {
+            val resolvedUrl = withContext(Dispatchers.IO) {
+                try { ytMusicRepository.resolveStreamUrl(next) } catch (_: Exception) { null }
+            }
+            prefetchingIds.remove(next.id)
+            if (resolvedUrl == null) return@launch
+
+            val resolvedNext = next.copy(uri = Uri.parse(resolvedUrl))
+            val currentList = _queue.value.toMutableList()
+            val nextPos = currentList.indexOfFirst { it.id == next.id }
+            if (nextPos == -1) return@launch
+            currentList[nextPos] = resolvedNext
+            _queue.value = currentList
+
+            playerManager.replaceQueuedItem(nextPos, resolvedNext)
         }
     }
     private fun syncStateFromPlayer() {

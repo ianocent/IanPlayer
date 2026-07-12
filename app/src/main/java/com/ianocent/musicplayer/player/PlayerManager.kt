@@ -30,6 +30,25 @@ class PlayerManager(private val context: Context) {
         )
     }
 
+    fun replaceQueuedItem(index: Int, song: Song) {
+        try {
+            val p = player ?: return
+            if (index < 0 || index >= p.mediaItemCount) return
+            // Cuma swap URI item di index tsb, TANPA prepare()/play() — item ini belum
+            // diplay, cuma lagi di-pre-resolve. Tujuannya: pas ExoPlayer auto-advance
+            // ke item ini sendiri (atau user pencet skip-next di notifikasi, yang manggil
+            // player.seekToNext() LANGSUNG ke ExoPlayer, gak lewat playNext() kita),
+            // URI-nya udah real, bukan ytmusic://placeholder/ lagi.
+            val current = p.getMediaItemAt(index)
+            val newItem = current.buildUpon()
+                .setUri(song.uri)
+                .build()
+            p.replaceMediaItem(index, newItem)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     fun playSong(song: Song, queueSongs: List<Song> = emptyList(), startIndex: Int = 0, startPositionMs: Long = 0) {
         try {
             val p = player ?: return
