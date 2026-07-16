@@ -40,6 +40,97 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ---- Trending / Home ----
+    private val _trendingSongs = MutableStateFlow<List<Song>>(emptyList())
+    val trendingSongs: StateFlow<List<Song>> = _trendingSongs
+    private val _isTrendingLoading = MutableStateFlow(false)
+    val isTrendingLoading: StateFlow<Boolean> = _isTrendingLoading
+    private var trendingLoadAttempted = false
+    private val preResolvedIds = mutableSetOf<Long>()
+
+    fun fetchTrending(force: Boolean = false) {
+        if (!force && trendingLoadAttempted) return
+        trendingLoadAttempted = true
+        _isTrendingLoading.value = true
+        viewModelScope.launch {
+            try {
+                val result = ytMusicRepository.fetchHomeSongs { newSongs ->
+                    val merged = (_trendingSongs.value + newSongs).distinctBy { it.id }
+                    _trendingSongs.value = merged
+                }
+                if (result !is com.ianocent.musicplayer.data.StreamSearchResult.Success) {
+                    Log.w("MusicViewModel", "Trending fetch: $result")
+                }
+            } catch (e: Exception) {
+                Log.e("MusicViewModel", "fetchTrending failed", e)
+            } finally {
+                _isTrendingLoading.value = false
+            }
+            // Start pre-resolve after trending loaded
+            preResolveTrending()
+        }
+    }
+
+    fun refreshTrending() {
+        trendingLoadAttempted = false
+        fetchTrending(force = true)
+    }
+
+    private fun preResolveTrending() {
+        val trending = _trendingSongs.value
+        if (trending.isEmpty()) return
+        viewModelScope.launch {
+            for (song in trending) {
+                if (!song.isStream || !song.uri.toString().startsWith("ytmusic://placeholder/")) continue
+                if (!preResolvedIds.add(song.id)) continue
+                launch {
+                    try {
+                        val url = withContext(Dispatchers.IO) {
+                            ytMusicRepository.resolveStreamUrl(song)
+                        }
+                        if (url != null) {
+                            val resolved = song.copy(uri = Uri.parse(url))
+                            val list = _trendingSongs.value.toMutableList()
+                            val idx = list.indexOfFirst { it.id == resolved.id }
+                            if (idx >= 0) list[idx] = resolved
+                            _trendingSongs.value = list
+                            val streamList = _streamSongs.value.toMutableList()
+                            val sidx = streamList.indexOfFirst { it.id == resolved.id }
+                            if (sidx >= 0) streamList[sidx] = resolved
+                            _streamSongs.value = streamList
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
+    private fun preResolveSearchResults() {
+        val searchResults = _streamSongs.value
+        if (searchResults.isEmpty()) return
+        viewModelScope.launch {
+            for (song in searchResults) {
+                if (!song.isStream || !song.uri.toString().startsWith("ytmusic://placeholder/")) continue
+                if (!preResolvedIds.add(song.id)) continue
+                launch {
+                    try {
+                        val url = withContext(Dispatchers.IO) {
+                            ytMusicRepository.resolveStreamUrl(song)
+                        }
+                        if (url != null) {
+                            val resolved = song.copy(uri = Uri.parse(url))
+                            val list = _streamSongs.value.toMutableList()
+                            val idx = list.indexOfFirst { it.id == resolved.id }
+                            if (idx >= 0) list[idx] = resolved
+                            _streamSongs.value = list
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
+    // ---- Stream Search ----
     private val _allStreamSongs = MutableStateFlow<List<Song>>(emptyList())
     private val _streamSongs = MutableStateFlow<List<Song>>(emptyList())
     val streamSongs: StateFlow<List<Song>> = _streamSongs
@@ -263,6 +354,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 if (result is com.ianocent.musicplayer.data.StreamSearchResult.ParsingFailed) {
                     _streamParsingFailed.value = true
+                } else {
+                    // Pre-resolve search results in background
+                    preResolveSearchResults()
                 }
             } catch (_: CancellationException) {
                 return@launch
@@ -596,6 +690,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 ytMusicRepository.cleanupExpiredCache()
             } catch (_: Exception) {}
         }
+        fetchTrending()
         playerManager.initialize {
             val player = playerManager.player
 
@@ -820,12 +915,34 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         savePlayerState()
     }
     fun setQueue(newQueue: List<Song>, startSong: Song? = null) {
-        _queue.value = newQueue
+        val currentSong = _currentSong.value
+
+        // Check if same underlying content as current queue (avoid double-shuffle)
+        val compareBase = if (_isShuffleOn.value && baseQueueBeforeShuffle.isNotEmpty()) baseQueueBeforeShuffle else _queue.value
+        val isSameContent = newQueue.size == compareBase.size &&
+            newQueue.zip(compareBase).all { (a, b) -> a.id == b.id }
+
         if (_isShuffleOn.value) {
-            baseQueueBeforeShuffle = newQueue
-            _queue.value = newQueue.shuffled()
+            if (!isSameContent) {
+                // New playlist/queue — save original order and shuffle
+                baseQueueBeforeShuffle = newQueue
+                val shuffled = newQueue.toMutableList()
+                val target = startSong ?: newQueue.firstOrNull()
+                if (target != null) {
+                    shuffled.removeAll { it.id == target.id }
+                    shuffled.shuffle()
+                    shuffled.add(0, target)
+                } else {
+                    shuffled.shuffle()
+                }
+                _queue.value = shuffled
+            }
+            // If same content, keep current shuffled order (user just tapped a song)
+        } else {
+            _queue.value = newQueue
         }
-        val target = startSong ?: newQueue.firstOrNull()
+
+        val target = startSong ?: _queue.value.firstOrNull()
         target?.let { playSong(it) }
     }
 
@@ -905,7 +1022,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         val nextIndex = when {
             isLast && _repeatMode.value == Player.REPEAT_MODE_ALL -> 0
-            isLast -> return
+            isLast -> {
+                // Wrap to first song even without repeat — better UX than silent no-op
+                0
+            }
             else -> _currentIndex.value + 1
         }
         playSong(list[nextIndex])
@@ -914,7 +1034,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun playPrevious() {
         val list = _queue.value
         if (list.isEmpty()) return
-        val prevIndex = (_currentIndex.value - 1).coerceAtLeast(0)
+        val curIdx = _currentIndex.value
+        val isFirst = curIdx <= 0
+
+        // If more than 3s in, restart current song (standard media player behavior)
+        if (_currentPosition.value > 3000 && !isFirst) {
+            seekTo(0)
+            return
+        }
+
+        val prevIndex = when {
+            isFirst && _repeatMode.value == Player.REPEAT_MODE_ALL -> list.size - 1
+            isFirst -> 0
+            else -> curIdx - 1
+        }
         playSong(list[prevIndex])
     }
 

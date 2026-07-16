@@ -862,6 +862,59 @@ class YTMusicRepository(context: Context) {
             playerSemaphore.release()
         }
     }
+    /**
+     * Fetch trending/popular songs using search API (reliable since browse
+     * endpoint often requires auth). Searches for trending music queries and
+     * merges results.
+     */
+    suspend fun fetchHomeSongs(onPartial: (List<Song>) -> Unit): StreamSearchResult =
+        withContext(Dispatchers.IO) {
+            val queries = listOf("trending music", "viral hits", "top songs")
+            val seenIds = mutableSetOf<Long>()
+            val allResults = mutableListOf<Song>()
+
+            for (query in queries) {
+                try {
+                    val body = JSONObject().apply {
+                        put("context", clientContext())
+                        put("query", query)
+                        put("params", "EgWKAQIIAWoKEAMQBBAFEAoQCQ==")
+                    }
+                    val raw = post("search", body) ?: continue
+                    val response = JSONObject(raw)
+                    updateVisitorData(response)
+                    if (!response.has("contents")) continue
+
+                    val items = walkMusicContents(response)
+                    val limit = minOf(items.length(), 15)
+                    for (i in 0 until limit) {
+                        try {
+                            val item = items.getJSONObject(i)
+                            val videoId = parseVideoId(item) ?: continue
+                            val id = videoId.hashCode().toLong()
+                            if (id in seenIds) continue
+                            seenIds.add(id)
+                            val song = Song(
+                                id = id,
+                                title = parseTitle(item),
+                                artist = parseArtist(item),
+                                album = parseAlbum(item),
+                                duration = parseDuration(item),
+                                uri = Uri.parse("ytmusic://placeholder/$videoId"),
+                                isStream = true,
+                                remoteArtUrl = parseThumbnail(item),
+                                remoteId = videoId
+                            )
+                            allResults.add(song)
+                            onPartial(listOf(song))
+                        } catch (_: Exception) {}
+                    }
+                } catch (_: Exception) {}
+            }
+
+            if (allResults.isEmpty()) StreamSearchResult.Empty else StreamSearchResult.Success(allResults)
+        }
+
     suspend fun cleanupExpiredCache() = withContext(Dispatchers.IO) {
         streamCacheDao.deleteExpired(System.currentTimeMillis())
     }

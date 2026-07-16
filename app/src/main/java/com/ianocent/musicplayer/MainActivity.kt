@@ -775,7 +775,8 @@ fun ListingScreen(
                                     }
                                     DropdownMenu(
                                         expanded = showSortMenu,
-                                        onDismissRequest = { showSortMenu = false }
+                                        onDismissRequest = { showSortMenu = false },
+                                        shape = RoundedCornerShape(24.dp)
                                     ) {
                                         sortLabels.forEachIndexed { index, label ->
                                             DropdownMenuItem(
@@ -868,68 +869,159 @@ fun ListingScreen(
 
                     2 -> { // STREAM
                         Box(modifier = Modifier.fillMaxSize()) {
-                            if (isSearchingRemote) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.align(Alignment.Center),
-                                    color = adaptiveColor
-                                )
-                            } else if (streamParsingFailed) {
-                                Column(
-                                    modifier = Modifier.align(Alignment.Center).padding(horizontal = 32.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Icon(
-                                        Icons.Rounded.CloudOff,
-                                        contentDescription = null,
-                                        tint = Color.Gray,
-                                        modifier = Modifier.size(40.dp)
-                                    )
-                                    Spacer(Modifier.height(12.dp))
-                                    Text(
-                                        "Streaming lagi bermasalah",
-                                        color = Color.Gray,
-                                        fontWeight = FontWeight.SemiBold,
-                                        textAlign = TextAlign.Center
-                                    )
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        "YouTube mungkin lagi update sistemnya. Coba lagi nanti ya.",
-                                        color = Color.Gray.copy(alpha = 0.7f),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            } else if (streamSongs.isEmpty()) {
-                                Text(
-                                    text = if (searchQuery.isBlank()) "Search songs to stream" else "Not found.",
-                                    modifier = Modifier.align(Alignment.Center),
-                                    color = Color.Gray
-                                )
-                            } else {
-                                val listState = rememberLazyListState()
-                                val shouldLoadMore by remember {
-                                    derivedStateOf {
-                                        val layoutInfo = listState.layoutInfo
-                                        val totalItems = layoutInfo.totalItemsCount
-                                        val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                                        totalItems > 0 && lastVisibleItem >= totalItems - 3
+                            if (searchQuery.isBlank()) {
+                                // TRENDING / HOME SECTION
+                                val trendingSongs by viewModel.trendingSongs.collectAsState()
+                                val isTrendingLoading by viewModel.isTrendingLoading.collectAsState()
+
+                                LaunchedEffect(Unit) { viewModel.fetchTrending() }
+
+                                if (isTrendingLoading && trendingSongs.isEmpty()) {
+                                    Column(
+                                        modifier = Modifier.align(Alignment.Center),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        CircularProgressIndicator(color = adaptiveColor)
+                                        Spacer(Modifier.height(12.dp))
+                                        Text("Loading trending...", color = Color.Gray)
+                                    }
+                                } else if (trendingSongs.isEmpty()) {
+                                    Column(
+                                        modifier = Modifier.align(Alignment.Center),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Icon(Icons.Rounded.CloudOff, null, tint = Color.Gray, modifier = Modifier.size(40.dp))
+                                        Spacer(Modifier.height(8.dp))
+                                        Text("Search songs to stream", color = Color.Gray)
+                                    }
+                                } else {
+                                    val scrollState = rememberScrollState()
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .verticalScroll(scrollState)
+                                    ) {
+                                        Spacer(Modifier.height(12.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                "Trending Now",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = adaptiveColor
+                                            )
+                                            TextButton(onClick = { viewModel.refreshTrending() }) {
+                                                Icon(Icons.Rounded.Refresh, null, modifier = Modifier.size(18.dp), tint = adaptiveColor)
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("Refresh", color = adaptiveColor)
+                                            }
+                                        }
+                                        Spacer(Modifier.height(8.dp))
+
+                                        // 2-column grid
+                                        val chunks = trendingSongs.chunked(2)
+                                        Column(
+                                            modifier = Modifier.padding(horizontal = 12.dp),
+                                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            chunks.forEach { rowSongs ->
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                                ) {
+                                                    rowSongs.forEach { song ->
+                                                        TrendingCard(
+                                                            song = song,
+                                                            viewModel = viewModel,
+                                                            adaptiveColor = adaptiveColor,
+                                                            modifier = Modifier.weight(1f)
+                                                        )
+                                                    }
+                                                    if (rowSongs.size < 2) {
+                                                        Spacer(Modifier.weight(1f))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Spacer(Modifier.height(16.dp))
+                                        Text(
+                                            "Search above to find more songs",
+                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                                            textAlign = TextAlign.Center,
+                                            color = Color.Gray,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        Spacer(Modifier.height(80.dp))
                                     }
                                 }
+                            } else {
+                                // SEARCH RESULTS
+                                if (isSearchingRemote) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.align(Alignment.Center),
+                                        color = adaptiveColor
+                                    )
+                                } else if (streamParsingFailed) {
+                                    Column(
+                                        modifier = Modifier.align(Alignment.Center).padding(horizontal = 32.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.CloudOff,
+                                            contentDescription = null,
+                                            tint = Color.Gray,
+                                            modifier = Modifier.size(40.dp)
+                                        )
+                                        Spacer(Modifier.height(12.dp))
+                                        Text(
+                                            "Streaming lagi bermasalah",
+                                            color = Color.Gray,
+                                            fontWeight = FontWeight.SemiBold,
+                                            textAlign = TextAlign.Center
+                                        )
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            "YouTube mungkin lagi update sistemnya. Coba lagi nanti ya.",
+                                            color = Color.Gray.copy(alpha = 0.7f),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                } else if (streamSongs.isEmpty()) {
+                                    Text(
+                                        text = "Not found.",
+                                        modifier = Modifier.align(Alignment.Center),
+                                        color = Color.Gray
+                                    )
+                                } else {
+                                    val listState = rememberLazyListState()
+                                    val shouldLoadMore by remember {
+                                        derivedStateOf {
+                                            val layoutInfo = listState.layoutInfo
+                                            val totalItems = layoutInfo.totalItemsCount
+                                            val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                                            totalItems > 0 && lastVisibleItem >= totalItems - 3
+                                        }
+                                    }
 
-                                LaunchedEffect(shouldLoadMore) {
-                                    if (shouldLoadMore) viewModel.loadMoreStreamSongs()
-                                }
+                                    LaunchedEffect(shouldLoadMore) {
+                                        if (shouldLoadMore) viewModel.loadMoreStreamSongs()
+                                    }
 
-                                ResponsiveSnapList(
-                                    items = streamSongs,
-                                    key = { it.id },
-                                    scrollbarColor = adaptiveColor,
-                                    listState = listState,
-                                    topPadding = 16.dp
-                                ) { song, _ ->
-                                    SwipeableSongRow(song, viewModel, customOnClick = {
-                                        viewModel.setQueue(streamSongs, startSong = song)
-                                    }, adaptiveColor = adaptiveColor)
+                                    ResponsiveSnapList(
+                                        items = streamSongs,
+                                        key = { it.id },
+                                        scrollbarColor = adaptiveColor,
+                                        listState = listState,
+                                        topPadding = 16.dp
+                                    ) { song, _ ->
+                                        SwipeableSongRow(song, viewModel, customOnClick = {
+                                            viewModel.setQueue(streamSongs, startSong = song)
+                                        }, adaptiveColor = adaptiveColor)
+                                    }
                                 }
                             }
                         }
@@ -996,7 +1088,7 @@ fun ListingScreen(
             }
         }
 
-        // ---------- 5. MINI PLAYER BAR (Rounded per icon, no backplate) ----------
+        // ---------- 5. MINI PLAYER BAR (Swipeable multi-layout) ----------
         Spacer(modifier = Modifier.height(6.dp))
         AnimatedVisibility(
             visible = currentSong != null,
@@ -1009,69 +1101,106 @@ fun ListingScreen(
                 animationSpec = tween(250)
             ) + fadeOut(animationSpec = tween(200))
         ) {
+            var miniLayoutIndex by remember { mutableStateOf(0) }
+            val maxMiniLayout = 2
+
             val animatedBg by animateColorAsState(
                 targetValue = controlBgColor ?: Color.Transparent,
                 animationSpec = tween(300),
                 label = "controlBg"
             )
             val hasBg = controlBgColor != null
-            val btnBg = if (hasBg) Color.Transparent else adaptiveColor
             val btnTint = if (hasBg) {
                 if (controlBgColor!!.luminance() > 0.5f) Color.Black else Color.White
             } else minibarTextColor
-            val inactiveBg = if (hasBg) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant
-            val inactiveTint = if (hasBg) btnTint.copy(alpha = 0.35f) else MaterialTheme.colorScheme.onSurfaceVariant
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceEvenly,
+            val btnBg = if (hasBg) Color.Transparent else adaptiveColor
+
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
                     .clip(RoundedCornerShape(32.dp))
                     .background(animatedBg)
                     .pointerInput(Unit) {
-                        var dragSum = 0f
-                        detectVerticalDragGestures(
+                        var accDx = 0f
+                        var accDy = 0f
+                        detectDragGestures(
                             onDragEnd = {
-                                if (dragSum < -60f && paletteColors.isNotEmpty()) {
-                                    currentPaletteIndex = (currentPaletteIndex + 1) % paletteColors.size
-                                    controlBgColor = paletteColors[currentPaletteIndex].copy(alpha = 0.15f)
+                                val absDx = kotlin.math.abs(accDx)
+                                val absDy = kotlin.math.abs(accDy)
+                                val threshold = 40f
+
+                                if (absDy > absDx && absDy > threshold) {
+                                    if (accDy < 0) {
+                                        // SWIPE UP → NowPlayingScreen
+                                        onNowPlayingClick()
+                                    } else {
+                                        // SWIPE DOWN → cycle layout
+                                        miniLayoutIndex = (miniLayoutIndex + 1) % (maxMiniLayout + 1)
+                                    }
+                                } else if (absDx > absDy && absDx > threshold) {
+                                    if (accDx > 0) {
+                                        // SWIPE RIGHT → next palette
+                                        if (paletteColors.isNotEmpty()) {
+                                            currentPaletteIndex = (currentPaletteIndex + 1) % paletteColors.size
+                                            controlBgColor = paletteColors[currentPaletteIndex].copy(alpha = 0.15f)
+                                        }
+                                    } else {
+                                        // SWIPE LEFT → reset bg
+                                        controlBgColor = null
+                                        currentPaletteIndex = 0
+                                    }
                                 }
-                                if (dragSum > 60f) {
-                                    controlBgColor = null
-                                    currentPaletteIndex = 0
-                                }
-                                dragSum = 0f
-                            }
-                        ) { _, dragAmount ->
-                            dragSum += dragAmount
+                                accDx = 0f
+                                accDy = 0f
+                            },
+                            onDragCancel = { accDx = 0f; accDy = 0f }
+                        ) { change, dragAmount ->
+                            change.consume()
+                            accDx += dragAmount.x
+                            accDy += dragAmount.y
                         }
                     }
-                    .padding(vertical = 6.dp)
+                    .animateContentSize(animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f))
             ) {
-                MiniControlButton(
-                    icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                    onClick = { viewModel.togglePlayPause() },
-                    bg = btnBg,
-                    tint = btnTint,
-                    size = 40.dp
-                )
-                MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() }, btnBg, btnTint, 40.dp)
-                MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() }, btnBg, btnTint, 40.dp)
-                MiniControlButton(
-                    Icons.Rounded.Shuffle,
-                    { viewModel.toggleShuffle() },
-                    if (isShuffleOn) btnBg else inactiveBg,
-                    if (isShuffleOn) btnTint else inactiveTint,
-                    40.dp
-                )
-                MiniControlButton(
-                    if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-                    { viewModel.toggleRepeat() },
-                    if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) btnBg else inactiveBg,
-                    if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) btnTint else inactiveTint,
-                    40.dp
-                )
+                AnimatedContent(
+                    targetState = miniLayoutIndex,
+                    transitionSpec = {
+                        (fadeIn(tween(200)) + slideInVertically(tween(250) { it / 4 }))
+                            .togetherWith(fadeOut(tween(150)) + slideOutVertically(tween(150) { -it / 4 }))
+                    },
+                    label = "miniLayout",
+                    modifier = Modifier.fillMaxWidth()
+                ) { layout ->
+                    when (layout) {
+                        0 -> MiniLayoutDefault(
+                            viewModel = viewModel,
+                            isPlaying = isPlaying,
+                            isShuffleOn = isShuffleOn,
+                            repeatMode = repeatMode,
+                            btnBg = btnBg,
+                            btnTint = btnTint,
+                            hasBg = hasBg,
+                            adaptiveColor = adaptiveColor,
+                            minibarTextColor = minibarTextColor
+                        )
+                        1 -> MiniLayoutFloating(
+                            viewModel = viewModel,
+                            isPlaying = isPlaying,
+                            btnTint = btnTint,
+                            adaptiveColor = adaptiveColor,
+                            isBuffering = isBuffering
+                        )
+                        2 -> MiniLayoutQueue(
+                            viewModel = viewModel,
+                            isPlaying = isPlaying,
+                            isShuffleOn = isShuffleOn,
+                            repeatMode = repeatMode,
+                            btnTint = btnTint,
+                            adaptiveColor = adaptiveColor
+                        )
+                    }
+                }
             }
         }
     }
@@ -2908,6 +3037,317 @@ fun RecapStat(label: String, value: String, accentColor: Color) {
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+        )
+    }
+}
+
+@Composable
+fun MiniLayoutDefault(
+    viewModel: MusicViewModel,
+    isPlaying: Boolean,
+    isShuffleOn: Boolean,
+    repeatMode: Int,
+    btnBg: Color,
+    btnTint: Color,
+    hasBg: Boolean,
+    adaptiveColor: Color,
+    minibarTextColor: Color
+) {
+    val activeBg = adaptiveColor.copy(alpha = 0.35f)
+    val inactBg = adaptiveColor.copy(alpha = 0.18f)
+    val inactTint = minibarTextColor.copy(alpha = 0.75f)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp)
+    ) {
+        MiniControlButton(
+            icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+            onClick = { viewModel.togglePlayPause() },
+            bg = adaptiveColor.copy(alpha = 0.2f), tint = adaptiveColor, size = 40.dp
+        )
+        MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() },
+            adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 40.dp)
+        MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() },
+            adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 40.dp)
+        MiniControlButton(
+            Icons.Rounded.Shuffle, { viewModel.toggleShuffle() },
+            if (isShuffleOn) activeBg else inactBg,
+            if (isShuffleOn) adaptiveColor else inactTint, 40.dp
+        )
+        MiniControlButton(
+            if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+            { viewModel.toggleRepeat() },
+            if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else inactBg,
+            if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, 40.dp
+        )
+    }
+}
+
+@Composable
+fun MiniLayoutFloating(
+    viewModel: MusicViewModel,
+    isPlaying: Boolean,
+    btnTint: Color,
+    adaptiveColor: Color,
+    isBuffering: Boolean
+) {
+    val shuffleOn by viewModel.isShuffleOn.collectAsState()
+    val repeat by viewModel.repeatMode.collectAsState()
+    val inactTint = btnTint.copy(alpha = 0.75f)
+    val inactBg = adaptiveColor.copy(alpha = 0.18f)
+    val activeBg = adaptiveColor.copy(alpha = 0.35f)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        MiniControlButton(Icons.Rounded.Shuffle, { viewModel.toggleShuffle() },
+            bg = if (shuffleOn) activeBg else inactBg,
+            tint = if (shuffleOn) adaptiveColor else inactTint, size = 36.dp)
+        MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() },
+            inactBg, btnTint, 36.dp)
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(adaptiveColor.copy(alpha = 0.2f))
+                .clickable { viewModel.togglePlayPause() },
+            contentAlignment = Alignment.Center
+        ) {
+            if (isBuffering) {
+                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp, color = adaptiveColor)
+            } else {
+                Icon(
+                    if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    null, tint = adaptiveColor, modifier = Modifier.size(28.dp)
+                )
+            }
+        }
+        MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() },
+            inactBg, btnTint, 36.dp)
+        MiniControlButton(
+            if (repeat == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+            { viewModel.toggleRepeat() },
+            bg = if (repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else inactBg,
+            tint = if (repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, size = 36.dp)
+    }
+}
+
+@Composable
+fun MiniLayoutQueue(
+    viewModel: MusicViewModel,
+    isPlaying: Boolean,
+    isShuffleOn: Boolean,
+    repeatMode: Int,
+    btnTint: Color,
+    adaptiveColor: Color
+) {
+    val inactTint = btnTint.copy(alpha = 0.75f)
+    val inactBg = adaptiveColor.copy(alpha = 0.18f)
+    val activeBg = adaptiveColor.copy(alpha = 0.35f)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() },
+                inactBg, btnTint, 36.dp)
+            Box(
+                modifier = Modifier
+                    .size(42.dp).clip(CircleShape)
+                    .background(adaptiveColor.copy(alpha = 0.2f))
+                    .clickable { viewModel.togglePlayPause() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    null, tint = adaptiveColor, modifier = Modifier.size(24.dp)
+                )
+            }
+            MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() },
+                inactBg, btnTint, 36.dp)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            MiniControlButton(Icons.Rounded.Shuffle, { viewModel.toggleShuffle() },
+                if (isShuffleOn) activeBg else inactBg,
+                if (isShuffleOn) adaptiveColor else inactTint, 36.dp)
+            MiniControlButton(
+                if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                { viewModel.toggleRepeat() },
+                if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else inactBg,
+                if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, 36.dp)
+        }
+    }
+}
+
+@Composable
+fun TrendingCard(
+    song: com.ianocent.musicplayer.data.Song,
+    viewModel: MusicViewModel,
+    adaptiveColor: Color,
+    modifier: Modifier = Modifier
+) {
+    var highResArt by remember(song.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var isLoaded by remember(song.id) { mutableStateOf(false) }
+    LaunchedEffect(song.id) {
+        viewModel.getHighResArt(song) { b -> highResArt = b; isLoaded = true }
+    }
+
+    val isPlaceholder = song.uri.toString().startsWith("ytmusic://placeholder/")
+    var showFormatDialog by remember { mutableStateOf(false) }
+    var formats by remember { mutableStateOf<List<com.ianocent.musicplayer.data.AudioFormat>>(emptyList()) }
+    val trendingSongs = viewModel.trendingSongs.collectAsState().value
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable {
+                if (isPlaceholder) {
+                    viewModel.getAudioFormats(song) { f ->
+                        formats = f
+                        showFormatDialog = true
+                    }
+                } else {
+                    val others = trendingSongs.filter { it.id != song.id }
+                    viewModel.setQueue(listOf(song) + others, startSong = song)
+                }
+            },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Crossfade(
+                    targetState = isLoaded && highResArt != null,
+                    animationSpec = tween(400),
+                    label = "art_crossfade"
+                ) { loaded ->
+                    if (loaded) {
+                        Image(
+                            bitmap = highResArt!!.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(adaptiveColor.copy(alpha = 0.08f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Rounded.MusicNote,
+                                null,
+                                tint = adaptiveColor.copy(alpha = 0.3f),
+                                modifier = Modifier.size(36.dp)
+                            )
+                        }
+                    }
+                }
+
+                if (isPlaceholder) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(adaptiveColor.copy(alpha = 0.85f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = if (adaptiveColor.luminance() > 0.5f) Color.Black else Color.White
+                        )
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(6.dp)
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(adaptiveColor),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Rounded.PlayArrow,
+                            null,
+                            tint = if (adaptiveColor.luminance() > 0.5f) Color.Black else Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+            Column(modifier = Modifier.padding(8.dp)) {
+                Text(
+                    song.title,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    song.artist,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = Color.Gray
+                )
+            }
+        }
+    }
+
+    if (showFormatDialog) {
+        AlertDialog(
+            onDismissRequest = { showFormatDialog = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(28.dp),
+            title = { Text("Play Stream", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text("Choose quality:", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(12.dp))
+                    formats.forEach { fmt ->
+                        TextButton(
+                            onClick = {
+                                showFormatDialog = false
+                                val others = trendingSongs.filter { it.id != song.id }
+                                viewModel.setQueue(listOf(song) + others, startSong = song)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(fmt.qualityLabel)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showFormatDialog = false }) { Text("Cancel") }
+            }
         )
     }
 }
