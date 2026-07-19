@@ -216,7 +216,7 @@ fun RecapCardContent(
                 horizontalArrangement = Arrangement.End
             ) {
                 Text(
-                    text = "Ian Player",
+                    text = "ıanocent",
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Black,
                     color = Color.White.copy(alpha = 0.3f),
@@ -258,6 +258,11 @@ fun RecapCardSheet(
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
     val topArts = remember { mutableStateListOf<ImageBitmap>() }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    LaunchedEffect(Unit) {
+        sheetState.show()
+    }
 
     LaunchedEffect(recap.topSongs) {
         recap.topSongs.take(4).forEach { song ->
@@ -267,7 +272,10 @@ fun RecapCardSheet(
         }
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

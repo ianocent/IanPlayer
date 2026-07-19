@@ -134,7 +134,7 @@ fun LyricCardContent(
                     )
                 }
                 Text(
-                    "Ian Player",
+                    "ıanocent",
                     color = Color.White.copy(alpha = 0.5f),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold

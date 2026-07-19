@@ -160,7 +160,7 @@ fun SongCardContent(
                     }
 
                     Text(
-                        text = "Ian Player",
+                        text = "ıanocent",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Black,
                         color = Color.White.copy(alpha = 0.4f),

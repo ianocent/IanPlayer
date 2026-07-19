@@ -47,7 +47,9 @@ class LyricRepository {
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
             connection.setRequestProperty("User-Agent", "IanPlayer/1.0")
-            connection.connectTimeout = 5000
+            connection.connectTimeout = 3000
+            connection.readTimeout = 3000
+            if (connection.responseCode != 200) return null
 
             val response = connection.inputStream.bufferedReader().readText()
             val jsonArray = JSONArray(response)
@@ -72,6 +74,8 @@ class LyricRepository {
             connection.requestMethod = "GET"
             connection.setRequestProperty("User-Agent", "IanPlayer/1.0")
             connection.connectTimeout = 5000
+            connection.readTimeout = 5000
+            if (connection.responseCode != 200) return null
 
             val response = connection.inputStream.bufferedReader().readText()
             val jsonArray = JSONArray(response)
@@ -95,7 +99,8 @@ class LyricRepository {
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
             connection.setRequestProperty("User-Agent", "IanPlayer/1.0 (https://github.com/ianocent/IanPlayer)")
-            connection.connectTimeout = 8000
+            connection.connectTimeout = 5000
+            connection.readTimeout = 5000
 
             if (connection.responseCode != 200) return null
 
@@ -128,7 +133,8 @@ class LyricRepository {
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
             connection.setRequestProperty("User-Agent", "IanPlayer/1.0 (https://github.com/ianocent/IanPlayer)")
-            connection.connectTimeout = 8000
+            connection.connectTimeout = 5000
+            connection.readTimeout = 5000
 
             if (connection.responseCode != 200) return null
 
@@ -150,6 +156,7 @@ class LyricRepository {
             connection.requestMethod = "GET"
             connection.setRequestProperty("User-Agent", "Mozilla/5.0")
             connection.connectTimeout = 5000
+            connection.readTimeout = 5000
 
             if (connection.responseCode != 200) return null
 
@@ -172,6 +179,7 @@ class LyricRepository {
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
             connection.connectTimeout = 5000
+            connection.readTimeout = 5000
 
             if (connection.responseCode != HttpURLConnection.HTTP_OK) return null
 
@@ -187,12 +195,16 @@ class LyricRepository {
     // HELPER: Lrc Parser
     // ==========================================
     private fun parseLrc(lrc: String): List<LyricLine> {
-        val regex = Regex("""\[(\d{2}):(\d{2})\.(\d{2,3})]\s*(.*)""")
+        val regex = Regex("""\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?]\s*(.*)""")
         return lrc.lines().mapNotNull { line ->
             val match = regex.find(line) ?: return@mapNotNull null
-            val (min, sec, ms, text) = match.destructured
-            val timeMs = min.toLong() * 60000 + sec.toLong() * 1000 + ms.padEnd(3, '0').take(3).toLong()
-            LyricLine(timeMs, text.trim())
-        }.filter { it.text.isNotBlank() }
+            val min = match.groupValues[1].toLong()
+            val sec = match.groupValues[2].toLong()
+            val msRaw = match.groupValues[3]
+            val ms = if (msRaw.isNotEmpty()) msRaw.padEnd(3, '0').take(3).toLong() else 0L
+            val text = match.groupValues[4].trim()
+            if (text.isBlank()) return@mapNotNull null
+            LyricLine(min * 60000 + sec * 1000 + ms, text)
+        }
     }
 }

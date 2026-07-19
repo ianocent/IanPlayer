@@ -111,7 +111,14 @@ class PlayerManager(private val context: Context) {
 
     private fun buildMediaItems(song: Song, queueSongs: List<Song>): List<MediaItem> {
         return if (queueSongs.isNotEmpty()) {
-            queueSongs.map { s -> buildMediaItem(s) }
+            val targetIdx = queueSongs.indexOfFirst { it.id == song.id }
+            if (targetIdx == -1) {
+                queueSongs.map { buildMediaItem(it) }
+            } else {
+                queueSongs.mapIndexed { i, s ->
+                    if (i == targetIdx) buildMediaItem(song) else buildMediaItem(s)
+                }
+            }
         } else {
             listOf(buildMediaItem(song))
         }
@@ -158,6 +165,15 @@ class PlayerManager(private val context: Context) {
     fun getCurrentPosition(): Long = player?.currentPosition ?: 0L
 
     fun getDuration(): Long = player?.duration ?: 0L
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    fun getAudioSessionId(): Int {
+        val p = player
+        return if (p is androidx.media3.exoplayer.ExoPlayer) p.audioSessionId
+        else if (p is MediaController) {
+            PlaybackService.audioSessionId
+        } else 0
+    }
 
     private var currentRepeatMode = Player.REPEAT_MODE_OFF
 

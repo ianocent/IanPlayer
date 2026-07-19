@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import com.ianocent.musicplayer.data.Playlist
 import com.ianocent.musicplayer.data.UpdateInfo
 import com.ianocent.musicplayer.data.YTMusicRepository
+import com.ianocent.musicplayer.data.StreamSearchResult
 import com.ianocent.musicplayer.UpdateManager
 import org.json.JSONArray
 import org.json.JSONObject
@@ -38,6 +39,84 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         if (throwable !is CancellationException) {
             throwable.printStackTrace()
         }
+    }
+
+    // ---- Genre browsing ----
+    data class Genre(val name: String, val query: String)
+
+    val genres = listOf(
+        Genre("Pop", "pop music"),
+        Genre("Rock", "rock music"),
+        Genre("Hip Hop", "hip hop music"),
+        Genre("R&B", "rnb music"),
+        Genre("Electronic", "electronic music"),
+        Genre("Jazz", "jazz music"),
+        Genre("Classical", "classical music"),
+        Genre("Country", "country music"),
+        Genre("Indie", "indie music"),
+        Genre("Metal", "metal music")
+    )
+
+    private val _selectedGenre = MutableStateFlow<String?>(null)
+    val selectedGenre: StateFlow<String?> = _selectedGenre
+
+    private val _genreSongs = MutableStateFlow<Map<String, List<Song>>>(emptyMap())
+    val genreSongs: StateFlow<Map<String, List<Song>>> = _genreSongs
+
+    private val _isGenreLoading = MutableStateFlow(false)
+    val isGenreLoading: StateFlow<Boolean> = _isGenreLoading
+
+    private val _genreFirstSong = MutableStateFlow<Map<String, Song?>>(emptyMap())
+    val genreFirstSong: StateFlow<Map<String, Song?>> = _genreFirstSong
+    private var genreArtLoadJob: Job? = null
+
+    fun loadGenreArtworks() {
+        if (genreArtLoadJob?.isActive == true) return
+        genreArtLoadJob = viewModelScope.launch {
+            for (genre in genres) {
+                if (!isActive) break
+                try {
+                    val result = ytMusicRepository.searchSongs(genre.query) {}
+                    if (result is StreamSearchResult.Success && result.songs.isNotEmpty()) {
+                        val song = result.songs.first()
+                        _genreFirstSong.value = _genreFirstSong.value + (genre.name to song)
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    private val genreFetchJobs = mutableMapOf<String, Job>()
+
+    fun selectGenre(genreName: String) {
+        _selectedGenre.value = genreName
+        if (_genreSongs.value.containsKey(genreName)) return
+        val genre = genres.find { it.name == genreName } ?: return
+        _isGenreLoading.value = true
+        genreFetchJobs[genreName]?.cancel()
+        genreFetchJobs[genreName] = viewModelScope.launch {
+            try {
+                val result = ytMusicRepository.searchSongs(genre.query) { newSongs ->
+                    val current = _genreSongs.value.toMutableMap()
+                    val merged = (current[genreName] ?: emptyList()) + newSongs
+                    current[genreName] = merged.distinctBy { it.id }
+                    _genreSongs.value = current
+                }
+                if (result is StreamSearchResult.Success) {
+                    val current = _genreSongs.value.toMutableMap()
+                    current[genreName] = result.songs
+                    _genreSongs.value = current
+                }
+            } catch (e: Exception) {
+                Log.e("MusicViewModel", "fetch genre ${genreName} failed", e)
+            } finally {
+                _isGenreLoading.value = false
+            }
+        }
+    }
+
+    fun clearGenre() {
+        _selectedGenre.value = null
     }
 
     // ---- Trending / Home ----
@@ -99,7 +178,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                             if (sidx >= 0) streamList[sidx] = resolved
                             _streamSongs.value = streamList
                         }
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                        Log.e("MusicViewModel", "preResolveTrending failed for ${song.title}", e)
+                    }
                 }
             }
         }
@@ -124,7 +205,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                             if (idx >= 0) list[idx] = resolved
                             _streamSongs.value = list
                         }
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                        Log.e("MusicViewModel", "preResolveSearch failed for ${song.title}", e)
+                    }
                 }
             }
         }
@@ -150,6 +233,23 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _playCounts = MutableStateFlow<Map<Long, Int>>(emptyMap())
     val playCounts: StateFlow<Map<Long, Int>> = _playCounts
+
+    private val _favoriteIds = MutableStateFlow<Set<Long>>(emptySet())
+    val favoriteIds: StateFlow<Set<Long>> = _favoriteIds
+
+    fun toggleFavorite(songId: Long) {
+        val updated = _favoriteIds.value.toMutableSet()
+        if (updated.contains(songId)) updated.remove(songId) else updated.add(songId)
+        _favoriteIds.value = updated
+        prefs.edit().putString("favorite_ids", updated.joinToString(",")).apply()
+    }
+
+    fun isFavorite(songId: Long): Boolean = _favoriteIds.value.contains(songId)
+
+    private fun loadFavoriteIds() {
+        val raw = prefs.getString("favorite_ids", null) ?: return
+        _favoriteIds.value = raw.split(",").mapNotNull { it.toLongOrNull() }.toSet()
+    }
 
     fun setSortMode(mode: Int) {
         _sortMode.value = mode
@@ -287,7 +387,27 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _showRecapBanner.value = false
     }
     fun debugTriggerRecap() {
-        computeMonthlyRecap()
+        val now = System.currentTimeMillis()
+        val history = loadPlayHistory().filter { it.second >= now - 30L * 24 * 60 * 60 * 1000 }
+
+        if (history.isEmpty() || history.size < 5) {
+            // Generate mock recap so the card is testable
+            val mockSongs = _songs.value.take(5).ifEmpty {
+                listOf(Song(0, "Sample Song", "Sample Artist", 240000, Uri.EMPTY))
+            }
+            _monthlyRecap.value = com.ianocent.musicplayer.data.MonthlyRecap(
+                monthLabel = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(now)),
+                totalPlays = (history.size).coerceAtLeast(5),
+                totalMinutes = 30L,
+                topSongs = mockSongs,
+                topArtists = listOf("Artist 1" to 5, "Artist 2" to 3, "Artist 3" to 2),
+                topGenres = emptyList(),
+                tasteComment = "Your music taste is shaping up! Keep exploring."
+            )
+            _showRecapBanner.value = true
+        } else {
+            computeMonthlyRecap()
+        }
     }
 
     private fun generateTasteComment(
@@ -544,6 +664,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val songs: StateFlow<List<Song>> = _songs
 
+    private val _isLoadingSongs = MutableStateFlow(false)
+    val isLoadingSongs: StateFlow<Boolean> = _isLoadingSongs
+
     private val _queue = MutableStateFlow<List<Song>>(emptyList())
     val queue: StateFlow<List<Song>> = _queue
 
@@ -584,6 +707,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _isBuffering = MutableStateFlow(false)
     val isBuffering: StateFlow<Boolean> = _isBuffering
 
+    private val _audioSessionId = MutableStateFlow(0)
+    val audioSessionId: StateFlow<Int> = _audioSessionId
+
     private val _updateInfo = MutableStateFlow<UpdateInfo?>(null)
     val updateInfo: StateFlow<UpdateInfo?> = _updateInfo
 
@@ -611,6 +737,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private val artCache = mutableMapOf<Long, android.graphics.Bitmap?>()
+    private val highResArtCache = mutableMapOf<Long, android.graphics.Bitmap?>()
 
     fun getCachedArt(song: Song, onLoaded: (android.graphics.Bitmap?) -> Unit) {
         if (artCache.containsKey(song.id)) {
@@ -637,11 +764,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun getHighResArt(song: Song, onLoaded: (android.graphics.Bitmap?) -> Unit) {
+        val cacheKey = -song.id
+        if (highResArtCache.containsKey(cacheKey)) {
+            onLoaded(highResArtCache[cacheKey])
+            return
+        }
         viewModelScope.launch {
             val art = withContext(Dispatchers.IO) {
                 if (song.isStream && !song.remoteArtUrl.isNullOrEmpty()) {
                     try {
-                        // High-res fix for YT Music & common CDN thumbnails
                         val highResUrl = when {
                             song.remoteArtUrl.contains("=w") && song.remoteArtUrl.contains("-h") -> {
                                 song.remoteArtUrl.replace(Regex("=w\\d+-h\\d+.*"), "=w1000-h1000-l90-rj")
@@ -669,6 +800,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     com.ianocent.musicplayer.data.AlbumArtLoader.getEmbeddedArt(appContext, song.uri, targetSize = 800)
                 }
             }
+            highResArtCache[cacheKey] = art
             onLoaded(art)
         }
     }
@@ -683,16 +815,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         loadPlaylistsFromPrefs()
         _playCounts.value = loadPlayCounts()
         _sortMode.value = prefs.getInt("sort_mode", 0)
+        loadFavoriteIds()
         restorePlayerState()
         checkForUpdate()
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 ytMusicRepository.cleanupExpiredCache()
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.w("MusicViewModel", "cleanupExpiredCache failed", e)
+            }
         }
         fetchTrending()
         playerManager.initialize {
             val player = playerManager.player
+
+            _audioSessionId.value = playerManager.getAudioSessionId()
 
             player?.addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -725,7 +862,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         try {
                             player?.prepare()
                             player?.play()
-                        } catch (_: Exception) {
+                        } catch (e: Exception) {
+                            Log.w("MusicViewModel", "player retry failed, skip to next", e)
                             playNext()
                         }
                     }
@@ -765,12 +903,26 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     _currentPosition.value = playerManager.getCurrentPosition()
                     _duration.value = playerManager.getDuration()
+                    
+                    // Capturing audio session ID more aggressively
+                    if (_audioSessionId.value == 0 || _audioSessionId.value != playerManager.getAudioSessionId()) {
+                        val sid = playerManager.getAudioSessionId()
+                        if (sid != 0) _audioSessionId.value = sid
+                    }
+                    
+                    // Fallback to static ID if needed
+                    if (_audioSessionId.value == 0 && com.ianocent.musicplayer.player.PlaybackService.audioSessionId != 0) {
+                        _audioSessionId.value = com.ianocent.musicplayer.player.PlaybackService.audioSessionId
+                    }
+
                     val remaining = _duration.value - _currentPosition.value
                     if (_duration.value > 0 && remaining in 0..8000) {
                         prefetchNextIfNeeded()
                     }
-                } catch (_: Exception) {}
-                delay(500)
+                } catch (e: Exception) {
+                    Log.w("MusicViewModel", "position polling error", e)
+                }
+                delay(100)
             }
         }
     }
@@ -785,7 +937,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             val resolvedUrl = withContext(Dispatchers.IO) {
-                try { ytMusicRepository.resolveStreamUrl(next) } catch (_: Exception) { null }
+                try { ytMusicRepository.resolveStreamUrl(next) } catch (e: Exception) { Log.w("MusicViewModel", "prefetchNext failed", e); null }
             }
             prefetchingIds.remove(next.id)
             if (resolvedUrl == null) return@launch
@@ -828,18 +980,23 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
             _currentSong.value = song
             _currentIndex.value = _queue.value.indexOf(song).coerceAtLeast(0)
+            _audioSessionId.value = playerManager.getAudioSessionId()
             incrementPlayCount(song.id)
             savePlayerState()
             loadArt(song)
             loadLyric(song)
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.w("MusicViewModel", "syncStateFromPlayer failed", e)
+        }
     }
 
     private fun tryRestoreCurrentSong() {
         if (playerManager.player == null) return
         try {
             tryRestoreCurrentSongInternal()
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.w("MusicViewModel", "tryRestoreCurrentSong failed", e)
+        }
     }
 
     private fun tryRestoreCurrentSongInternal() {
@@ -885,13 +1042,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadSongs() {
+        _isLoadingSongs.value = true
         viewModelScope.launch {
-            val list = withContext(Dispatchers.IO) { repository.getAllSongs() }
+            val rawList = withContext(Dispatchers.IO) { repository.getAllSongs() }
+            val list = rawList.filter { it.duration >= 60_000L }
             originalOrder = list
             _songs.value = list
             if (_queue.value.isEmpty()) {
                 _queue.value = list
             }
+            _isLoadingSongs.value = false
             checkMonthlyRecap()
         }
     }
@@ -915,6 +1075,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         savePlayerState()
     }
     fun setQueue(newQueue: List<Song>, startSong: Song? = null) {
+        genreArtLoadJob?.cancel()
+        genreFetchJobs.values.forEach { it.cancel() }
         val currentSong = _currentSong.value
 
         // Check if same underlying content as current queue (avoid double-shuffle)
@@ -952,10 +1114,32 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 
+    private suspend fun fadeVolume(from: Float, to: Float, durationMs: Long) {
+        val player = playerManager.player ?: return
+        val steps = 10
+        val interval = durationMs / steps
+        val delta = (to - from) / steps
+        var currentVol = from
+        for (i in 1..steps) {
+            currentVol += delta
+            player.volume = currentVol.coerceIn(0f, 1f)
+            delay(interval)
+        }
+        player.volume = to.coerceIn(0f, 1f)
+    }
+
     fun playSong(song: Song) {
+        val snapshot = _queue.value.toMutableList()
+        val index = snapshot.indexOf(song)
+        if (index == -1) return
+
         viewModelScope.launch {
-            val index = _queue.value.indexOf(song)
-            if (index == -1) return@launch
+            // Smooth Crossfade out
+            if (playerManager.player?.isPlaying == true) {
+                fadeVolume(1f, 0f, 150)
+            } else {
+                playerManager.player?.volume = 0f
+            }
 
             _currentIndex.value = index
             _currentSong.value = song
@@ -976,12 +1160,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 song
             }
 
-            val queue = _queue.value.toMutableList()
-            if (index >= 0 && index < queue.size) {
-                queue[index] = resolvedSong
-                _queue.value = queue
+            if (index >= 0 && index < snapshot.size) {
+                snapshot[index] = resolvedSong
+                _queue.value = snapshot
             }
-            playerManager.playSong(resolvedSong, _queue.value, index)
+            playerManager.playSong(resolvedSong, snapshot, index)
+            
+            // Smooth Crossfade in
+            fadeVolume(0f, 1f, 150)
+
             incrementPlayCount(song.id)
             savePlayerState()
             loadArt(song)
@@ -990,7 +1177,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun resolveAndPlayStream(song: Song) {
+        val savedIndex = _queue.value.indexOf(song)
         viewModelScope.launch {
+            // Fade out if playing
+            if (playerManager.player?.isPlaying == true) {
+                fadeVolume(1f, 0f, 150)
+            } else {
+                playerManager.player?.volume = 0f
+            }
+
             val resolvedSong = withContext(Dispatchers.IO) {
                 try {
                     val streamUrl = ytMusicRepository.resolveStreamUrl(song)
@@ -999,19 +1194,22 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     song
                 }
             }
+            val useIndex = if (savedIndex >= 0) savedIndex else _queue.value.indexOf(resolvedSong).coerceAtLeast(0)
             if (resolvedSong.uri != song.uri) {
-                val index = _queue.value.indexOf(song)
                 val queue = _queue.value.toMutableList()
-                if (index >= 0 && index < queue.size) {
-                    queue[index] = resolvedSong
+                if (useIndex >= 0 && useIndex < queue.size) {
+                    queue[useIndex] = resolvedSong
                     _queue.value = queue
                 }
             }
             playerManager.playSong(
                 if (resolvedSong.uri != song.uri) resolvedSong else song,
                 _queue.value,
-                startIndex = _queue.value.indexOf(resolvedSong).coerceAtLeast(0)
+                startIndex = useIndex
             )
+
+            // Fade in
+            fadeVolume(0f, 1f, 150)
         }
     }
 
@@ -1107,13 +1305,26 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun togglePlayPause() {
-        playerManager.togglePlayPause()
+        viewModelScope.launch {
+            val player = playerManager.player ?: return@launch
+            if (player.isPlaying) {
+                fadeVolume(1f, 0f, 150)
+                playerManager.togglePlayPause()
+                player.volume = 1f // Reset volume for next play
+            } else {
+                player.volume = 0f
+                playerManager.togglePlayPause()
+                fadeVolume(0f, 1f, 150)
+            }
+        }
     }
 
     fun seekTo(positionMs: Long) {
         playerManager.seekTo(positionMs)
         _currentPosition.value = positionMs
     }
+
+    fun getLivePosition(): Long = playerManager.getCurrentPosition()
 
     override fun onCleared() {
         super.onCleared()
@@ -1289,7 +1500,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }
-            val list = withContext(Dispatchers.IO) { repository.getAllSongs() }
+            val rawList = withContext(Dispatchers.IO) { repository.getAllSongs() }
+            val list = rawList.filter { it.duration >= 60_000L }
             originalOrder = list
             _songs.value = list
             if (_currentSong.value == null) {
@@ -1301,27 +1513,42 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _updateInfo.value = null
     }
 
+    private val _lastDeletedSong = MutableStateFlow<Song?>(null)
+    val lastDeletedSong: StateFlow<Song?> = _lastDeletedSong
+
+    private var deleteTimerJob: Job? = null
+
     fun deleteSong(song: Song) {
-        viewModelScope.launch {
-            val success = withContext(Dispatchers.IO) {
-                repository.deleteSong(song)
-            }
-            if (success) {
-                _songs.value = _songs.value.filter { it.id != song.id }
-                _queue.value = _queue.value.filter { it.id != song.id }
-                if (_currentSong.value?.id == song.id) {
-                    _currentSong.value = null
-                    playerManager.player?.stop()
-                }
-                _playlists.value = _playlists.value.map { playlist ->
-                    playlist.copy(songIds = playlist.songIds.filter { it != song.id }.toMutableList())
-                }
-                savePlaylistsToPrefs()
-            } else {
-                // If it failed, it stays in the list, avoiding the "relog" surprise
-                // In a real app, we'd show a Toast or handle Scoped Storage permissions here
+        _songs.value = _songs.value.filter { it.id != song.id }
+        _queue.value = _queue.value.filter { it.id != song.id }
+        if (_currentSong.value?.id == song.id) {
+            _currentSong.value = null
+            playerManager.player?.stop()
+        }
+        _playlists.value = _playlists.value.map { playlist ->
+            playlist.copy(songIds = playlist.songIds.filter { it != song.id }.toMutableList())
+        }
+        savePlaylistsToPrefs()
+        _lastDeletedSong.value = song
+
+        deleteTimerJob?.cancel()
+        deleteTimerJob = viewModelScope.launch {
+            delay(5000)
+            val s = _lastDeletedSong.value ?: return@launch
+            _lastDeletedSong.value = null
+            withContext(Dispatchers.IO) {
+                try { repository.deleteSong(s) }
+                catch (e: Exception) { Log.e("MusicViewModel", "delete file failed", e) }
             }
         }
+    }
+
+    fun undoDelete() {
+        val song = _lastDeletedSong.value ?: return
+        deleteTimerJob?.cancel()
+        _lastDeletedSong.value = null
+        _songs.value = (_songs.value + song).sortedBy { it.title.lowercase() }
+        _queue.value = _queue.value + song
     }
 
     fun updateSongInfo(songId: Long, newTitle: String, newArtist: String) {

@@ -1,8 +1,13 @@
 package com.ianocent.musicplayer
 
 import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -10,10 +15,17 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateOffsetAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -42,8 +54,15 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size as GeomSize
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
@@ -55,6 +74,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -76,11 +96,72 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.compositeOver
 import kotlin.math.roundToInt
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.activity.compose.BackHandler
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
+
+private data class SocialMenuItem(val label: String, val url: String, val bgColor: Color, val textColor: Color)
+private val socialMenuItems = listOf(
+    SocialMenuItem("Facebook", "https://web.facebook.com/ianocents", Color(0xFF1877F2), Color(0xFF1877F2)),
+    SocialMenuItem("Instagram", "https://www.instagram.com/ianocent/", Color(0xFFE4405F), Color(0xFFE4405F)),
+    SocialMenuItem("TikTok", "https://www.tiktok.com/@ianocent", Color(0xFF010101), Color.Transparent),
+)
+
+@Composable
+private fun FacebookIcon(modifier: Modifier = Modifier, tint: Color = Color(0xFF1877F2)) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val corner = w * 0.28f
+        val sw = w * 0.12f
+        drawRoundRect(tint, cornerRadius = CornerRadius(corner))
+        drawRoundRect(Color.White, topLeft = Offset(w * 0.43f, w * 0.20f), size = GeomSize(sw, w * 0.60f), cornerRadius = CornerRadius(sw / 2))
+        drawRoundRect(Color.White, topLeft = Offset(w * 0.43f, w * 0.35f), size = GeomSize(w * 0.32f, sw), cornerRadius = CornerRadius(sw / 2))
+        drawRoundRect(Color.White, topLeft = Offset(w * 0.43f, w * 0.50f), size = GeomSize(w * 0.20f, sw), cornerRadius = CornerRadius(sw / 2))
+    }
+}
+
+@Composable
+private fun InstagramIcon(modifier: Modifier = Modifier, tint: Color = Color(0xFFE4405F)) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val stroke = w * 0.08f
+        val inset = stroke / 2 + w * 0.04f
+        val sz = w - inset * 2
+        drawRoundRect(tint, topLeft = Offset(inset, inset), size = GeomSize(sz, sz), cornerRadius = CornerRadius(w * 0.25f), style = Stroke(stroke))
+        drawCircle(tint, radius = w * 0.18f, center = Offset(w / 2, w / 2), style = Stroke(stroke))
+        drawCircle(tint, radius = w * 0.04f, center = Offset(w * 0.74f, w * 0.26f))
+    }
+}
+
+@Composable
+private fun TikTokIcon(modifier: Modifier = Modifier, tint: Color = Color.White) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val path = Path().apply {
+            addOval(Rect(offset = Offset(w * 0.25f, w * 0.48f), size = GeomSize(w * 0.30f, w * 0.26f)))
+            moveTo(w * 0.48f, w * 0.50f)
+            lineTo(w * 0.48f, w * 0.15f)
+            moveTo(w * 0.48f, w * 0.15f)
+            cubicTo(w * 0.65f, w * 0.18f, w * 0.72f, w * 0.32f, w * 0.54f, w * 0.40f)
+        }
+        drawPath(path, tint, style = Stroke(width = w * 0.10f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -105,14 +186,21 @@ class MainActivity : ComponentActivity() {
                     label = "scaffoldBgAnim"
                 )
 
+                val snackbarHostState = remember { SnackbarHostState() }
+
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
-                    containerColor = animatedScaffoldBg
+                    containerColor = animatedScaffoldBg,
+                    snackbarHost = { SnackbarHost(snackbarHostState) }
                 ) { innerPadding ->
-                    AppNavHost(viewModel = viewModel, innerPadding = innerPadding)
-    }
-}
-}
+                    AppNavHost(
+                        viewModel = viewModel,
+                        innerPadding = innerPadding,
+                        snackbarHostState = snackbarHostState
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -212,12 +300,18 @@ fun FastScroller(
 
 
 @Composable
-fun AppNavHost(viewModel: MusicViewModel, innerPadding: PaddingValues) {
+fun AppNavHost(
+    viewModel: MusicViewModel,
+    innerPadding: PaddingValues,
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() }
+) {
     var showNowPlaying by remember { mutableStateOf(false) }
     var miniAlbumArtRect by remember { mutableStateOf<ElementRect?>(null) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         ListingScreen(
+            isNowPlayingVisible = showNowPlaying,
+            snackbarHostState = snackbarHostState,
             viewModel = viewModel,
             modifier = Modifier.padding(innerPadding),
             onNowPlayingClick = { showNowPlaying = true },
@@ -246,7 +340,9 @@ fun ListingScreen(
     viewModel: MusicViewModel,
     modifier: Modifier = Modifier,
     onNowPlayingClick: () -> Unit,
-    onMiniPlayerLayout: (albumArtRect: ElementRect, progressRect: ElementRect) -> Unit = { _, _ -> }
+    onMiniPlayerLayout: (albumArtRect: ElementRect, progressRect: ElementRect) -> Unit = { _, _ -> },
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
+    isNowPlayingVisible: Boolean = false
 ) {
     var hasPermission by remember { mutableStateOf(false) }
 
@@ -267,6 +363,7 @@ fun ListingScreen(
     }
 
     val songs by viewModel.songs.collectAsState()
+    val isLoadingSongs by viewModel.isLoadingSongs.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
     val currentPosition by viewModel.currentPosition.collectAsState()
@@ -280,6 +377,86 @@ fun ListingScreen(
     var selectedTab by remember { mutableStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     var isSearchActive by remember { mutableStateOf(false) }
+    var tabPage by remember { mutableStateOf(0) }
+    var isPillAtBottom by remember { mutableStateOf(false) }
+
+    // ---- Voice Search ----
+    var isListening by remember { mutableStateOf(false) }
+    val voicePermission = Manifest.permission.RECORD_AUDIO
+    var rmsLevel by remember { mutableFloatStateOf(0f) }
+    var voiceText by remember { mutableStateOf("") }
+
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val speechRecognizer = remember {
+        try { SpeechRecognizer.createSpeechRecognizer(ctx) } catch (_: Exception) { null }
+    }
+
+    fun startVoiceRecognition(recognizer: SpeechRecognizer) {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "id-ID")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Nyanyiin atau sebutin lagu")
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 10)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 2000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+        }
+        voiceText = ""
+        rmsLevel = 0f
+        recognizer.startListening(intent)
+    }
+
+    val voicePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) speechRecognizer?.let { startVoiceRecognition(it) }
+    }
+
+    // 1-minute auto-stop timeout
+    LaunchedEffect(isListening) {
+        if (!isListening) return@LaunchedEffect
+        delay(60_000)
+        if (isListening) {
+            speechRecognizer?.stopListening()
+            isListening = false
+        }
+    }
+
+    val recognitionHandler = remember {
+        object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                isListening = true
+                rmsLevel = 0f
+            }
+            override fun onResults(results: Bundle?) {
+                isListening = false
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!matches.isNullOrEmpty()) {
+                    searchQuery = matches[0]
+                    isSearchActive = true
+                    selectedTab = 2
+                    tabPage = 1
+                }
+            }
+            override fun onError(error: Int) { isListening = false }
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) { rmsLevel = rmsdB / 10f }
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onPartialResults(partialResults: Bundle?) {
+                partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.let { list ->
+                    if (list.isNotEmpty()) voiceText = list[0]
+                }
+            }
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        }
+    }
+
+    DisposableEffect(Unit) {
+        speechRecognizer?.setRecognitionListener(recognitionHandler)
+        onDispose { speechRecognizer?.destroy() }
+    }
+
     var showCreateDialog by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
     var editingPlaylist by remember { mutableStateOf<com.ianocent.musicplayer.data.Playlist?>(null) }
@@ -297,6 +474,19 @@ fun ListingScreen(
     val isDownloading by viewModel.isDownloading.collectAsState()
 
     val sortMode by viewModel.sortMode.collectAsState()
+
+    val currentGenre by viewModel.selectedGenre.collectAsState()
+
+    BackHandler(
+        enabled = selectedAlbum != null || selectedPlaylistId != null || currentGenre != null || isSearchActive
+    ) {
+        when {
+            selectedAlbum != null -> selectedAlbum = null
+            selectedPlaylistId != null -> selectedPlaylistId = null
+            currentGenre != null -> viewModel.clearGenre()
+            isSearchActive -> { isSearchActive = false; searchQuery = "" }
+        }
+    }
 
     val paletteColors by viewModel.paletteColors.collectAsState()
     var controlBgColor by remember { mutableStateOf<Color?>(null) }
@@ -324,6 +514,19 @@ fun ListingScreen(
 
     val sortedSongs = remember(filteredSongs, sortMode) {
         viewModel.applySort(filteredSongs)
+    }
+
+    val lastDeletedSong by viewModel.lastDeletedSong.collectAsState()
+    LaunchedEffect(lastDeletedSong) {
+        val song = lastDeletedSong ?: return@LaunchedEffect
+        val result = snackbarHostState.showSnackbar(
+            message = "\"${song.title}\" deleted",
+            actionLabel = "Undo",
+            duration = SnackbarDuration.Short
+        )
+        if (result == SnackbarResult.ActionPerformed) {
+            viewModel.undoDelete()
+        }
     }
 
     if (!hasPermission) {
@@ -411,6 +614,32 @@ fun ListingScreen(
                             }
                         )
 
+                        // Voice Search Button
+                        if (isListening) {
+                            VoiceSpectrum(
+                                rmsLevel = rmsLevel,
+                                accentColor = adaptiveColor,
+                                modifier = Modifier.padding(end = 4.dp)
+                            )
+                        } else {
+                            IconButton(
+                                onClick = {
+                                    if (ctx.checkSelfPermission(voicePermission) == PackageManager.PERMISSION_GRANTED) {
+                                        speechRecognizer?.let { startVoiceRecognition(it) }
+                                    } else {
+                                        voicePermissionLauncher.launch(voicePermission)
+                                    }
+                                },
+                                modifier = Modifier.padding(end = 4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Rounded.MicNone,
+                                    contentDescription = "Voice search",
+                                    tint = Color.Gray
+                                )
+                            }
+                        }
+
                         // Icon Close
                         IconButton(
                             onClick = { isSearchActive = false; searchQuery = "" },
@@ -420,25 +649,158 @@ fun ListingScreen(
                         }
                     }
                 } else {
+                    var showSocialMenu by remember { mutableStateOf(false) }
+                    var socialMenuVisibleItems by remember { mutableIntStateOf(0) }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        val searchIconTint by animateColorAsState(
+                            targetValue = MaterialTheme.colorScheme.onBackground,
+                            animationSpec = tween(400), label = "search_tint"
+                        )
                         IconButton(onClick = { isSearchActive = true }) {
-                            Icon(Icons.Rounded.Search, contentDescription = "Search")
-                        }
-                        Text(
-                            "ıanplayer.",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.weight(0.5f),
-                            textAlign = TextAlign.Center
+                            Icon(
+                                Icons.Rounded.Search,
+                                contentDescription = "Search",
+                                tint = searchIconTint
+                            )
+                            }
+                            var anchorHeightPx by remember { mutableIntStateOf(0) }
+                            var startShine by remember { mutableStateOf(false) }
+                            LaunchedEffect(Unit) {
+                                while (true) {
+                                    delay(90000) // 1 menit 30 detik
+                                    startShine = true
+                                    delay(5000) // Durasi kilauan lewat
+                                    startShine = false
+                                }
+                            }
+                            val shineProgress by animateFloatAsState(
+                                targetValue = if (startShine) 1f else 0f,
+                                animationSpec = if (startShine) tween(2000) else tween(500),
+                                label = "shine"
+                            )
+
+                            val animatedBlur by animateFloatAsState(
+                                targetValue = if (startShine) 16f else 4f,
+                                animationSpec = tween(1000),
+                                label = "blur"
+                            )
+                            val animatedShadowColor by animateColorAsState(
+                                targetValue = if (startShine) Color(0xFFFFD700).copy(alpha = 0.6f) else Color.Black.copy(alpha = 0.2f),
+                                animationSpec = tween(1000), label = "shadowColor"
+                            )
+                            val animatedShadowOffset by animateOffsetAsState(
+                                targetValue = if (startShine) Offset(0f, 0f) else Offset(0f, 2f),
+                                animationSpec = tween(1000), label = "shadowOffset"
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(0.5f)
+                                    .onGloballyPositioned { anchorHeightPx = it.size.height },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                val baseTextColor = MaterialTheme.colorScheme.onBackground
+                                Text(
+                                    "ıanplayer.",
+                                    style = MaterialTheme.typography.titleSmall.copy(
+                                        shadow = Shadow(
+                                            color = animatedShadowColor,
+                                            offset = animatedShadowOffset,
+                                            blurRadius = animatedBlur
+                                        ),
+                                        brush = if (startShine) {
+                                            androidx.compose.ui.graphics.Brush.linearGradient(
+                                                colors = listOf(
+                                                    baseTextColor,
+                                                    Color(0xFFFFD700), // Gold
+                                                    Color.White,       // Sparkle
+                                                    Color(0xFFFFD700), // Gold
+                                                    baseTextColor
+                                                ),
+                                                start = Offset(shineProgress * 400f - 200f, 0f),
+                                                end = Offset(shineProgress * 400f, 0f)
+                                            )
+                                        } else null
+                                    ),
+                                    color = if (startShine) Color.Unspecified else baseTextColor,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.clickable { showSocialMenu = true }
+                                )
+                                LaunchedEffect(showSocialMenu) {
+                                    if (showSocialMenu) {
+                                        socialMenuItems.forEachIndexed { index, _ ->
+                                            delay(60)
+                                            socialMenuVisibleItems = index + 1
+                                        }
+                                    } else {
+                                        socialMenuVisibleItems = 0
+                                    }
+                                }
+                                if (showSocialMenu) {
+                                    val density = LocalDensity.current
+                                    Popup(
+                                        onDismissRequest = { showSocialMenu = false },
+                                        alignment = Alignment.TopCenter,
+                                        offset = IntOffset(0, anchorHeightPx + with(density) { 8.dp.roundToPx() }),
+                                        properties = PopupProperties(focusable = true)
+                                    ) {
+                                        Surface(
+                                            shape = RoundedCornerShape(16.dp),
+                                            shadowElevation = 8.dp,
+                                            color = MaterialTheme.colorScheme.surface,
+                                            tonalElevation = 4.dp
+                                        ) {
+                                            val contextPopup = androidx.compose.ui.platform.LocalContext.current
+                                            Row(
+                                                modifier = Modifier.padding(8.dp),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                socialMenuItems.forEachIndexed { idx, item ->
+                                                    AnimatedVisibility(
+                                                        visible = idx < socialMenuVisibleItems,
+                                                        enter = fadeIn(tween(200)) + scaleIn(tween(200), initialScale = 0.8f)
+                                                    ) {
+                                                        val iconTint = if (item.label == "TikTok" && isDarkMode) Color.White else item.bgColor
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(40.dp)
+                                                                .clip(CircleShape)
+                                                                .background(item.bgColor.copy(alpha = 0.1f))
+                                                                .clickable {
+                                                                    showSocialMenu = false
+                                                                    try {
+                                                                        contextPopup.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(item.url)))
+                                                                    } catch (_: Exception) {}
+                                                                },
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            when (item.label) {
+                                                                "Facebook" -> FacebookIcon(modifier = Modifier.size(24.dp), tint = iconTint)
+                                                                "Instagram" -> InstagramIcon(modifier = Modifier.size(24.dp), tint = iconTint)
+                                                                "TikTok" -> TikTokIcon(modifier = Modifier.size(24.dp), tint = iconTint)
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            val sunMoonTint by animateColorAsState(
+                            targetValue = MaterialTheme.colorScheme.onBackground,
+                            animationSpec = tween(400), label = "sun_moon_tint"
                         )
                         IconButton(onClick = { viewModel.toggleDarkMode() }) {
                             Icon(
                                 imageVector = if (isDarkMode) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                                contentDescription = "Toggle theme"
+                                contentDescription = "Toggle theme",
+                                tint = sunMoonTint
                             )
                         }
                     }
@@ -448,207 +810,258 @@ fun ListingScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // ---------- 2. LISTENING TO PILL ----------
-        AnimatedVisibility(
-            visible = currentSong != null,
-            enter = expandVertically(
-                expandFrom = Alignment.Top,
-                animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f)
-            ) + fadeIn(animationSpec = tween(300)),
-            exit = shrinkVertically(
-                shrinkTowards = Alignment.Top,
-                animationSpec = tween(250)
-            ) + fadeOut(animationSpec = tween(200))
-        ) {
-            currentSong?.let { song ->
-                var art by remember(song.id) { mutableStateOf<ImageBitmap?>(null) }
-                LaunchedEffect(song.id) {
-                    viewModel.getCachedArt(song) { bitmap -> art = bitmap?.asImageBitmap() }
-                }
-
-                Box(
-                    modifier = Modifier
-                        .padding(horizontal = 24.dp)
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .clip(RoundedCornerShape(28.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                        .pointerInput(Unit) {
-                            detectHorizontalDragGestures { change, dragAmount ->
-                                if (dragAmount < -20) { // Swipe left to show volume
-                                    showVolumeControl = true
-                                    change.consume()
+        val listeningPill = @Composable {
+            AnimatedVisibility(
+                visible = currentSong != null,
+                enter = expandVertically(
+                    expandFrom = if (isPillAtBottom) Alignment.Bottom else Alignment.Top,
+                    animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f)
+                ) + fadeIn(animationSpec = tween(300)),
+                exit = shrinkVertically(
+                    shrinkTowards = if (isPillAtBottom) Alignment.Bottom else Alignment.Top,
+                    animationSpec = tween(250)
+                ) + fadeOut(animationSpec = tween(200))
+            ) {
+                currentSong?.let { song ->
+                    Box(
+                        modifier = Modifier
+                            .padding(horizontal = 24.dp, vertical = 8.dp)
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .clip(RoundedCornerShape(28.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .pointerInput(isPillAtBottom) {
+                                detectVerticalDragGestures { change, dragAmount ->
+                                    if (dragAmount > 25 && !isPillAtBottom) {
+                                        isPillAtBottom = true
+                                        change.consume()
+                                    } else if (dragAmount < -25 && isPillAtBottom) {
+                                        isPillAtBottom = false
+                                        change.consume()
+                                    }
                                 }
                             }
-                        }
-                        .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    AnimatedContent(
-                        targetState = showVolumeControl,
-                        transitionSpec = {
-                            (fadeIn(tween(200)) + slideInHorizontally(tween(200)) { it / 2 })
-                                .togetherWith(fadeOut(tween(150)) + slideOutHorizontally(tween(150)) { -it / 2 })
-                        },
-                        label = "pill_content"
-                    ) { showVol ->
-                        if (showVol) {
-                            Row(
-                                modifier = Modifier.fillMaxSize(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                // Tombol back eksplisit (gantiin swipe gesture), style sama kayak
-                                // chevron prev/next di tab Songs/Albums biar konsisten.
-                                Box(
-                                    modifier = Modifier
-                                        .padding(end = 8.dp)
-                                        .size(32.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                        .clickable { showVolumeControl = false },
-                                    contentAlignment = Alignment.Center
+                            .pointerInput(Unit) {
+                                detectHorizontalDragGestures { change, dragAmount ->
+                                    if (dragAmount < -20) { // Swipe left to show volume
+                                        showVolumeControl = true
+                                        change.consume()
+                                    }
+                                }
+                            }
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        AnimatedContent(
+                            targetState = showVolumeControl,
+                            transitionSpec = {
+                                (fadeIn(tween(200)) + slideInHorizontally(tween(200)) { it / 2 })
+                                    .togetherWith(fadeOut(tween(150)) + slideOutHorizontally(tween(150)) { -it / 2 })
+                            },
+                            label = "pill_content"
+                        ) { showVol ->
+                            if (showVol) {
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(end = 8.dp)
+                                            .size(32.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                            .clickable { showVolumeControl = false },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.ChevronLeft,
+                                            contentDescription = "Back",
+                                            tint = Color.Gray,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    Slider(
+                                        value = currentVolume.toFloat(),
+                                        onValueChange = { v ->
+                                            currentVolume = v.toInt()
+                                            audioManager.setStreamVolume(
+                                                android.media.AudioManager.STREAM_MUSIC,
+                                                v.toInt(),
+                                                0
+                                            )
+                                        },
+                                        valueRange = 0f..maxVolume.toFloat(),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(horizontal = 8.dp)
+                                            .height(24.dp),
+                                        colors = SliderDefaults.colors(
+                                            thumbColor = adaptiveColor,
+                                            activeTrackColor = adaptiveColor,
+                                            inactiveTrackColor = adaptiveColor.copy(alpha = 0.25f)
+                                        )
+                                    )
                                     Icon(
-                                        Icons.Rounded.ChevronLeft,
-                                        contentDescription = "Back",
-                                        tint = Color.Gray,
+                                        Icons.Rounded.VolumeUp,
+                                        contentDescription = "Vol max",
+                                        tint = adaptiveColor,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
-                                Slider(
-                                    value = currentVolume.toFloat(),
-                                    onValueChange = { v ->
-                                        currentVolume = v.toInt()
-                                        audioManager.setStreamVolume(
-                                            android.media.AudioManager.STREAM_MUSIC,
-                                            v.toInt(),
-                                            0
-                                        )
+                            } else {
+                                AnimatedContent(
+                                    targetState = song,
+                                    transitionSpec = {
+                                        fadeIn(tween(300)).togetherWith(fadeOut(tween(300)))
                                     },
-                                    valueRange = 0f..maxVolume.toFloat(),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(horizontal = 8.dp)
-                                        .height(24.dp),
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = adaptiveColor,
-                                        activeTrackColor = adaptiveColor,
-                                        inactiveTrackColor = adaptiveColor.copy(alpha = 0.25f)
-                                    )
-                                )
-                                Icon(
-                                    Icons.Rounded.VolumeUp,
-                                    contentDescription = "Vol max",
-                                    tint = adaptiveColor,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        } else {
-                            Row(
-                                modifier = Modifier.fillMaxSize(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.primaryContainer)
-                                        .clickable { onNowPlayingClick() }
-                                        .onGloballyPositioned { coords ->
-                                            val pos = coords.positionInWindow()
-                                            val sz = coords.size
-                                            onMiniPlayerLayout(
-                                                ElementRect(
-                                                    center = androidx.compose.ui.geometry.Offset(
-                                                        pos.x + sz.width / 2f,
-                                                        pos.y + sz.height / 2f
-                                                    ),
-                                                    size = androidx.compose.ui.geometry.Size(
-                                                        sz.width.toFloat(),
-                                                        sz.height.toFloat()
-                                                    )
-                                                ),
-                                                ElementRect(
-                                                    center = androidx.compose.ui.geometry.Offset.Zero,
-                                                    size = androidx.compose.ui.geometry.Size.Zero
+                                    label = "song_crossfade"
+                                ) { targetSong ->
+                                    var targetArt by remember(targetSong.id) { mutableStateOf<ImageBitmap?>(null) }
+                                    LaunchedEffect(targetSong.id) {
+                                        viewModel.getCachedArt(targetSong) { bitmap -> targetArt = bitmap?.asImageBitmap() }
+                                    }
+
+                                    val rotationAnim = remember { androidx.compose.animation.core.Animatable(0f) }
+                                    LaunchedEffect(isPlaying) {
+                                        if (isPlaying) {
+                                            rotationAnim.animateTo(
+                                                targetValue = rotationAnim.value + 360f,
+                                                animationSpec = infiniteRepeatable(
+                                                    animation = tween(8000, easing = LinearEasing),
+                                                    repeatMode = RepeatMode.Restart
                                                 )
                                             )
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (art != null) {
-                                        Image(
-                                            bitmap = art!!,
-                                            contentDescription = null,
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentScale = ContentScale.Crop
-                                        )
-                                    } else {
-                                        Icon(Icons.Rounded.MusicNote, contentDescription = null, modifier = Modifier.size(20.dp))
-                                    }
-                                    
-                                    if (isBuffering) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .background(Color.Black.copy(alpha = 0.3f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(20.dp),
-                                                color = Color.White,
-                                                strokeWidth = 2.dp
-                                            )
+                                        } else {
+                                            rotationAnim.stop()
                                         }
                                     }
-                                }
-                                Spacer(modifier = Modifier.width(12.dp))
 
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Listening to: ${song.title}",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    val animatedProgress by animateFloatAsState(
-                                        targetValue = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
-                                        animationSpec = tween(durationMillis = 500)
-                                    )
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(4.dp)
-                                            .clip(RoundedCornerShape(2.dp))
-                                            .background(Color.Gray.copy(alpha = 0.3f))
+                                    Row(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Box(
                                             modifier = Modifier
-                                                .fillMaxWidth(animatedProgress.coerceIn(0f, 1f))
-                                                .fillMaxHeight()
-                                                .clip(RoundedCornerShape(2.dp))
-                                                .background(adaptiveColor)
+                                                .size(36.dp)
+                                                .graphicsLayer {
+                                                    if (isNowPlayingVisible) {
+                                                        rotationZ = 0f
+                                                        alpha = 0f
+                                                    } else {
+                                                        rotationZ = rotationAnim.value
+                                                        alpha = 1f
+                                                    }
+                                                }
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.primaryContainer)
+                                                .clickable { onNowPlayingClick() }
+                                                .onGloballyPositioned { coords ->
+                                                    val pos = coords.positionInWindow()
+                                                    val sz = coords.size
+                                                    onMiniPlayerLayout(
+                                                        ElementRect(
+                                                            center = androidx.compose.ui.geometry.Offset(
+                                                                pos.x + sz.width / 2f,
+                                                                pos.y + sz.height / 2f
+                                                            ),
+                                                            size = androidx.compose.ui.geometry.Size(
+                                                                sz.width.toFloat(),
+                                                                sz.height.toFloat()
+                                                            )
+                                                        ),
+                                                        ElementRect(
+                                                            center = androidx.compose.ui.geometry.Offset.Zero,
+                                                            size = androidx.compose.ui.geometry.Size.Zero
+                                                        )
+                                                    )
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (targetArt != null) {
+                                                Image(
+                                                    bitmap = targetArt!!,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Crop
+                                                )
+                                            } else {
+                                                Icon(Icons.Rounded.MusicNote, contentDescription = null, modifier = Modifier.size(20.dp))
+                                            }
+                                            
+                                            if (isBuffering) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .background(Color.Black.copy(alpha = 0.3f)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    CircularProgressIndicator(
+                                                        modifier = Modifier.size(20.dp),
+                                                        color = Color.White,
+                                                        strokeWidth = 2.dp
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(12.dp))
+
+                                        val listeningTextColor by animateColorAsState(
+                                            targetValue = MaterialTheme.colorScheme.onSurface,
+                                            animationSpec = tween(400), label = "listening_color"
                                         )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Listening to: ${targetSong.title}",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.Bold,
+                                                color = listeningTextColor,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            val animatedProgress by animateFloatAsState(
+                                                targetValue = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
+                                                animationSpec = tween(durationMillis = 500)
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(4.dp)
+                                                    .clip(RoundedCornerShape(2.dp))
+                                                    .background(Color.Gray.copy(alpha = 0.3f))
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth(animatedProgress.coerceIn(0f, 1f))
+                                                        .fillMaxHeight()
+                                                        .clip(RoundedCornerShape(2.dp))
+                                                        .background(adaptiveColor)
+                                                )
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.width(16.dp))
+
+                                        // Timer Vertikal dipojok kanan
+                                        val minutes = TimeUnit.MILLISECONDS.toMinutes(currentPosition)
+                                        val seconds = TimeUnit.MILLISECONDS.toSeconds(currentPosition) % 60
+                                        val minStr = String.format("%02d", minutes)
+                                        val secStr = String.format("%02d", seconds)
+                                        val timerColor by animateColorAsState(
+                                            targetValue = MaterialTheme.colorScheme.onSurface,
+                                            animationSpec = tween(400), label = "timer_color"
+                                        )
+
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.Center,
+                                            modifier = Modifier.padding(end = 8.dp)
+                                        ) {
+                                            Text(text = minStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = timerColor)
+                                            Text(text = secStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = timerColor)
+                                        }
                                     }
-                                }
-
-                                Spacer(modifier = Modifier.width(16.dp))
-
-                                // Timer Vertikal dipojok kanan
-                                val minutes = TimeUnit.MILLISECONDS.toMinutes(currentPosition)
-                                val seconds = TimeUnit.MILLISECONDS.toSeconds(currentPosition) % 60
-                                val minStr = String.format("%02d", minutes)
-                                val secStr = String.format("%02d", seconds)
-
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center,
-                                    modifier = Modifier.padding(end = 8.dp)
-                                ) {
-                                    Text(text = minStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                                    Text(text = secStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -657,10 +1070,16 @@ fun ListingScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        if (!isPillAtBottom) listeningPill()
+
+        val topSpacerHeight by animateDpAsState(
+            targetValue = if (isPillAtBottom) 0.dp else 8.dp,
+            animationSpec = spring(dampingRatio = 0.8f, stiffness = 300f),
+            label = "topSpacer"
+        )
+        Spacer(modifier = Modifier.height(topSpacerHeight))
 
         // ---------- 3. TABS ----------
-        var tabPage by remember { mutableStateOf(0) } // 0 untuk halaman pertama, 1 untuk halaman kedua
 
         AnimatedContent(
             targetState = tabPage,
@@ -740,7 +1159,14 @@ fun ListingScreen(
                     0 -> { // SONGS
                         val listState = rememberLazyListState()
                         var showSortMenu by remember { mutableStateOf(false) }
+                        var showFavoritesOnly by remember { mutableStateOf(false) }
                         val sortLabels = listOf("A - Z", "Recently Added", "Most Played")
+                        val favoriteIds by viewModel.favoriteIds.collectAsState()
+
+                        val displaySongs = remember(sortedSongs, showFavoritesOnly, favoriteIds) {
+                            if (showFavoritesOnly) sortedSongs.filter { favoriteIds.contains(it.id) }
+                            else sortedSongs
+                        }
 
                         Column(modifier = Modifier.fillMaxSize()) {
                             Row(
@@ -750,16 +1176,30 @@ fun ListingScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // DEBUG: trigger recap card manual, tanpa nunggu interval 30 hari asli.
-                                IconButton(
-                                    onClick = { viewModel.debugTriggerRecap() },
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Rounded.Analytics, "Debug Recap",
-                                        tint = adaptiveColor,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    // DEBUG: trigger recap card manual, tanpa nunggu interval 30 hari asli.
+                                    IconButton(
+                                        onClick = { viewModel.debugTriggerRecap() },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.Analytics, "Debug Recap",
+                                            tint = adaptiveColor,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    // Favorites filter toggle
+                                    IconButton(
+                                        onClick = { showFavoritesOnly = !showFavoritesOnly },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (showFavoritesOnly) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                            contentDescription = "Favorites",
+                                            tint = if (showFavoritesOnly) Color(0xFFE91E63) else adaptiveColor,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
                                 }
 
                                 Box {
@@ -801,8 +1241,14 @@ fun ListingScreen(
 
                             AnimatedVisibility(
                                 visible = showRecapBanner && monthlyRecap != null,
-                                enter = fadeIn() + slideInVertically(),
-                                exit = fadeOut() + slideOutVertically()
+                                enter = fadeIn(tween(300)) + slideInVertically(
+                                    animationSpec = spring(dampingRatio = 0.7f, stiffness = 300f)
+                                ),
+                                exit = fadeOut(tween(200)) + slideOutVertically(
+                                    animationSpec = tween(250)
+                                ) + shrinkVertically(
+                                    animationSpec = tween(250)
+                                )
                             ) {
                                 monthlyRecap?.let { recap ->
                                     MusicRecapBanner(
@@ -814,16 +1260,25 @@ fun ListingScreen(
                                 }
                             }
 
-                            ResponsiveSnapList(
-                                items = sortedSongs,
-                                key = { it.id },
-                                scrollbarColor = adaptiveColor,
-                                modifier = Modifier.weight(1f),
-                                listState = listState
-                            ) { song, _ ->
-                                SwipeableSongRow(song, viewModel, customOnClick = {
-                                    viewModel.setQueue(sortedSongs, startSong = song)
-                                }, adaptiveColor = adaptiveColor)
+                            if (isLoadingSongs && displaySongs.isEmpty()) {
+                                Box(
+                                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(color = adaptiveColor)
+                                }
+                            } else {
+                                ResponsiveSnapList(
+                                    items = displaySongs,
+                                    key = { it.id },
+                                    scrollbarColor = adaptiveColor,
+                                    modifier = Modifier.weight(1f),
+                                    listState = listState
+                                ) { song, _ ->
+                                    SwipeableSongRow(song, viewModel, customOnClick = {
+                                        viewModel.setQueue(displaySongs, startSong = song)
+                                    }, adaptiveColor = adaptiveColor)
+                                }
                             }
                         }
                     }
@@ -870,31 +1325,70 @@ fun ListingScreen(
                     2 -> { // STREAM
                         Box(modifier = Modifier.fillMaxSize()) {
                             if (searchQuery.isBlank()) {
-                                // TRENDING / HOME SECTION
-                                val trendingSongs by viewModel.trendingSongs.collectAsState()
-                                val isTrendingLoading by viewModel.isTrendingLoading.collectAsState()
+                                val selectedGenre by viewModel.selectedGenre.collectAsState()
+                                val genreSongsMap by viewModel.genreSongs.collectAsState()
+                                val isGenreLoading by viewModel.isGenreLoading.collectAsState()
+                                val genreFirstSong by viewModel.genreFirstSong.collectAsState()
+                                val genres = viewModel.genres
+                                LaunchedEffect(Unit) { viewModel.loadGenreArtworks() }
 
-                                LaunchedEffect(Unit) { viewModel.fetchTrending() }
+                                if (selectedGenre != null) {
+                                    // Genre songs list
+                                    val genreSongList = genreSongsMap[selectedGenre] ?: emptyList()
+                                    val scrollState = rememberScrollState()
 
-                                if (isTrendingLoading && trendingSongs.isEmpty()) {
-                                    Column(
-                                        modifier = Modifier.align(Alignment.Center),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        CircularProgressIndicator(color = adaptiveColor)
-                                        Spacer(Modifier.height(12.dp))
-                                        Text("Loading trending...", color = Color.Gray)
-                                    }
-                                } else if (trendingSongs.isEmpty()) {
-                                    Column(
-                                        modifier = Modifier.align(Alignment.Center),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        Icon(Icons.Rounded.CloudOff, null, tint = Color.Gray, modifier = Modifier.size(40.dp))
-                                        Spacer(Modifier.height(8.dp))
-                                        Text("Search songs to stream", color = Color.Gray)
+                                    Column(modifier = Modifier.fillMaxSize()) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            IconButton(onClick = { viewModel.clearGenre() }) {
+                                                Icon(Icons.Rounded.ArrowBack, null, tint = adaptiveColor)
+                                            }
+                                            Text(
+                                                selectedGenre ?: "",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = adaptiveColor
+                                            )
+                                            Spacer(Modifier.weight(1f))
+                                            if (isGenreLoading) {
+                                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = adaptiveColor)
+                                            }
+                                        }
+
+                                        if (isGenreLoading && genreSongList.isEmpty()) {
+                                            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                                CircularProgressIndicator(color = adaptiveColor)
+                                            }
+                                        } else if (genreSongList.isEmpty()) {
+                                            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                                Text("No songs found", color = Color.Gray)
+                                            }
+                                        } else {
+                                            val listState = rememberLazyListState()
+                                            ResponsiveSnapList(
+                                                items = genreSongList,
+                                                key = { it.id },
+                                                scrollbarColor = adaptiveColor,
+                                                modifier = Modifier.weight(1f),
+                                                listState = listState
+                                            ) { song, _ ->
+                                                SwipeableSongRow(song, viewModel, customOnClick = {
+                                                    viewModel.setQueue(genreSongList, startSong = song)
+                                                }, adaptiveColor = adaptiveColor)
+                                            }
+                                        }
                                     }
                                 } else {
+                                    // Genre grid
+                                    val trendingSongs by viewModel.trendingSongs.collectAsState()
+                                    val isTrendingLoading by viewModel.isTrendingLoading.collectAsState()
+
+                                    LaunchedEffect(Unit) { viewModel.fetchTrending() }
+
                                     val scrollState = rememberScrollState()
                                     Column(
                                         modifier = Modifier
@@ -902,50 +1396,90 @@ fun ListingScreen(
                                             .verticalScroll(scrollState)
                                     ) {
                                         Spacer(Modifier.height(12.dp))
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                "Trending Now",
-                                                style = MaterialTheme.typography.titleMedium,
-                                                fontWeight = FontWeight.Bold,
-                                                color = adaptiveColor
-                                            )
-                                            TextButton(onClick = { viewModel.refreshTrending() }) {
-                                                Icon(Icons.Rounded.Refresh, null, modifier = Modifier.size(18.dp), tint = adaptiveColor)
-                                                Spacer(Modifier.width(4.dp))
-                                                Text("Refresh", color = adaptiveColor)
-                                            }
-                                        }
+                                        Text(
+                                            "Browse Genre",
+                                            modifier = Modifier.padding(horizontal = 16.dp),
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = adaptiveColor
+                                        )
                                         Spacer(Modifier.height(8.dp))
 
-                                        // 2-column grid
-                                        val chunks = trendingSongs.chunked(2)
+                                        // Genre grid - 2 columns
+                                        val genreChunks = genres.chunked(2)
                                         Column(
                                             modifier = Modifier.padding(horizontal = 12.dp),
                                             verticalArrangement = Arrangement.spacedBy(12.dp)
                                         ) {
-                                            chunks.forEach { rowSongs ->
+                                            genreChunks.forEach { rowGenres ->
                                                 Row(
                                                     modifier = Modifier.fillMaxWidth(),
                                                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                                                 ) {
-                                                    rowSongs.forEach { song ->
-                                                        TrendingCard(
-                                                            song = song,
+                                                    rowGenres.forEach { genre ->
+                                                        GenreCard(
+                                                            genre = genre,
+                                                            isLoading = isGenreLoading && genreSongsMap[genre.name] == null,
+                                                            accentColor = adaptiveColor,
+                                                            onClick = { viewModel.selectGenre(genre.name) },
+                                                            modifier = Modifier.weight(1f),
                                                             viewModel = viewModel,
-                                                            adaptiveColor = adaptiveColor,
-                                                            modifier = Modifier.weight(1f)
+                                                            artSong = genreFirstSong[genre.name]
                                                         )
                                                     }
-                                                    if (rowSongs.size < 2) {
+                                                    if (rowGenres.size < 2) {
                                                         Spacer(Modifier.weight(1f))
                                                     }
                                                 }
                                             }
                                         }
+
+                                        Spacer(Modifier.height(20.dp))
+
+                                        // Trending section
+                                        if (isTrendingLoading && trendingSongs.isEmpty()) {
+                                            Box(
+                                                modifier = Modifier.fillMaxWidth().height(120.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                CircularProgressIndicator(color = adaptiveColor)
+                                            }
+                                        } else if (trendingSongs.isNotEmpty()) {
+                                            Text(
+                                                "Trending Now",
+                                                modifier = Modifier.padding(horizontal = 16.dp),
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = adaptiveColor
+                                            )
+                                            Spacer(Modifier.height(8.dp))
+
+                                            val trendingChunks = trendingSongs.take(4).chunked(2)
+                                            Column(
+                                                modifier = Modifier.padding(horizontal = 12.dp),
+                                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                                            ) {
+                                                trendingChunks.forEach { rowSongs ->
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                                    ) {
+                                                        rowSongs.forEach { song ->
+                                                            TrendingCard(
+                                                                song = song,
+                                                                viewModel = viewModel,
+                                                                adaptiveColor = adaptiveColor,
+                                                                modifier = Modifier.weight(1f)
+                                                            )
+                                                        }
+                                                        if (rowSongs.size < 2) {
+                                                            Spacer(Modifier.weight(1f))
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         Spacer(Modifier.height(16.dp))
                                         Text(
                                             "Search above to find more songs",
@@ -1087,6 +1621,8 @@ fun ListingScreen(
                 }
             }
         }
+
+        if (isPillAtBottom) listeningPill()
 
         // ---------- 5. MINI PLAYER BAR (Swipeable multi-layout) ----------
         Spacer(modifier = Modifier.height(6.dp))
@@ -3349,5 +3885,126 @@ fun TrendingCard(
                 TextButton(onClick = { showFormatDialog = false }) { Text("Cancel") }
             }
         )
+    }
+}
+
+@Composable
+fun GenreCard(
+    genre: MusicViewModel.Genre,
+    isLoading: Boolean,
+    accentColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: MusicViewModel? = null,
+    artSong: Song? = null
+) {
+    var artBitmap by remember(artSong?.id) { mutableStateOf<ImageBitmap?>(null) }
+
+    LaunchedEffect(artSong?.id) {
+        if (artSong != null && viewModel != null) {
+            viewModel.getHighResArt(artSong) { bitmap ->
+                artBitmap = bitmap?.asImageBitmap()
+            }
+        }
+    }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = accentColor.copy(alpha = 0.15f)
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f),
+            contentAlignment = Alignment.Center
+        ) {
+            if (artBitmap != null) {
+                Image(
+                    bitmap = artBitmap!!,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.4f))
+                )
+            }
+
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.5.dp,
+                        color = Color.White
+                    )
+                } else if (artBitmap == null) {
+                    Icon(
+                        Icons.Rounded.MusicNote,
+                        contentDescription = null,
+                        tint = accentColor,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    genre.name,
+                    fontWeight = FontWeight.Bold,
+                    color = if (artBitmap != null) Color.White else accentColor,
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun VoiceSpectrum(
+    rmsLevel: Float,
+    accentColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val barCount = 7
+    val infiniteTransition = rememberInfiniteTransition(label = "spectrum")
+    val barHeights = remember { List(barCount) { 0f } }
+
+    // Each bar gets its own animated float with different phase
+    val bars = barHeights.mapIndexed { index, _ ->
+        infiniteTransition.animateFloat(
+            initialValue = 4f,
+            targetValue = (4f + rmsLevel * 28f * (0.5f + (index * 0.15f))).coerceIn(4f, 48f),
+            animationSpec = infiniteRepeatable(
+                animation = tween(300 + index * 50, delayMillis = index * 80),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "bar$index"
+        )
+    }
+
+    Box(
+        modifier = modifier.size(40.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            bars.forEach { barValue ->
+                Box(
+                    modifier = Modifier
+                        .width(3.dp)
+                        .height(barValue.value.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(accentColor.copy(alpha = 0.8f))
+                )
+            }
+        }
     }
 }

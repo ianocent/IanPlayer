@@ -11,7 +11,9 @@ import android.media.AudioManager
 import android.os.Build
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.LoadControl
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.ianocent.musicplayer.MainActivity
@@ -26,10 +28,29 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        val loadControl: LoadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                DefaultLoadControl.DEFAULT_MIN_BUFFER_MS * 4,
+                DefaultLoadControl.DEFAULT_MAX_BUFFER_MS * 4,
+                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS * 4,
+                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS * 4
+            )
+            .build()
+
         player = ExoPlayer.Builder(this)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .setHandleAudioBecomingNoisy(true)
-            .build()
+            .setLoadControl(loadControl)
+            .build().also { exoPlayer ->
+                audioSessionId = exoPlayer.audioSessionId
+                exoPlayer.addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (audioSessionId == 0) {
+                            audioSessionId = exoPlayer.audioSessionId
+                        }
+                    }
+                })
+            }
         val sessionIntent = Intent(this, MainActivity::class.java).let {
             PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
@@ -162,5 +183,6 @@ class PlaybackService : MediaSessionService() {
 
     companion object {
         const val CHANNEL_ID = "ianplayer_playback"
+        var audioSessionId: Int = 0
     }
 }

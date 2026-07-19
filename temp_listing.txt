@@ -1,0 +1,470 @@
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(animatedBgColor)
+    ) {
+        // ---------- 1. HEADER ----------
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // ... (Header content remains the same)
+            // Note: I'm skipping the large block of Header content for brevity in the search, 
+            // but I need to make sure I don't break the Column structure.
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        val listeningPill = @Composable {
+            AnimatedVisibility(
+                visible = currentSong != null,
+                enter = expandVertically(
+                    expandFrom = if (isPillAtBottom) Alignment.Bottom else Alignment.Top,
+                    animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f)
+                ) + fadeIn(animationSpec = tween(300)),
+                exit = shrinkVertically(
+                    shrinkTowards = if (isPillAtBottom) Alignment.Bottom else Alignment.Top,
+                    animationSpec = tween(250)
+                ) + fadeOut(animationSpec = tween(200))
+            ) {
+                currentSong?.let { song ->
+                    Box(
+                        modifier = Modifier
+                            .padding(horizontal = 24.dp, vertical = 8.dp)
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .clip(RoundedCornerShape(28.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .pointerInput(isPillAtBottom) {
+                                detectVerticalDragGestures { change, dragAmount ->
+                                    if (dragAmount > 25 && !isPillAtBottom) {
+                                        isPillAtBottom = true
+                                        change.consume()
+                                    } else if (dragAmount < -25 && isPillAtBottom) {
+                                        isPillAtBottom = false
+                                        change.consume()
+                                    }
+                                }
+                            }
+                            .pointerInput(Unit) {
+                                detectHorizontalDragGestures { change, dragAmount ->
+                                    if (dragAmount < -20) { // Swipe left to show volume
+                                        showVolumeControl = true
+                                        change.consume()
+                                    }
+                                }
+                            }
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        AnimatedContent(
+                            targetState = showVolumeControl,
+                            transitionSpec = {
+                                (fadeIn(tween(200)) + slideInHorizontally(tween(200)) { it / 2 })
+                                    .togetherWith(fadeOut(tween(150)) + slideOutHorizontally(tween(150)) { -it / 2 })
+                            },
+                            label = "pill_content"
+                        ) { showVol ->
+                            if (showVol) {
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(end = 8.dp)
+                                            .size(32.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                            .clickable { showVolumeControl = false },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.ChevronLeft,
+                                            contentDescription = "Back",
+                                            tint = Color.Gray,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    Slider(
+                                        value = currentVolume.toFloat(),
+                                        onValueChange = { v ->
+                                            currentVolume = v.toInt()
+                                            audioManager.setStreamVolume(
+                                                android.media.AudioManager.STREAM_MUSIC,
+                                                v.toInt(),
+                                                0
+                                            )
+                                        },
+                                        valueRange = 0f..maxVolume.toFloat(),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(horizontal = 8.dp)
+                                            .height(24.dp),
+                                        colors = SliderDefaults.colors(
+                                            thumbColor = adaptiveColor,
+                                            activeTrackColor = adaptiveColor,
+                                            inactiveTrackColor = adaptiveColor.copy(alpha = 0.25f)
+                                        )
+                                    )
+                                    Icon(
+                                        Icons.Rounded.VolumeUp,
+                                        contentDescription = "Vol max",
+                                        tint = adaptiveColor,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            } else {
+                                AnimatedContent(
+                                    targetState = song,
+                                    transitionSpec = {
+                                        fadeIn(tween(300)).togetherWith(fadeOut(tween(300)))
+                                    },
+                                    label = "song_crossfade"
+                                ) { targetSong ->
+                                    var targetArt by remember(targetSong.id) { mutableStateOf<ImageBitmap?>(null) }
+                                    LaunchedEffect(targetSong.id) {
+                                        viewModel.getCachedArt(targetSong) { bitmap -> targetArt = bitmap?.asImageBitmap() }
+                                    }
+
+                                    val rotationAnim = remember { androidx.compose.animation.core.Animatable(0f) }
+                                    LaunchedEffect(isPlaying) {
+                                        if (isPlaying) {
+                                            rotationAnim.animateTo(
+                                                targetValue = rotationAnim.value + 360f,
+                                                animationSpec = infiniteRepeatable(
+                                                    animation = tween(8000, easing = LinearEasing),
+                                                    repeatMode = RepeatMode.Restart
+                                                )
+                                            )
+                                        } else {
+                                            rotationAnim.stop()
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .graphicsLayer {
+                                                    if (isNowPlayingVisible) {
+                                                        rotationZ = 0f
+                                                        alpha = 0f
+                                                    } else {
+                                                        rotationZ = rotationAnim.value
+                                                        alpha = 1f
+                                                    }
+                                                }
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.primaryContainer)
+                                                .clickable { onNowPlayingClick() }
+                                                .onGloballyPositioned { coords ->
+                                                    val pos = coords.positionInWindow()
+                                                    val sz = coords.size
+                                                    onMiniPlayerLayout(
+                                                        ElementRect(
+                                                            center = androidx.compose.ui.geometry.Offset(
+                                                                pos.x + sz.width / 2f,
+                                                                pos.y + sz.height / 2f
+                                                            ),
+                                                            size = androidx.compose.ui.geometry.Size(
+                                                                sz.width.toFloat(),
+                                                                sz.height.toFloat()
+                                                            )
+                                                        ),
+                                                        ElementRect(
+                                                            center = androidx.compose.ui.geometry.Offset.Zero,
+                                                            size = androidx.compose.ui.geometry.Size.Zero
+                                                        )
+                                                    )
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (targetArt != null) {
+                                                Image(
+                                                    bitmap = targetArt!!,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Crop
+                                                )
+                                            } else {
+                                                Icon(Icons.Rounded.MusicNote, contentDescription = null, modifier = Modifier.size(20.dp))
+                                            }
+        val listeningPill = @Composable {
+            AnimatedVisibility(
+                visible = currentSong != null,
+                enter = expandVertically(
+                    expandFrom = if (isPillAtBottom) Alignment.Bottom else Alignment.Top,
+                    animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f)
+                ) + fadeIn(animationSpec = tween(300)),
+                exit = shrinkVertically(
+                    shrinkTowards = if (isPillAtBottom) Alignment.Bottom else Alignment.Top,
+                    animationSpec = tween(250)
+                ) + fadeOut(animationSpec = tween(200))
+            ) {
+                currentSong?.let { song ->
+                    Box(
+                        modifier = Modifier
+                            .padding(horizontal = 24.dp, vertical = 8.dp)
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .clip(RoundedCornerShape(28.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .pointerInput(isPillAtBottom) {
+                                detectVerticalDragGestures { change, dragAmount ->
+                                    if (dragAmount > 25 && !isPillAtBottom) {
+                                        isPillAtBottom = true
+                                        change.consume()
+                                    } else if (dragAmount < -25 && isPillAtBottom) {
+                                        isPillAtBottom = false
+                                        change.consume()
+                                    }
+                                }
+                            }
+                            .pointerInput(Unit) {
+                                detectHorizontalDragGestures { change, dragAmount ->
+                                    if (dragAmount < -20) { // Swipe left to show volume
+                                        showVolumeControl = true
+                                        change.consume()
+                                    }
+                                }
+                            }
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        AnimatedContent(
+                            targetState = showVolumeControl,
+                            transitionSpec = {
+                                (fadeIn(tween(200)) + slideInHorizontally(tween(200)) { it / 2 })
+                                    .togetherWith(fadeOut(tween(150)) + slideOutHorizontally(tween(150)) { -it / 2 })
+                            },
+                            label = "pill_content"
+                        ) { showVol ->
+                            if (showVol) {
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(end = 8.dp)
+                                            .size(32.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                            .clickable { showVolumeControl = false },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.ChevronLeft,
+                                            contentDescription = "Back",
+                                            tint = Color.Gray,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    Slider(
+                                        value = currentVolume.toFloat(),
+                                        onValueChange = { v ->
+                                            currentVolume = v.toInt()
+                                            audioManager.setStreamVolume(
+                                                android.media.AudioManager.STREAM_MUSIC,
+                                                v.toInt(),
+                                                0
+                                            )
+                                        },
+                                        valueRange = 0f..maxVolume.toFloat(),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(horizontal = 8.dp)
+                                            .height(24.dp),
+                                        colors = SliderDefaults.colors(
+                                            thumbColor = adaptiveColor,
+                                            activeTrackColor = adaptiveColor,
+                                            inactiveTrackColor = adaptiveColor.copy(alpha = 0.25f)
+                                        )
+                                    )
+                                    Icon(
+                                        Icons.Rounded.VolumeUp,
+                                        contentDescription = "Vol max",
+                                        tint = adaptiveColor,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            } else {
+                                AnimatedContent(
+                                    targetState = song,
+                                    transitionSpec = {
+                                        fadeIn(tween(300)).togetherWith(fadeOut(tween(300)))
+                                    },
+                                    label = "song_crossfade"
+                                ) { targetSong ->
+                                    var targetArt by remember(targetSong.id) { mutableStateOf<ImageBitmap?>(null) }
+                                    LaunchedEffect(targetSong.id) {
+                                        viewModel.getCachedArt(targetSong) { bitmap -> targetArt = bitmap?.asImageBitmap() }
+                                    }
+
+                                    val rotationAnim = remember { androidx.compose.animation.core.Animatable(0f) }
+                                    LaunchedEffect(isPlaying) {
+                                        if (isPlaying) {
+                                            rotationAnim.animateTo(
+                                                targetValue = rotationAnim.value + 360f,
+                                                animationSpec = infiniteRepeatable(
+                                                    animation = tween(8000, easing = LinearEasing),
+                                                    repeatMode = RepeatMode.Restart
+                                                )
+                                            )
+                                        } else {
+                                            rotationAnim.stop()
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .graphicsLayer {
+                                                    if (isNowPlayingVisible) {
+                                                        rotationZ = 0f
+                                                        alpha = 0f
+                                                    } else {
+                                                        rotationZ = rotationAnim.value
+                                                        alpha = 1f
+                                                    }
+                                                }
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.primaryContainer)
+                                                .clickable { onNowPlayingClick() }
+                                                .onGloballyPositioned { coords ->
+                                                    val pos = coords.positionInWindow()
+                                                    val sz = coords.size
+                                                    onMiniPlayerLayout(
+                                                        ElementRect(
+                                                            center = androidx.compose.ui.geometry.Offset(
+                                                                pos.x + sz.width / 2f,
+                                                                pos.y + sz.height / 2f
+                                                            ),
+                                                            size = androidx.compose.ui.geometry.Size(
+                                                                sz.width.toFloat(),
+                                                                sz.height.toFloat()
+                                                            )
+                                                        ),
+                                                        ElementRect(
+                                                            center = androidx.compose.ui.geometry.Offset.Zero,
+                                                            size = androidx.compose.ui.geometry.Size.Zero
+                                                        )
+                                                    )
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (targetArt != null) {
+                                                Image(
+                                                    bitmap = targetArt!!,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Crop
+                                                )
+                                            } else {
+                                                Icon(Icons.Rounded.MusicNote, contentDescription = null, modifier = Modifier.size(20.dp))
+                                            }
+                                            
+                                            if (isBuffering) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .background(Color.Black.copy(alpha = 0.3f)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    CircularProgressIndicator(
+                                                        modifier = Modifier.size(20.dp),
+                                                        color = Color.White,
+                                                        strokeWidth = 2.dp
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(12.dp))
+
+                                        val listeningTextColor by animateColorAsState(
+                                            targetValue = MaterialTheme.colorScheme.onSurface,
+                                            animationSpec = tween(400), label = "listening_color"
+                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Listening to: ${targetSong.title}",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.Bold,
+                                                color = listeningTextColor,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            val animatedProgress by animateFloatAsState(
+                                                targetValue = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
+                                                animationSpec = tween(durationMillis = 500)
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(4.dp)
+                                                    .clip(RoundedCornerShape(2.dp))
+                                                    .background(Color.Gray.copy(alpha = 0.3f))
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth(animatedProgress.coerceIn(0f, 1f))
+                                                        .fillMaxHeight()
+                                                        .clip(RoundedCornerShape(2.dp))
+                                                        .background(adaptiveColor)
+                                                )
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.width(16.dp))
+
+                                        // Timer Vertikal dipojok kanan
+                                        val minutes = TimeUnit.MILLISECONDS.toMinutes(currentPosition)
+                                        val seconds = TimeUnit.MILLISECONDS.toSeconds(currentPosition) % 60
+                                        val minStr = String.format("%02d", minutes)
+                                        val secStr = String.format("%02d", seconds)
+                                        val timerColor by animateColorAsState(
+                                            targetValue = MaterialTheme.colorScheme.onSurface,
+                                            animationSpec = tween(400), label = "timer_color"
+                                        )
+
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.Center,
+                                            modifier = Modifier.padding(end = 8.dp)
+                                        ) {
+                                            Text(text = minStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = timerColor)
+                                            Text(text = secStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = timerColor)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!isPillAtBottom) listeningPill()
+
+        val topSpacerHeight by animateDpAsState(
+            targetValue = if (isPillAtBottom) 0.dp else 8.dp,
+            animationSpec = spring(dampingRatio = 0.8f, stiffness = 300f),
+            label = "topSpacer"
+        )
+        Spacer(modifier = Modifier.height(topSpacerHeight))
+
+        // ---------- 3. TABS ----------
+
+        AnimatedContent(

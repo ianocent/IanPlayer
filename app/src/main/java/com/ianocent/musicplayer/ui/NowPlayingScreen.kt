@@ -24,9 +24,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ianocent.musicplayer.player.PlaybackService
 import com.ianocent.musicplayer.viewmodel.MusicViewModel
 import java.util.concurrent.TimeUnit
 import androidx.compose.foundation.rememberScrollState
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
@@ -70,6 +72,8 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.material.icons.rounded.DragHandle
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.ui.draw.shadow
@@ -122,8 +126,8 @@ fun NowPlayingScreen(
 
     val heroCornerRadius = if (initialAlbumArtRect != null) {
         val p = heroAnimProgress.value
-        (18f * (1f - p) + 24f * p).dp
-    } else 24.dp
+        (18f * (1f - p) + 12f * p).dp
+    } else 12.dp
 
     val handleBack: () -> Unit = {
         if (initialAlbumArtRect != null && heroAnimProgress.value > 0.05f) {
@@ -133,6 +137,10 @@ fun NowPlayingScreen(
             }
         }
         onBack()
+    }
+
+    BackHandler(enabled = true) {
+        handleBack()
     }
 
     val animatedAmbient by animateColorAsState(
@@ -145,6 +153,7 @@ fun NowPlayingScreen(
     }
     var selectedLyricLines by remember { mutableStateOf(setOf<Int>()) }
     var showLyricCardSheet by remember { mutableStateOf(false) }
+    var showWaveRecordSheet by remember { mutableStateOf(false) }
     var isLyricExpanded by remember { mutableStateOf(true) }
     var isUpnextExpanded by remember { mutableStateOf(true) }
     val lyricWeight by animateFloatAsState(
@@ -295,15 +304,21 @@ fun NowPlayingScreen(
                         )
                     }
                     .graphicsLayer {
-                        if (initialAlbumArtRect != null && heroAnimProgress.value < 0.99f) {
-                            val p = heroAnimProgress.value
+                        rotationZ = 0f // HARUS DIEM
+                        val p = heroAnimProgress.value
+                        if (initialAlbumArtRect != null) {
                             scaleX = heroInitScale + (1f - heroInitScale) * p
                             scaleY = heroInitScale + (1f - heroInitScale) * p
                             translationX = heroInitOffsetX * (1f - p)
                             translationY = heroInitOffsetY * (1f - p)
-                            clip = true
-                            shape = RoundedCornerShape(heroCornerRadius)
+                        } else {
+                            scaleX = 1f
+                            scaleY = 1f
+                            translationX = 0f
+                            translationY = 0f
                         }
+                        clip = true
+                        shape = RoundedCornerShape(heroCornerRadius)
                     }
                     .clip(RoundedCornerShape(heroCornerRadius))
                     .background(
@@ -363,7 +378,41 @@ fun NowPlayingScreen(
             Spacer(modifier = Modifier.width(16.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text("Song by :", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Song by :", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    song?.let { s ->
+                        val isFav by viewModel.favoriteIds.collectAsState()
+                        val liked = isFav.contains(s.id)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { viewModel.toggleFavorite(s.id) },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                    contentDescription = if (liked) "Unlike" else "Like",
+                                    tint = if (liked) Color(0xFFE91E63) else Color.Gray,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = { showWaveRecordSheet = true },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Recommend,
+                                    contentDescription = "Record",
+                                    tint = Color(0xFFE91E63),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                    }
+                }
                 Text(
                     song?.artist ?: "Unknown Artist",
                     fontWeight = FontWeight.SemiBold,
@@ -625,26 +674,42 @@ fun NowPlayingScreen(
                 )
             }
         }
-    }
 
-    if (showLyricCardSheet) {
-        val selectedText = selectedLyricLines.sorted()
-            .mapNotNull { syncedLyric?.getOrNull(it)?.text }
-            .joinToString("\n")
+        val audioSessionId by viewModel.audioSessionId.collectAsState()
 
-        LyricCardSheet(
-            song = song,
-            lyricText = selectedText,
-            albumArt = albumArt,
-            accentColor = adaptiveColor,
-            onDismiss = {
-                showLyricCardSheet = false
-                selectedLyricLines = emptySet()
-            }
-        )
+        if (showWaveRecordSheet) {
+            WaveRecordSheet(
+                song = song,
+                syncedLyric = syncedLyric,
+                plainLyric = plainLyric,
+                currentPositionValue = currentPosition,
+                currentPosition = { viewModel.getLivePosition() },
+                albumArt = albumArt,
+                accentColor = adaptiveColor,
+                isPlaying = isPlaying,
+                audioSessionId = audioSessionId,
+                onDismiss = { showWaveRecordSheet = false }
+            )
+        }
+
+        if (showLyricCardSheet) {
+            val selectedText = selectedLyricLines.sorted()
+                .mapNotNull { syncedLyric?.getOrNull(it)?.text }
+                .joinToString("\n")
+
+            LyricCardSheet(
+                song = song,
+                lyricText = selectedText,
+                albumArt = albumArt,
+                accentColor = adaptiveColor,
+                onDismiss = {
+                    showLyricCardSheet = false
+                    selectedLyricLines = emptySet()
+                }
+            )
+        }
     }
 }
-
 @Composable
 fun UpnextSongRow(
     upSong: Song,
