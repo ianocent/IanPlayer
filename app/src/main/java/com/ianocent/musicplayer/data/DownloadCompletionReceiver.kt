@@ -10,7 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.provider.OpenableColumns
-import android.util.Log
+import timber.log.Timber
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
@@ -34,7 +34,7 @@ class DownloadCompletionReceiver(
         try {
             ctx.unregisterReceiver(this)
         } catch (e: Exception) {
-            Log.w("DownloadCompletion", "Failed to unregister receiver: ${e.message}")
+            Timber.w("Failed to unregister receiver: ${e.message}")
         }
 
         val pendingResult = goAsync()
@@ -105,7 +105,7 @@ class DownloadCompletionReceiver(
 
                             onComplete()
                         } catch (e: Exception) {
-                            Log.e("DownloadCompletion", "Error processing download: ${e.message}")
+                            Timber.e("Error processing download: ${e.message}")
                             onComplete()
                         } finally {
                             pendingResult.finish()
@@ -121,7 +121,7 @@ class DownloadCompletionReceiver(
                 onComplete()
             }
         } catch (e: Exception) {
-            Log.e("DownloadCompletion", "Error in onReceive: ${e.message}")
+            Timber.e("Error in onReceive: ${e.message}")
             pendingResult.finish()
         }
     }
@@ -148,7 +148,7 @@ class DownloadCompletionReceiver(
                 }
             }
         } catch (e: Exception) {
-            Log.w("DownloadCompletion", "uriToFilePath failed: ${e.message}")
+            Timber.w("uriToFilePath failed: ${e.message}")
             null
         }
     }
@@ -180,7 +180,7 @@ class DownloadCompletionReceiver(
                 }
             }
         } catch (e: Exception) {
-            Log.w("DownloadCompletion", "reconstructPath failed: ${e.message}")
+            Timber.w("reconstructPath failed: ${e.message}")
         }
         return null
     }
@@ -204,9 +204,9 @@ class DownloadCompletionReceiver(
                 selection,
                 arrayOf(filePath)
             )
-            Log.d("DownloadCompletion", "MediaStore update: $updated rows affected")
+            Timber.d("MediaStore update: $updated rows affected")
         } catch (e: Exception) {
-            Log.w("DownloadCompletion", "MediaStore entry update failed: ${e.message}")
+            Timber.w("MediaStore entry update failed: ${e.message}")
         }
     }
 }

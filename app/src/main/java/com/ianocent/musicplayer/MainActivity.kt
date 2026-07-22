@@ -5,9 +5,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -114,6 +111,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.ui.tooling.preview.Preview
 
 private data class SocialMenuItem(val label: String, val url: String, val bgColor: Color, val textColor: Color)
 private val socialMenuItems = listOf(
@@ -248,10 +246,12 @@ fun FastScroller(
                         change.consume()
                         if (containerHeightPx > 0) {
                             val fraction = (change.position.y / containerHeightPx).coerceIn(0f, 1f)
-                            val letterIdx = (fraction * (letters.size - 1)).toInt().coerceIn(0, letters.size - 1)
+                            val letterIdx = (fraction * (letters.size - 1)).toInt()
+                                .coerceIn(0, letters.size - 1)
                             tooltipLetter = letters[letterIdx]
                             coroutineScope.launch {
-                                val targetIdx = listState.layoutInfo.totalItemsCount * fraction.toDouble()
+                                val targetIdx =
+                                    listState.layoutInfo.totalItemsCount * fraction.toDouble()
                                 listState.scrollToItem(targetIdx.toInt())
                             }
                         }
@@ -345,13 +345,14 @@ fun ListingScreen(
     isNowPlayingVisible: Boolean = false
 ) {
     var hasPermission by remember { mutableStateOf(false) }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
 
-    val permission = if (Build.VERSION.SDK_INT >= 33)
+    val storagePermission = if (Build.VERSION.SDK_INT >= 33)
         Manifest.permission.READ_MEDIA_AUDIO
     else
         Manifest.permission.READ_EXTERNAL_STORAGE
 
-    val launcher = rememberLauncherForActivityResult(
+    val storageLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasPermission = granted
@@ -359,7 +360,7 @@ fun ListingScreen(
     }
 
     LaunchedEffect(Unit) {
-        launcher.launch(permission)
+        storageLauncher.launch(storagePermission)
     }
 
     val songs by viewModel.songs.collectAsState()
@@ -378,7 +379,11 @@ fun ListingScreen(
     var searchQuery by remember { mutableStateOf("") }
     var isSearchActive by remember { mutableStateOf(false) }
     var tabPage by remember { mutableStateOf(0) }
-    var isPillAtBottom by remember { mutableStateOf(false) }
+
+    val showListeningPill = viewModel.showListeningPill.collectAsState().value
+    val miniLayoutIndex = viewModel.miniLayoutIndex.collectAsState().value
+    val isPillAtBottom = viewModel.isPillAtBottom.collectAsState().value
+    var showPlaylistSelectionDialog by remember { mutableStateOf<Song?>(null) }
 
     // ---- Voice Search ----
     var isListening by remember { mutableStateOf(false) }
@@ -386,30 +391,32 @@ fun ListingScreen(
     var rmsLevel by remember { mutableFloatStateOf(0f) }
     var voiceText by remember { mutableStateOf("") }
 
-    val ctx = androidx.compose.ui.platform.LocalContext.current
-    val speechRecognizer = remember {
-        try { SpeechRecognizer.createSpeechRecognizer(ctx) } catch (_: Exception) { null }
-    }
-
-    fun startVoiceRecognition(recognizer: SpeechRecognizer) {
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "id-ID")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Nyanyiin atau sebutin lagu")
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 10)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 2000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
-        }
-        voiceText = ""
-        rmsLevel = 0f
-        recognizer.startListening(intent)
+    val isPreview = androidx.compose.ui.platform.LocalInspectionMode.current
+    val voiceManager = remember {
+        if (isPreview) null
+        else VoiceRecognitionManager(
+            context = ctx,
+            onResults = { text ->
+                searchQuery = text
+                isSearchActive = true
+                selectedTab = 2
+                tabPage = 1
+            },
+            onPartialResults = { text -> voiceText = text },
+            onError = { isListening = false },
+            onRmsChanged = { level -> rmsLevel = level },
+            onListeningStateChanged = { listening -> isListening = listening }
+        )
     }
 
     val voicePermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) speechRecognizer?.let { startVoiceRecognition(it) }
+        if (granted) {
+            voiceText = ""
+            rmsLevel = 0f
+            voiceManager?.startListening()
+        }
     }
 
     // 1-minute auto-stop timeout
@@ -417,44 +424,13 @@ fun ListingScreen(
         if (!isListening) return@LaunchedEffect
         delay(60_000)
         if (isListening) {
-            speechRecognizer?.stopListening()
+            voiceManager?.stopListening()
             isListening = false
         }
     }
 
-    val recognitionHandler = remember {
-        object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {
-                isListening = true
-                rmsLevel = 0f
-            }
-            override fun onResults(results: Bundle?) {
-                isListening = false
-                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                if (!matches.isNullOrEmpty()) {
-                    searchQuery = matches[0]
-                    isSearchActive = true
-                    selectedTab = 2
-                    tabPage = 1
-                }
-            }
-            override fun onError(error: Int) { isListening = false }
-            override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) { rmsLevel = rmsdB / 10f }
-            override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
-            override fun onPartialResults(partialResults: Bundle?) {
-                partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.let { list ->
-                    if (list.isNotEmpty()) voiceText = list[0]
-                }
-            }
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        }
-    }
-
     DisposableEffect(Unit) {
-        speechRecognizer?.setRecognitionListener(recognitionHandler)
-        onDispose { speechRecognizer?.destroy() }
+        onDispose { voiceManager?.destroy() }
     }
 
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -625,7 +601,9 @@ fun ListingScreen(
                             IconButton(
                                 onClick = {
                                     if (ctx.checkSelfPermission(voicePermission) == PackageManager.PERMISSION_GRANTED) {
-                                        speechRecognizer?.let { startVoiceRecognition(it) }
+                                        voiceText = ""
+                                        rmsLevel = 0f
+                                        voiceManager?.startListening()
                                     } else {
                                         voicePermissionLauncher.launch(voicePermission)
                                     }
@@ -774,8 +752,16 @@ fun ListingScreen(
                                                                 .clickable {
                                                                     showSocialMenu = false
                                                                     try {
-                                                                        contextPopup.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(item.url)))
-                                                                    } catch (_: Exception) {}
+                                                                        contextPopup.startActivity(
+                                                                            android.content.Intent(
+                                                                                android.content.Intent.ACTION_VIEW,
+                                                                                android.net.Uri.parse(
+                                                                                    item.url
+                                                                                )
+                                                                            )
+                                                                        )
+                                                                    } catch (_: Exception) {
+                                                                    }
                                                                 },
                                                             contentAlignment = Alignment.Center
                                                         ) {
@@ -812,13 +798,13 @@ fun ListingScreen(
 
         val listeningPill = @Composable {
             AnimatedVisibility(
-                visible = currentSong != null,
+                visible = showListeningPill && currentSong != null && !isPillAtBottom,
                 enter = expandVertically(
-                    expandFrom = if (isPillAtBottom) Alignment.Bottom else Alignment.Top,
+                    expandFrom = Alignment.Top,
                     animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f)
                 ) + fadeIn(animationSpec = tween(300)),
                 exit = shrinkVertically(
-                    shrinkTowards = if (isPillAtBottom) Alignment.Bottom else Alignment.Top,
+                    shrinkTowards = Alignment.Top,
                     animationSpec = tween(250)
                 ) + fadeOut(animationSpec = tween(200))
             ) {
@@ -830,13 +816,10 @@ fun ListingScreen(
                             .height(56.dp)
                             .clip(RoundedCornerShape(28.dp))
                             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                            .pointerInput(isPillAtBottom) {
+                            .pointerInput(Unit) {
                                 detectVerticalDragGestures { change, dragAmount ->
-                                    if (dragAmount > 25 && !isPillAtBottom) {
-                                        isPillAtBottom = true
-                                        change.consume()
-                                    } else if (dragAmount < -25 && isPillAtBottom) {
-                                        isPillAtBottom = false
+                                    if (dragAmount > 25) {
+                                        viewModel.setPillAtBottom(true)
                                         change.consume()
                                     }
                                 }
@@ -870,7 +853,11 @@ fun ListingScreen(
                                             .padding(end = 8.dp)
                                             .size(32.dp)
                                             .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                            .background(
+                                                MaterialTheme.colorScheme.surfaceVariant.copy(
+                                                    alpha = 0.5f
+                                                )
+                                            )
                                             .clickable { showVolumeControl = false },
                                         contentAlignment = Alignment.Center
                                     ) {
@@ -910,16 +897,13 @@ fun ListingScreen(
                                     )
                                 }
                             } else {
-                                AnimatedContent(
-                                    targetState = song,
-                                    transitionSpec = {
-                                        fadeIn(tween(300)).togetherWith(fadeOut(tween(300)))
-                                    },
-                                    label = "song_crossfade"
-                                ) { targetSong ->
-                                    var targetArt by remember(targetSong.id) { mutableStateOf<ImageBitmap?>(null) }
-                                    LaunchedEffect(targetSong.id) {
-                                        viewModel.getCachedArt(targetSong) { bitmap -> targetArt = bitmap?.asImageBitmap() }
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    var targetArt by remember(song.id) { mutableStateOf<ImageBitmap?>(null) }
+                                    LaunchedEffect(song.id) {
+                                        viewModel.getCachedArt(song) { bitmap -> targetArt = bitmap?.asImageBitmap() }
                                     }
 
                                     val rotationAnim = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -937,130 +921,65 @@ fun ListingScreen(
                                         }
                                     }
 
-                                    Row(
-                                        modifier = Modifier.fillMaxSize(),
-                                        verticalAlignment = Alignment.CenterVertically
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .graphicsLayer { rotationZ = rotationAnim.value }
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primaryContainer)
+                                            .clickable { onNowPlayingClick() },
+                                        contentAlignment = Alignment.Center
                                     ) {
+                                        if (targetArt != null) {
+                                            Image(
+                                                bitmap = targetArt!!,
+                                                contentDescription = null,
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentScale = ContentScale.Crop
+                                            )
+                                        } else {
+                                            Icon(Icons.Rounded.MusicNote, contentDescription = null, modifier = Modifier.size(20.dp))
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Listening to: ${song.title}",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        val animatedProgress by animateFloatAsState(
+                                            targetValue = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
+                                            animationSpec = tween(durationMillis = 500)
+                                        )
                                         Box(
                                             modifier = Modifier
-                                                .size(36.dp)
-                                                .graphicsLayer {
-                                                    if (isNowPlayingVisible) {
-                                                        rotationZ = 0f
-                                                        alpha = 0f
-                                                    } else {
-                                                        rotationZ = rotationAnim.value
-                                                        alpha = 1f
-                                                    }
-                                                }
-                                                .clip(CircleShape)
-                                                .background(MaterialTheme.colorScheme.primaryContainer)
-                                                .clickable { onNowPlayingClick() }
-                                                .onGloballyPositioned { coords ->
-                                                    val pos = coords.positionInWindow()
-                                                    val sz = coords.size
-                                                    onMiniPlayerLayout(
-                                                        ElementRect(
-                                                            center = androidx.compose.ui.geometry.Offset(
-                                                                pos.x + sz.width / 2f,
-                                                                pos.y + sz.height / 2f
-                                                            ),
-                                                            size = androidx.compose.ui.geometry.Size(
-                                                                sz.width.toFloat(),
-                                                                sz.height.toFloat()
-                                                            )
-                                                        ),
-                                                        ElementRect(
-                                                            center = androidx.compose.ui.geometry.Offset.Zero,
-                                                            size = androidx.compose.ui.geometry.Size.Zero
-                                                        )
-                                                    )
-                                                },
-                                            contentAlignment = Alignment.Center
+                                                .fillMaxWidth()
+                                                .height(4.dp)
+                                                .clip(RoundedCornerShape(2.dp))
+                                                .background(Color.Gray.copy(alpha = 0.3f))
                                         ) {
-                                            if (targetArt != null) {
-                                                Image(
-                                                    bitmap = targetArt!!,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    contentScale = ContentScale.Crop
-                                                )
-                                            } else {
-                                                Icon(Icons.Rounded.MusicNote, contentDescription = null, modifier = Modifier.size(20.dp))
-                                            }
-                                            
-                                            if (isBuffering) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxSize()
-                                                        .background(Color.Black.copy(alpha = 0.3f)),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    CircularProgressIndicator(
-                                                        modifier = Modifier.size(20.dp),
-                                                        color = Color.White,
-                                                        strokeWidth = 2.dp
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        Spacer(modifier = Modifier.width(12.dp))
-
-                                        val listeningTextColor by animateColorAsState(
-                                            targetValue = MaterialTheme.colorScheme.onSurface,
-                                            animationSpec = tween(400), label = "listening_color"
-                                        )
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = "Listening to: ${targetSong.title}",
-                                                style = MaterialTheme.typography.labelLarge,
-                                                fontWeight = FontWeight.Bold,
-                                                color = listeningTextColor,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            val animatedProgress by animateFloatAsState(
-                                                targetValue = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
-                                                animationSpec = tween(durationMillis = 500)
-                                            )
                                             Box(
                                                 modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .height(4.dp)
+                                                    .fillMaxWidth(animatedProgress.coerceIn(0f, 1f))
+                                                    .fillMaxHeight()
                                                     .clip(RoundedCornerShape(2.dp))
-                                                    .background(Color.Gray.copy(alpha = 0.3f))
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth(animatedProgress.coerceIn(0f, 1f))
-                                                        .fillMaxHeight()
-                                                        .clip(RoundedCornerShape(2.dp))
-                                                        .background(adaptiveColor)
-                                                )
-                                            }
+                                                    .background(adaptiveColor)
+                                            )
                                         }
-
-                                        Spacer(modifier = Modifier.width(16.dp))
-
-                                        // Timer Vertikal dipojok kanan
-                                        val minutes = TimeUnit.MILLISECONDS.toMinutes(currentPosition)
-                                        val seconds = TimeUnit.MILLISECONDS.toSeconds(currentPosition) % 60
-                                        val minStr = String.format("%02d", minutes)
-                                        val secStr = String.format("%02d", seconds)
-                                        val timerColor by animateColorAsState(
-                                            targetValue = MaterialTheme.colorScheme.onSurface,
-                                            animationSpec = tween(400), label = "timer_color"
-                                        )
-
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            verticalArrangement = Arrangement.Center,
-                                            modifier = Modifier.padding(end = 8.dp)
-                                        ) {
-                                            Text(text = minStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = timerColor)
-                                            Text(text = secStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = timerColor)
-                                        }
+                                    }
+                                    Spacer(modifier = Modifier.width(16.dp))
+                                    val minutes = java.util.concurrent.TimeUnit.MILLISECONDS.toMinutes(currentPosition)
+                                    val seconds = java.util.concurrent.TimeUnit.MILLISECONDS.toSeconds(currentPosition) % 60
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.padding(end = 8.dp)
+                                    ) {
+                                        Text(text = String.format("%02d", minutes), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                        Text(text = String.format("%02d", seconds), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -1262,7 +1181,9 @@ fun ListingScreen(
 
                             if (isLoadingSongs && displaySongs.isEmpty()) {
                                 Box(
-                                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth(),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     CircularProgressIndicator(color = adaptiveColor)
@@ -1360,11 +1281,15 @@ fun ListingScreen(
                                         }
 
                                         if (isGenreLoading && genreSongList.isEmpty()) {
-                                            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                            Box(Modifier
+                                                .weight(1f)
+                                                .fillMaxWidth(), contentAlignment = Alignment.Center) {
                                                 CircularProgressIndicator(color = adaptiveColor)
                                             }
                                         } else if (genreSongList.isEmpty()) {
-                                            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                            Box(Modifier
+                                                .weight(1f)
+                                                .fillMaxWidth(), contentAlignment = Alignment.Center) {
                                                 Text("No songs found", color = Color.Gray)
                                             }
                                         } else {
@@ -1439,7 +1364,9 @@ fun ListingScreen(
                                         // Trending section
                                         if (isTrendingLoading && trendingSongs.isEmpty()) {
                                             Box(
-                                                modifier = Modifier.fillMaxWidth().height(120.dp),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(120.dp),
                                                 contentAlignment = Alignment.Center
                                             ) {
                                                 CircularProgressIndicator(color = adaptiveColor)
@@ -1483,7 +1410,9 @@ fun ListingScreen(
                                         Spacer(Modifier.height(16.dp))
                                         Text(
                                             "Search above to find more songs",
-                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 16.dp),
                                             textAlign = TextAlign.Center,
                                             color = Color.Gray,
                                             style = MaterialTheme.typography.bodySmall
@@ -1500,7 +1429,9 @@ fun ListingScreen(
                                     )
                                 } else if (streamParsingFailed) {
                                     Column(
-                                        modifier = Modifier.align(Alignment.Center).padding(horizontal = 32.dp),
+                                        modifier = Modifier
+                                            .align(Alignment.Center)
+                                            .padding(horizontal = 32.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally
                                     ) {
                                         Icon(
@@ -1627,7 +1558,7 @@ fun ListingScreen(
         // ---------- 5. MINI PLAYER BAR (Swipeable multi-layout) ----------
         Spacer(modifier = Modifier.height(6.dp))
         AnimatedVisibility(
-            visible = currentSong != null,
+            visible = (showListeningPill || isPillAtBottom) && currentSong != null,
             enter = expandVertically(
                 expandFrom = Alignment.Bottom,
                 animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f)
@@ -1637,49 +1568,36 @@ fun ListingScreen(
                 animationSpec = tween(250)
             ) + fadeOut(animationSpec = tween(200))
         ) {
-            var miniLayoutIndex by remember { mutableStateOf(0) }
             val maxMiniLayout = 2
-
-            val animatedBg by animateColorAsState(
-                targetValue = controlBgColor ?: Color.Transparent,
-                animationSpec = tween(300),
-                label = "controlBg"
-            )
-            val hasBg = controlBgColor != null
-            val btnTint = if (hasBg) {
-                if (controlBgColor!!.luminance() > 0.5f) Color.Black else Color.White
-            } else minibarTextColor
-            val btnBg = if (hasBg) Color.Transparent else adaptiveColor
+            val adaptiveBgColor = remember(ambientColor, isDarkMode) {
+                if (isDarkMode) {
+                    ambientColor.copy(alpha = 0.25f).compositeOver(Color(0xFF121212))
+                } else {
+                    ambientColor.copy(alpha = 0.12f).compositeOver(Color.White)
+                }
+            }
 
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
                     .clip(RoundedCornerShape(32.dp))
-                    .background(animatedBg)
+                    .background(adaptiveBgColor)
                     .pointerInput(Unit) {
                         var accDx = 0f
-                        var accDy = 0f
-                        detectDragGestures(
+                        detectHorizontalDragGestures(
                             onDragEnd = {
                                 val absDx = kotlin.math.abs(accDx)
-                                val absDy = kotlin.math.abs(accDy)
                                 val threshold = 40f
 
-                                if (absDy > absDx && absDy > threshold) {
-                                    if (accDy < 0) {
-                                        // SWIPE UP → NowPlayingScreen
-                                        onNowPlayingClick()
-                                    } else {
-                                        // SWIPE DOWN → cycle layout
-                                        miniLayoutIndex = (miniLayoutIndex + 1) % (maxMiniLayout + 1)
-                                    }
-                                } else if (absDx > absDy && absDx > threshold) {
+                                if (absDx > threshold) {
                                     if (accDx > 0) {
                                         // SWIPE RIGHT → next palette
                                         if (paletteColors.isNotEmpty()) {
-                                            currentPaletteIndex = (currentPaletteIndex + 1) % paletteColors.size
-                                            controlBgColor = paletteColors[currentPaletteIndex].copy(alpha = 0.15f)
+                                            currentPaletteIndex =
+                                                (currentPaletteIndex + 1) % paletteColors.size
+                                            controlBgColor =
+                                                paletteColors[currentPaletteIndex].copy(alpha = 0.15f)
                                         }
                                     } else {
                                         // SWIPE LEFT → reset bg
@@ -1688,53 +1606,141 @@ fun ListingScreen(
                                     }
                                 }
                                 accDx = 0f
-                                accDy = 0f
                             },
-                            onDragCancel = { accDx = 0f; accDy = 0f }
+                            onDragCancel = { accDx = 0f }
                         ) { change, dragAmount ->
                             change.consume()
-                            accDx += dragAmount.x
-                            accDy += dragAmount.y
+                            accDx += dragAmount
                         }
                     }
-                    .animateContentSize(animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f))
+                    .animateContentSize(
+                        animationSpec = spring(
+                            dampingRatio = 0.7f,
+                            stiffness = 400f
+                        )
+                    )
             ) {
-                AnimatedContent(
-                    targetState = miniLayoutIndex,
-                    transitionSpec = {
-                        (fadeIn(tween(200)) + slideInVertically(tween(250) { it / 4 }))
-                            .togetherWith(fadeOut(tween(150)) + slideOutVertically(tween(150) { -it / 4 }))
-                    },
-                    label = "miniLayout",
-                    modifier = Modifier.fillMaxWidth()
-                ) { layout ->
-                    when (layout) {
-                        0 -> MiniLayoutDefault(
-                            viewModel = viewModel,
-                            isPlaying = isPlaying,
-                            isShuffleOn = isShuffleOn,
-                            repeatMode = repeatMode,
-                            btnBg = btnBg,
-                            btnTint = btnTint,
-                            hasBg = hasBg,
-                            adaptiveColor = adaptiveColor,
-                            minibarTextColor = minibarTextColor
-                        )
-                        1 -> MiniLayoutFloating(
-                            viewModel = viewModel,
-                            isPlaying = isPlaying,
-                            btnTint = btnTint,
-                            adaptiveColor = adaptiveColor,
-                            isBuffering = isBuffering
-                        )
-                        2 -> MiniLayoutQueue(
-                            viewModel = viewModel,
-                            isPlaying = isPlaying,
-                            isShuffleOn = isShuffleOn,
-                            repeatMode = repeatMode,
-                            btnTint = btnTint,
-                            adaptiveColor = adaptiveColor
-                        )
+                val animatedControlBg by animateColorAsState(
+                    targetValue = controlBgColor ?: Color.Transparent,
+                    animationSpec = tween(300),
+                    label = "controlBg"
+                )
+
+                Box(modifier = Modifier
+                    .fillMaxWidth()
+                    .background(animatedControlBg)) {
+                    AnimatedContent(
+                        targetState = showVolumeControl,
+                        transitionSpec = {
+                            (fadeIn(tween(200)) + slideInHorizontally(tween(200)) { it / 2 })
+                                .togetherWith(fadeOut(tween(150)) + slideOutHorizontally(tween(150)) { -it / 2 })
+                        },
+                        label = "pill_content"
+                    ) { showVol ->
+                        if (showVol) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(80.dp)
+                                    .padding(horizontal = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(end = 8.dp)
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(
+                                                alpha = 0.5f
+                                            )
+                                        )
+                                        .clickable { showVolumeControl = false },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Rounded.ChevronLeft, "Back", tint = Color.Gray, modifier = Modifier.size(20.dp))
+                                }
+                                Slider(
+                                    value = currentVolume.toFloat(),
+                                    onValueChange = { v ->
+                                        currentVolume = v.toInt()
+                                        audioManager.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, v.toInt(), 0)
+                                    },
+                                    valueRange = 0f..maxVolume.toFloat(),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(horizontal = 8.dp)
+                                        .height(24.dp),
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = adaptiveColor,
+                                        activeTrackColor = adaptiveColor,
+                                        inactiveTrackColor = adaptiveColor.copy(alpha = 0.25f)
+                                    )
+                                )
+                                Icon(Icons.Rounded.VolumeUp, "Vol max", tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                            }
+                        } else {
+                            AnimatedContent(
+                                targetState = miniLayoutIndex,
+                                transitionSpec = {
+                                    (fadeIn(tween(200)) + slideInVertically(animationSpec = tween(250)) { fullHeight -> fullHeight / 4 })
+                                        .togetherWith(fadeOut(tween(150)) + slideOutVertically(animationSpec = tween(150)) { fullHeight -> -fullHeight / 4 })
+                                },
+                                label = "miniLayout",
+                                modifier = Modifier.fillMaxWidth()
+                            ) { layout ->
+                                val btnTint = if (controlBgColor != null) {
+                                    if (controlBgColor!!.luminance() > 0.5f) Color.Black else Color.White
+                                } else minibarTextColor
+                                val btnBg = Color.Transparent
+
+                                when (layout) {
+                                    0 -> MiniLayoutDefault(
+                                        viewModel = viewModel,
+                                        isPlaying = isPlaying,
+                                        isShuffleOn = isShuffleOn,
+                                        repeatMode = repeatMode,
+                                        btnBg = btnBg,
+                                        btnTint = btnTint,
+                                        hasBg = true,
+                                        adaptiveColor = adaptiveColor,
+                                        minibarTextColor = minibarTextColor,
+                                        currentSong = currentSong,
+                                        onNowPlayingClick = onNowPlayingClick,
+                                        onMiniPlayerLayout = onMiniPlayerLayout,
+                                        isNowPlayingVisible = isNowPlayingVisible,
+                                        isBuffering = isBuffering,
+                                        currentPosition = currentPosition,
+                                        duration = duration,
+                                        isPillAtBottom = isPillAtBottom,
+                                        onToggleVolume = { showVolumeControl = true }
+                                    )
+                                    1 -> MiniLayoutFloating(
+                                        viewModel = viewModel,
+                                        isPlaying = isPlaying,
+                                        btnTint = btnTint,
+                                        adaptiveColor = adaptiveColor,
+                                        isBuffering = isBuffering,
+                                        currentSong = currentSong,
+                                        onNowPlayingClick = onNowPlayingClick,
+                                        isPillAtBottom = isPillAtBottom,
+                                        onToggleVolume = { showVolumeControl = true }
+                                    )
+                                    2 -> MiniLayoutQueue(
+                                        viewModel = viewModel,
+                                        isPlaying = isPlaying,
+                                        isShuffleOn = isShuffleOn,
+                                        repeatMode = repeatMode,
+                                        btnTint = btnTint,
+                                        adaptiveColor = adaptiveColor,
+                                        currentSong = currentSong,
+                                        onNowPlayingClick = onNowPlayingClick,
+                                        isPillAtBottom = isPillAtBottom,
+                                        onToggleVolume = { showVolumeControl = true }
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1782,6 +1788,18 @@ fun ListingScreen(
             accentColor = adaptiveColor,
             viewModel = viewModel,
             onDismiss = { viewModel.closeRecapCard() }
+        )
+    }
+
+    if (showPlaylistSelectionDialog != null) {
+        PlaylistSelectionDialog(
+            song = showPlaylistSelectionDialog!!,
+            playlists = playlists,
+            onDismiss = { showPlaylistSelectionDialog = null },
+            onSelect = { playlist ->
+                viewModel.addSongsToPlaylist(playlist, listOf(showPlaylistSelectionDialog!!.id))
+                showPlaylistSelectionDialog = null
+            }
         )
     }
 }
@@ -2361,7 +2379,9 @@ fun AlbumDetailView(
 
             if (songs.isEmpty()) {
                 Box(
-                    modifier = Modifier.fillMaxSize().weight(1f),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
                     Text("No songs in this album", color = Color.Gray)
@@ -2504,7 +2524,9 @@ fun PlaylistDetailView(
 
             if (playlistSongs.isEmpty()) {
                 Box(
-                    modifier = Modifier.fillMaxSize().weight(1f),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
                     Text("This playlist is empty", color = Color.Gray)
@@ -2710,7 +2732,9 @@ fun EditPlaylistDialog(
                             coil.compose.AsyncImage(
                                 model = pickedImageUri,
                                 contentDescription = null,
-                                modifier = Modifier.fillMaxSize().clip(CircleShape),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(CircleShape),
                                 contentScale = ContentScale.Crop
                             )
                         } else {
@@ -2824,7 +2848,9 @@ fun AddSongsToPlaylistDialog(
                                     if (it) selectedIds.add(song.id) else selectedIds.remove(song.id)
                                 }
                             )
-                            Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+                            Column(modifier = Modifier
+                                .weight(1f)
+                                .padding(start = 8.dp)) {
                                 Text(song.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(song.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, color = Color.Gray)
                             }
@@ -2976,7 +3002,9 @@ fun CreatePlaylistDialog(
                                     if (it) selectedIds.add(song.id) else selectedIds.remove(song.id)
                                 }
                             )
-                            Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+                            Column(modifier = Modifier
+                                .weight(1f)
+                                .padding(start = 8.dp)) {
                                 Text(song.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(song.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, color = Color.Gray)
                             }
@@ -3340,6 +3368,43 @@ fun EditSongDialog(
 }
 
 @Composable
+fun PlaylistSelectionDialog(
+    song: Song,
+    playlists: List<com.ianocent.musicplayer.data.Playlist>,
+    onDismiss: () -> Unit,
+    onSelect: (com.ianocent.musicplayer.data.Playlist) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(28.dp),
+        title = { Text("Add to Playlist", fontWeight = FontWeight.Bold) },
+        text = {
+            if (playlists.isEmpty()) {
+                Text("No playlists found. Create one first.", color = Color.Gray)
+            } else {
+                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                    items(playlists) { playlist ->
+                        RoundedClickableRow(
+                            onClick = { onSelect(playlist) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.PlaylistPlay, null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(12.dp))
+                            Text(playlist.name, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
 fun RoundedCheckbox(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
@@ -3497,7 +3562,9 @@ fun MusicRecapBanner(
 
             val commentScrollState = rememberScrollState()
             Surface(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 70.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 70.dp),
                 shape = RoundedCornerShape(16.dp),
                 color = accentColor.copy(alpha = 0.06f)
             ) {
@@ -3534,7 +3601,8 @@ fun MusicRecapBanner(
                                     .fillMaxHeight(thumbHeightFraction)
                                     .align(Alignment.TopCenter)
                                     .graphicsLayer {
-                                        translationY = (size.height * (1f - thumbHeightFraction) * scrollFraction)
+                                        translationY =
+                                            (size.height * (1f - thumbHeightFraction) * scrollFraction)
                                     }
                                     .clip(RoundedCornerShape(2.dp))
                                     .background(accentColor.copy(alpha = 0.5f))
@@ -3578,6 +3646,192 @@ fun RecapStat(label: String, value: String, accentColor: Color) {
 }
 
 @Composable
+fun MiniSongInfo(
+    song: Song,
+    viewModel: MusicViewModel,
+    adaptiveColor: Color,
+    onNowPlayingClick: () -> Unit = {},
+    onMiniPlayerLayout: (ElementRect, ElementRect) -> Unit = { _, _ -> },
+    isNowPlayingVisible: Boolean = false,
+    isPlaying: Boolean = false,
+    isBuffering: Boolean = false,
+    currentPosition: Long = 0,
+    duration: Long = 0,
+    isPillAtBottom: Boolean,
+    onToggleVolume: () -> Unit
+) {
+    var art by remember(song.id) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(song.id) {
+        viewModel.getCachedArt(song) { bitmap -> art = bitmap?.asImageBitmap() }
+    }
+
+    val rotationAnim = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(isPlaying) {
+        if (isPlaying) {
+            rotationAnim.animateTo(
+                targetValue = rotationAnim.value + 360f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(8000, easing = LinearEasing),
+                    repeatMode = RepeatMode.Restart
+                )
+            )
+        } else {
+            rotationAnim.stop()
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 8.dp)
+            .pointerInput(isPillAtBottom) {
+                var accDx = 0f
+                var accDy = 0f
+                detectDragGestures(
+                    onDragEnd = {
+                        val absDx = kotlin.math.abs(accDx)
+                        val absDy = kotlin.math.abs(accDy)
+                        val threshold = 30f
+
+                        if (absDy > absDx && absDy > threshold) {
+                            if (accDy < 0 && isPillAtBottom) {
+                                // Swipe up when at bottom -> move to top
+                                viewModel.setPillAtBottom(false)
+                            } else if (accDy > 0 && !isPillAtBottom) {
+                                // Swipe down when at top -> move to bottom
+                                viewModel.setPillAtBottom(true)
+                            }
+                        } else if (absDx > absDy && absDx > threshold) {
+                            if (accDx < -threshold) {
+                                // Swipe left -> show volume
+                                onToggleVolume()
+                            }
+                        }
+                        accDx = 0f
+                        accDy = 0f
+                    },
+                    onDragCancel = { accDx = 0f; accDy = 0f }
+                ) { change, dragAmount ->
+                    change.consume()
+                    accDx += dragAmount.x
+                    accDy += dragAmount.y
+                }
+            },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .graphicsLayer {
+                    if (isNowPlayingVisible) {
+                        alpha = 0f
+                    } else {
+                        rotationZ = rotationAnim.value
+                        alpha = 1f
+                    }
+                }
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primaryContainer)
+                .clickable { onNowPlayingClick() }
+                .onGloballyPositioned { coords ->
+                    val pos = coords.positionInWindow()
+                    val sz = coords.size
+                    onMiniPlayerLayout(
+                        ElementRect(
+                            center = androidx.compose.ui.geometry.Offset(
+                                pos.x + sz.width / 2f,
+                                pos.y + sz.height / 2f
+                            ),
+                            size = androidx.compose.ui.geometry.Size(
+                                sz.width.toFloat(),
+                                sz.height.toFloat()
+                            )
+                        ),
+                        ElementRect(
+                            center = androidx.compose.ui.geometry.Offset.Zero,
+                            size = androidx.compose.ui.geometry.Size.Zero
+                        )
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            if (art != null) {
+                Image(
+                    bitmap = art!!,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Icon(Icons.Rounded.MusicNote, contentDescription = null, modifier = Modifier.size(20.dp))
+            }
+            
+            if (isBuffering) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.3f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = Color.White,
+                        strokeWidth = 2.dp
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Listening to: ${song.title}",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            val animatedProgress by animateFloatAsState(
+                targetValue = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
+                animationSpec = tween(durationMillis = 500)
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(Color.Gray.copy(alpha = 0.3f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(animatedProgress.coerceIn(0f, 1f))
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(adaptiveColor)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(16.dp))
+
+        // Timer Vertikal dipojok kanan
+        val minutes = java.util.concurrent.TimeUnit.MILLISECONDS.toMinutes(currentPosition)
+        val seconds = java.util.concurrent.TimeUnit.MILLISECONDS.toSeconds(currentPosition) % 60
+        val minStr = String.format("%02d", minutes)
+        val secStr = String.format("%02d", seconds)
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.padding(end = 8.dp)
+        ) {
+            Text(text = minStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            Text(text = secStr, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
 fun MiniLayoutDefault(
     viewModel: MusicViewModel,
     isPlaying: Boolean,
@@ -3587,38 +3841,93 @@ fun MiniLayoutDefault(
     btnTint: Color,
     hasBg: Boolean,
     adaptiveColor: Color,
-    minibarTextColor: Color
+    minibarTextColor: Color,
+    currentSong: Song? = null,
+    onNowPlayingClick: () -> Unit = {},
+    onMiniPlayerLayout: (ElementRect, ElementRect) -> Unit = { _, _ -> },
+    isNowPlayingVisible: Boolean = false,
+    isBuffering: Boolean = false,
+    currentPosition: Long = 0,
+    duration: Long = 0,
+    isPillAtBottom: Boolean = false,
+    onToggleVolume: () -> Unit = {}
 ) {
     val activeBg = adaptiveColor.copy(alpha = 0.35f)
     val inactBg = adaptiveColor.copy(alpha = 0.18f)
     val inactTint = minibarTextColor.copy(alpha = 0.75f)
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp)
-    ) {
-        MiniControlButton(
-            icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-            onClick = { viewModel.togglePlayPause() },
-            bg = adaptiveColor.copy(alpha = 0.2f), tint = adaptiveColor, size = 40.dp
-        )
-        MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() },
-            adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 40.dp)
-        MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() },
-            adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 40.dp)
-        MiniControlButton(
-            Icons.Rounded.Shuffle, { viewModel.toggleShuffle() },
-            if (isShuffleOn) activeBg else inactBg,
-            if (isShuffleOn) adaptiveColor else inactTint, 40.dp
-        )
-        MiniControlButton(
-            if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-            { viewModel.toggleRepeat() },
-            if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else inactBg,
-            if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, 40.dp
-        )
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (currentSong != null && isPillAtBottom) {
+            MiniSongInfo(
+                song = currentSong,
+                viewModel = viewModel,
+                adaptiveColor = adaptiveColor,
+                onNowPlayingClick = onNowPlayingClick,
+                onMiniPlayerLayout = onMiniPlayerLayout,
+                isNowPlayingVisible = isNowPlayingVisible,
+                isPlaying = isPlaying,
+                isBuffering = isBuffering,
+                currentPosition = currentPosition,
+                duration = duration,
+                isPillAtBottom = true,
+                onToggleVolume = onToggleVolume
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp)
+                .pointerInput(Unit) {
+                    var accDx = 0f
+                    var accDy = 0f
+                    detectDragGestures(
+                        onDragEnd = {
+                            val absDx = kotlin.math.abs(accDx)
+                            val absDy = kotlin.math.abs(accDy)
+                            val threshold = 40f
+
+                            if (absDy > absDx && absDy > threshold) {
+                                if (accDy < 0) {
+                                    // SWIPE UP → NowPlayingScreen
+                                    onNowPlayingClick()
+                                } else {
+                                    // SWIPE DOWN → cycle layout
+                                    viewModel.setMiniLayoutIndex((viewModel.miniLayoutIndex.value + 1) % 3)
+                                }
+                            }
+                            accDx = 0f
+                            accDy = 0f
+                        },
+                        onDragCancel = { accDx = 0f; accDy = 0f }
+                    ) { change, dragAmount ->
+                        change.consume()
+                        accDx += dragAmount.x
+                        accDy += dragAmount.y
+                    }
+                }
+        ) {
+            MiniControlButton(
+                icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                onClick = { viewModel.togglePlayPause() },
+                bg = adaptiveColor.copy(alpha = 0.2f), tint = adaptiveColor, size = 40.dp
+            )
+            MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() },
+                adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 40.dp)
+            MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() },
+                adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 40.dp)
+            MiniControlButton(
+                Icons.Rounded.Shuffle, { viewModel.toggleShuffle() },
+                if (isShuffleOn) activeBg else inactBg,
+                if (isShuffleOn) adaptiveColor else inactTint, 40.dp
+            )
+            MiniControlButton(
+                if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                { viewModel.toggleRepeat() },
+                if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else inactBg,
+                if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, 40.dp
+            )
+        }
     }
 }
 
@@ -3628,49 +3937,93 @@ fun MiniLayoutFloating(
     isPlaying: Boolean,
     btnTint: Color,
     adaptiveColor: Color,
-    isBuffering: Boolean
+    isBuffering: Boolean,
+    currentSong: Song? = null,
+    onNowPlayingClick: () -> Unit = {},
+    isPillAtBottom: Boolean = false,
+    onToggleVolume: () -> Unit = {}
 ) {
     val shuffleOn by viewModel.isShuffleOn.collectAsState()
     val repeat by viewModel.repeatMode.collectAsState()
     val inactTint = btnTint.copy(alpha = 0.75f)
     val inactBg = adaptiveColor.copy(alpha = 0.18f)
     val activeBg = adaptiveColor.copy(alpha = 0.35f)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        MiniControlButton(Icons.Rounded.Shuffle, { viewModel.toggleShuffle() },
-            bg = if (shuffleOn) activeBg else inactBg,
-            tint = if (shuffleOn) adaptiveColor else inactTint, size = 36.dp)
-        MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() },
-            inactBg, btnTint, 36.dp)
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .background(adaptiveColor.copy(alpha = 0.2f))
-                .clickable { viewModel.togglePlayPause() },
-            contentAlignment = Alignment.Center
-        ) {
-            if (isBuffering) {
-                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp, color = adaptiveColor)
-            } else {
-                Icon(
-                    if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                    null, tint = adaptiveColor, modifier = Modifier.size(28.dp)
-                )
-            }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (currentSong != null && isPillAtBottom) {
+            MiniSongInfo(
+                song = currentSong,
+                viewModel = viewModel,
+                adaptiveColor = adaptiveColor,
+                onNowPlayingClick = onNowPlayingClick,
+                isPillAtBottom = true,
+                onToggleVolume = onToggleVolume
+            )
         }
-        MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() },
-            inactBg, btnTint, 36.dp)
-        MiniControlButton(
-            if (repeat == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-            { viewModel.toggleRepeat() },
-            bg = if (repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else inactBg,
-            tint = if (repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, size = 36.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .pointerInput(Unit) {
+                    var accDx = 0f
+                    var accDy = 0f
+                    detectDragGestures(
+                        onDragEnd = {
+                            val absDx = kotlin.math.abs(accDx)
+                            val absDy = kotlin.math.abs(accDy)
+                            val threshold = 40f
+
+                            if (absDy > absDx && absDy > threshold) {
+                                if (accDy < 0) {
+                                    // SWIPE UP → NowPlayingScreen
+                                    onNowPlayingClick()
+                                } else {
+                                    // SWIPE DOWN → cycle layout
+                                    viewModel.setMiniLayoutIndex((viewModel.miniLayoutIndex.value + 1) % 3)
+                                }
+                            }
+                            accDx = 0f
+                            accDy = 0f
+                        },
+                        onDragCancel = { accDx = 0f; accDy = 0f }
+                    ) { change, dragAmount ->
+                        change.consume()
+                        accDx += dragAmount.x
+                        accDy += dragAmount.y
+                    }
+                },
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            MiniControlButton(Icons.Rounded.Shuffle, { viewModel.toggleShuffle() },
+                bg = if (shuffleOn) activeBg else inactBg,
+                tint = if (shuffleOn) adaptiveColor else inactTint, size = 36.dp)
+            MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() },
+                inactBg, btnTint, 36.dp)
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(adaptiveColor.copy(alpha = 0.2f))
+                    .clickable { viewModel.togglePlayPause() },
+                contentAlignment = Alignment.Center
+            ) {
+                if (isBuffering) {
+                    CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp, color = adaptiveColor)
+                } else {
+                    Icon(
+                        if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        null, tint = adaptiveColor, modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
+            MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() },
+                inactBg, btnTint, 36.dp)
+            MiniControlButton(
+                if (repeat == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                { viewModel.toggleRepeat() },
+                bg = if (repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else inactBg,
+                tint = if (repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, size = 36.dp)
+        }
     }
 }
 
@@ -3681,45 +4034,90 @@ fun MiniLayoutQueue(
     isShuffleOn: Boolean,
     repeatMode: Int,
     btnTint: Color,
-    adaptiveColor: Color
+    adaptiveColor: Color,
+    currentSong: Song? = null,
+    onNowPlayingClick: () -> Unit = {},
+    isPillAtBottom: Boolean = false,
+    onToggleVolume: () -> Unit = {}
 ) {
     val inactTint = btnTint.copy(alpha = 0.75f)
     val inactBg = adaptiveColor.copy(alpha = 0.18f)
     val activeBg = adaptiveColor.copy(alpha = 0.35f)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() },
-                inactBg, btnTint, 36.dp)
-            Box(
-                modifier = Modifier
-                    .size(42.dp).clip(CircleShape)
-                    .background(adaptiveColor.copy(alpha = 0.2f))
-                    .clickable { viewModel.togglePlayPause() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                    null, tint = adaptiveColor, modifier = Modifier.size(24.dp)
-                )
-            }
-            MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() },
-                inactBg, btnTint, 36.dp)
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (currentSong != null && isPillAtBottom) {
+            MiniSongInfo(
+                song = currentSong,
+                viewModel = viewModel,
+                adaptiveColor = adaptiveColor,
+                onNowPlayingClick = onNowPlayingClick,
+                isPillAtBottom = true,
+                onToggleVolume = onToggleVolume
+            )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            MiniControlButton(Icons.Rounded.Shuffle, { viewModel.toggleShuffle() },
-                if (isShuffleOn) activeBg else inactBg,
-                if (isShuffleOn) adaptiveColor else inactTint, 36.dp)
-            MiniControlButton(
-                if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-                { viewModel.toggleRepeat() },
-                if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else inactBg,
-                if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, 36.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .pointerInput(Unit) {
+                    var accDx = 0f
+                    var accDy = 0f
+                    detectDragGestures(
+                        onDragEnd = {
+                            val absDx = kotlin.math.abs(accDx)
+                            val absDy = kotlin.math.abs(accDy)
+                            val threshold = 40f
+
+                            if (absDy > absDx && absDy > threshold) {
+                                if (accDy < 0) {
+                                    // SWIPE UP → NowPlayingScreen
+                                    onNowPlayingClick()
+                                } else {
+                                    // SWIPE DOWN → cycle layout
+                                    viewModel.setMiniLayoutIndex((viewModel.miniLayoutIndex.value + 1) % 3)
+                                }
+                            }
+                            accDx = 0f
+                            accDy = 0f
+                        },
+                        onDragCancel = { accDx = 0f; accDy = 0f }
+                    ) { change, dragAmount ->
+                        change.consume()
+                        accDx += dragAmount.x
+                        accDy += dragAmount.y
+                    }
+                },
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() },
+                    inactBg, btnTint, 36.dp)
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(adaptiveColor.copy(alpha = 0.2f))
+                        .clickable { viewModel.togglePlayPause() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        null, tint = adaptiveColor, modifier = Modifier.size(24.dp)
+                    )
+                }
+                MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() },
+                    inactBg, btnTint, 36.dp)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                MiniControlButton(Icons.Rounded.Shuffle, { viewModel.toggleShuffle() },
+                    if (isShuffleOn) activeBg else inactBg,
+                    if (isShuffleOn) adaptiveColor else inactTint, 36.dp)
+                MiniControlButton(
+                    if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                    { viewModel.toggleRepeat() },
+                    if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else inactBg,
+                    if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, 36.dp)
+            }
         }
     }
 }
@@ -4005,6 +4403,45 @@ fun VoiceSpectrum(
                         .background(accentColor.copy(alpha = 0.8f))
                 )
             }
+        }
+    }
+}
+@Preview(showBackground = true, name = "Mini Player Default")
+@Composable
+fun MiniPlayerPreview() {
+    IanPlayerTheme(darkTheme = true) {
+        Box(modifier = Modifier.padding(16.dp).background(Color.Black)) {
+            MiniLayoutDefault(
+                viewModel = viewModel(),
+                isPlaying = true,
+                isShuffleOn = false,
+                repeatMode = 0,
+                btnBg = Color.Transparent,
+                btnTint = Color.White,
+                hasBg = true,
+                adaptiveColor = Color(0xFF1DB954),
+                minibarTextColor = Color.White,
+                currentSong = Song(1, "Sample Song Title", "Sample Artist", 300000, android.net.Uri.EMPTY),
+                isPillAtBottom = true
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true, name = "Mini Player Floating")
+@Composable
+fun PreviewMiniPlayerFloating() {
+    IanPlayerTheme(darkTheme = true) {
+        Box(modifier = Modifier.padding(16.dp).background(Color.Black)) {
+            MiniLayoutFloating(
+                viewModel = viewModel(),
+                isPlaying = false,
+                btnTint = Color.White,
+                adaptiveColor = Color(0xFFE91E63),
+                isBuffering = false,
+                currentSong = Song(2, "Gerimis Mengundang", "Slam", 280000, android.net.Uri.EMPTY),
+                isPillAtBottom = true
+            )
         }
     }
 }

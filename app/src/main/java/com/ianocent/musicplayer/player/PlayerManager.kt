@@ -6,6 +6,7 @@ import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
@@ -169,7 +170,7 @@ class PlayerManager(private val context: Context) {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun getAudioSessionId(): Int {
         val p = player
-        return if (p is androidx.media3.exoplayer.ExoPlayer) p.audioSessionId
+        return if (p is ExoPlayer) p.audioSessionId
         else if (p is MediaController) {
             PlaybackService.audioSessionId
         } else 0

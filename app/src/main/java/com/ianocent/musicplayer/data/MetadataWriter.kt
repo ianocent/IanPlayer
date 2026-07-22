@@ -3,7 +3,7 @@ package com.ianocent.musicplayer.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.util.Log
+import timber.log.Timber
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.mpatric.mp3agic.Mp3File
@@ -18,45 +18,42 @@ object MetadataWriter {
     suspend fun writeMetadata(
         context: Context,
         filePath: String,
-        song: Song
+        song: Song,
+        newArt: Bitmap? = null
     ) = withContext(Dispatchers.IO) {
         try {
             val file = File(filePath)
             if (!file.exists()) {
-                Log.e("MetadataWriter", "File does not exist: $filePath")
+                Timber.e("File does not exist: $filePath")
                 return@withContext false
             }
 
             val mp3file = Mp3File(filePath)
 
-            if (mp3file.hasId3v1Tag()) {
-                mp3file.removeId3v1Tag()
-            }
-            if (mp3file.hasId3v2Tag()) {
-                mp3file.removeId3v2Tag()
-            }
-
-            val id3v2tag = ID3v24Tag().apply {
-                artist = song.artist
-                title = song.title
-                album = song.album
+            // Get existing tags if possible, otherwise create new
+            val id3v2tag = if (mp3file.hasId3v2Tag()) {
+                mp3file.id3v2Tag
+            } else {
+                ID3v24Tag()
             }
 
-            if (!song.remoteArtUrl.isNullOrEmpty()) {
+            id3v2tag.artist = song.artist
+            id3v2tag.title = song.title
+            id3v2tag.album = song.album
+
+            if (newArt != null) {
+                embedAlbumArt(id3v2tag, newArt)
+            } else if (!song.remoteArtUrl.isNullOrEmpty()) {
                 try {
-                    Log.d("MetadataWriter", "Downloading album art from: ${song.remoteArtUrl}")
+                    Timber.d("Downloading album art from: ${song.remoteArtUrl}")
                     val bitmap = downloadBitmap(song.remoteArtUrl)
                     if (bitmap != null) {
-                        Log.d("MetadataWriter", "Album art downloaded successfully, size: ${bitmap.width}x${bitmap.height}")
+                        Timber.d("Album art downloaded successfully, size: ${bitmap.width}x${bitmap.height}")
                         embedAlbumArt(id3v2tag, bitmap)
-                    } else {
-                        Log.w("MetadataWriter", "Failed to download album art bitmap")
                     }
                 } catch (e: Exception) {
-                    Log.e("MetadataWriter", "Failed to download/embed album art: ${e.message}", e)
+                    Timber.e(e, "Failed to download/embed album art: ${e.message}")
                 }
-            } else {
-                Log.d("MetadataWriter", "No remote art URL available for: ${song.title}")
             }
 
             mp3file.id3v2Tag = id3v2tag
@@ -66,7 +63,7 @@ object MetadataWriter {
             mp3file.save(tempFile.absolutePath)
 
             if (!tempFile.exists() || tempFile.length() == 0L) {
-                Log.e("MetadataWriter", "Temp file invalid after save, aborting")
+                Timber.e("Temp file invalid after save, aborting")
                 tempFile.delete()
                 return@withContext false
             }
@@ -75,14 +72,14 @@ object MetadataWriter {
             val renamed = tempFile.renameTo(file)
 
             if (!renamed) {
-                Log.e("MetadataWriter", "Failed to rename temp file to original path")
+                Timber.e("Failed to rename temp file to original path")
                 return@withContext false
             }
 
-            Log.d("MetadataWriter", "Metadata written successfully for: ${song.title}")
+            Timber.d("Metadata written successfully for: ${song.title}")
             true
         } catch (e: Exception) {
-            Log.e("MetadataWriter", "Failed to write metadata: ${e.message}")
+            Timber.e("Failed to write metadata: ${e.message}")
             e.printStackTrace()
             false
         }
@@ -114,7 +111,7 @@ object MetadataWriter {
                 tryDownloadBitmap(artUrl)
             }
         } catch (e: Exception) {
-            Log.e("MetadataWriter", "Failed to download bitmap: ${e.message}", e)
+            Timber.e(e, "Failed to download bitmap: ${e.message}")
             null
         }
     }
@@ -129,12 +126,12 @@ object MetadataWriter {
             conn.readTimeout = 10000
             conn.connect()
             if (conn.responseCode != 200) {
-                Log.d("MetadataWriter", "HTTP ${conn.responseCode} for URL: $url")
+                Timber.d("HTTP ${conn.responseCode} for URL: $url")
                 return null
             }
             BitmapFactory.decodeStream(conn.inputStream)
         } catch (e: Exception) {
-            Log.d("MetadataWriter", "Failed to download from $url: ${e.message}")
+            Timber.d("Failed to download from $url: ${e.message}")
             null
         }
     }
@@ -150,9 +147,9 @@ object MetadataWriter {
             // Set the album art as APIC frame (attached picture)
             tag.setAlbumImage(byteArray, "image/jpeg")
             
-            Log.d("MetadataWriter", "Album art embedded successfully")
+            Timber.d("Album art embedded successfully")
         } catch (e: Exception) {
-            Log.e("MetadataWriter", "Failed to embed album art: ${e.message}")
+            Timber.e("Failed to embed album art: ${e.message}")
         }
     }
 }

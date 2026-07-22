@@ -25,8 +25,11 @@ class PlaybackService : MediaSessionService() {
     private var audioFocusRequest: AudioFocusRequest? = null
     private var wasPlayingBeforeFocusLoss = false
 
+    private var headsetReceiver: HeadsetReceiver? = null
+
     override fun onCreate() {
         super.onCreate()
+        registerHeadsetReceiver()
         createNotificationChannel()
         val loadControl: LoadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
@@ -78,6 +81,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
         return START_STICKY
     }
 
@@ -94,6 +98,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        unregisterReceiver(headsetReceiver)
         abandonAudioFocus()
         mediaSession?.run {
             player?.release()
@@ -104,6 +109,16 @@ class PlaybackService : MediaSessionService() {
         }
         player = null
         super.onDestroy()
+    }
+
+    private fun registerHeadsetReceiver() {
+        headsetReceiver = HeadsetReceiver()
+        val filter = android.content.IntentFilter().apply {
+            addAction(Intent.ACTION_HEADSET_PLUG)
+            addAction(android.bluetooth.BluetoothDevice.ACTION_ACL_CONNECTED)
+            addAction(android.bluetooth.BluetoothDevice.ACTION_ACL_DISCONNECTED)
+        }
+        registerReceiver(headsetReceiver, filter)
     }
 
     private fun setupAudioFocus() {

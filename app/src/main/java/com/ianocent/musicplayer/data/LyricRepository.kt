@@ -1,6 +1,6 @@
 package com.ianocent.musicplayer.data
 
-import android.util.Log
+import timber.log.Timber
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -34,7 +34,44 @@ class LyricRepository {
         val ovhResult = fetchFromLyricsOvh(title, artist)
         if (!ovhResult.isNullOrBlank()) return ovhResult
 
+        val geniusResult = fetchFromGenius(title, artist)
+        if (!geniusResult.isNullOrBlank()) return geniusResult
+
         return null
+    }
+
+    // ==========================================
+    // SOURCE 4: GENIUS API (Search Fallback)
+    // ==========================================
+    private fun fetchFromGenius(title: String, artist: String): String? {
+        return try {
+            // NOTE: Genius API needs an Access Token. Using a search query to find the song.
+            // Genius doesn't provide lyrics text via API (only URL), so we'd need to scrape.
+            // For now, we'll try to get the description or use it to verify metadata.
+            val accessToken = "VpEQHyTkUM4FXXKo5VEltGQmT_bgflqKnqKhp6bbG12zhu5j2Cm0Gc9ezYf4oa-x" // User should provide this
+            val query = URLEncoder.encode("$title $artist", "UTF-8")
+            val url = URL("https://api.genius.com/search?q=$query")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.setRequestProperty("Authorization", "Bearer $accessToken")
+            connection.connectTimeout = 5000
+            connection.readTimeout = 5000
+
+            if (connection.responseCode != 200) return null
+            
+            val response = connection.inputStream.bufferedReader().readText()
+            val json = JSONObject(response)
+            val hits = json.getJSONObject("response").getJSONArray("hits")
+            if (hits.length() == 0) return null
+            
+            // Getting the first hit URL - In a real scenario, you'd scrape this URL.
+            // Since we can't scrape easily without Jsoup, we'll just log it.
+            val songPath = hits.getJSONObject(0).getJSONObject("result").getString("url")
+            Timber.d("Genius URL found: $songPath")
+            
+            null // Fallback to other sources since we can't scrape without extra libs
+        } catch (e: Exception) {
+            null
+        }
     }
 
     // ==========================================
@@ -61,7 +98,7 @@ class LyricRepository {
 
             parseLrc(synced)
         } catch (e: Exception) {
-            Log.e("LyricRepo", "Error fetching synced lyric from LRCLIB", e)
+            Timber.e(e, "Error fetching synced lyric from LRCLIB")
             null
         }
     }
@@ -83,7 +120,7 @@ class LyricRepository {
 
             jsonArray.getJSONObject(0).optString("plainLyrics").takeIf { it.isNotBlank() }
         } catch (e: Exception) {
-            Log.e("LyricRepo", "Error fetching plain lyric from LRCLIB", e)
+            Timber.e(e, "Error fetching plain lyric from LRCLIB")
             null
         }
     }
@@ -120,7 +157,7 @@ class LyricRepository {
             }
             result.ifEmpty { null }
         } catch (e: Exception) {
-            Log.e("LyricRepo", "Error fetching synced lyric from lrcmux", e)
+            Timber.e(e, "Error fetching synced lyric from lrcmux")
             null
         }
     }
@@ -140,7 +177,7 @@ class LyricRepository {
 
             connection.inputStream.bufferedReader().readText().takeIf { it.isNotBlank() }
         } catch (e: Exception) {
-            Log.e("LyricRepo", "Error fetching plain lyric from lrcmux", e)
+            Timber.e(e, "Error fetching plain lyric from lrcmux")
             null
         }
     }
@@ -163,7 +200,7 @@ class LyricRepository {
             val response = connection.inputStream.bufferedReader().readText()
             JSONObject(response).optString("lyrics").takeIf { it.isNotBlank() }
         } catch (e: Exception) {
-            Log.e("LyricRepo", "Error fetching from SomeRandomAPI", e)
+            Timber.e(e, "Error fetching from SomeRandomAPI")
             null
         }
     }
@@ -186,7 +223,7 @@ class LyricRepository {
             val response = connection.inputStream.bufferedReader().readText()
             JSONObject(response).optString("lyrics").takeIf { it.isNotBlank() }
         } catch (e: Exception) {
-            Log.e("LyricRepo", "Error fetching from lyrics.ovh", e)
+            Timber.e(e, "Error fetching from lyrics.ovh")
             null
         }
     }

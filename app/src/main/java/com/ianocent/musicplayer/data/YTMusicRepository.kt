@@ -1,7 +1,7 @@
 package com.ianocent.musicplayer.data
 
 import android.net.Uri
-import android.util.Log
+import timber.log.Timber
 import com.zemer.cipher.CipherDeobfuscator
 import com.zemer.cipher.potoken.PoTokenGenerator
 import kotlinx.coroutines.Dispatchers
@@ -116,7 +116,7 @@ class YTMusicRepository(context: Context) {
     ): String? {
         try {
             val url = URL("$BASE/$endpoint?key=$apiKey&prettyPrint=false")
-            Log.d("YTMusicRepo", "POST $endpoint")
+            Timber.d("YTMusicRepo POST $endpoint")
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.doOutput = true
@@ -131,15 +131,15 @@ class YTMusicRepository(context: Context) {
             conn.outputStream.use { it.write(bytes) }
 
             val code = conn.responseCode
-            Log.d("YTMusicRepo", "POST $endpoint -> $code")
+            Timber.d("YTMusicRepo POST $endpoint -> $code")
             if (code != 200) {
                 val errBody = try { conn.errorStream?.bufferedReader()?.readText()?.take(200) } catch (_: Exception) { null }
-                Log.w("YTMusicRepo", "InnerTube $endpoint -> $code: $errBody")
+                Timber.w("YTMusicRepo InnerTube $endpoint -> $code: $errBody")
                 return null
             }
             return conn.inputStream.bufferedReader().readText()
         } catch (e: Exception) {
-            Log.w("YTMusicRepo", "InnerTube $endpoint: ${e.message}")
+            Timber.w("YTMusicRepo InnerTube $endpoint: ${e.message}")
             return null
         }
     }
@@ -161,7 +161,7 @@ class YTMusicRepository(context: Context) {
                 return CipherDeobfuscator.transformNParamInUrl(deciphered)
             }
         } catch (e: Exception) {
-            Log.w("YTMusicRepo", "CipherDeobfuscator failed for $videoId: ${e.message}")
+            Timber.w("YTMusicRepo CipherDeobfuscator failed for $videoId: ${e.message}")
         }
 
         // Legacy fallback (pre-cipher-rotation era; kept as a last resort, rarely works anymore).
@@ -233,7 +233,7 @@ class YTMusicRepository(context: Context) {
             if (result.length() > 0) return result
         }
 
-        Log.w("YTMusicRepo", "No known renderer found. Top keys: ${contents?.keys()?.asSequence()?.take(3)?.joinToString()}")
+        Timber.w("YTMusicRepo No known renderer found. Top keys: ${contents?.keys()?.asSequence()?.take(3)?.joinToString()}")
         return JSONArray()
     }
 
@@ -258,7 +258,7 @@ class YTMusicRepository(context: Context) {
     private fun parseTitle(item: JSONObject): String {
         val flexCols = item.optJSONArray("flexColumns")
         if (flexCols == null) {
-            Log.w("YTMusicRepo", "parseTitle: no flexColumns. Item keys: ${item.keys().asSequence().take(5).joinToString()}")
+            Timber.w("YTMusicRepo parseTitle: no flexColumns. Item keys: ${item.keys().asSequence().take(5).joinToString()}")
             return "Unknown Title"
         }
         val col = flexCols.optJSONObject(0)
@@ -268,7 +268,7 @@ class YTMusicRepository(context: Context) {
 
         val runs = col.optJSONArray("runs")
         if (runs == null) {
-            Log.w("YTMusicRepo", "parseTitle: no runs. col keys: ${col.keys().asSequence().joinToString()}")
+            Timber.w("YTMusicRepo parseTitle: no runs. col keys: ${col.keys().asSequence().joinToString()}")
             return "Unknown Title"
         }
         val sb = StringBuilder()
@@ -391,12 +391,12 @@ class YTMusicRepository(context: Context) {
                     if (!type.startsWith("audio/")) continue
                     val audioUrl = fmt.optString("url", null)
                     if (!audioUrl.isNullOrBlank()) {
-                        Log.d("YTMusicRepo", "Invidious $instance -> audio for $videoId")
+                        Timber.d("YTMusicRepo Invidious $instance -> audio for $videoId")
                         return audioUrl
                     }
                 }
             } catch (e: Exception) {
-                Log.w("YTMusicRepo", "Invidious $instance failed: ${e.message}")
+                Timber.w("YTMusicRepo Invidious $instance failed: ${e.message}")
             }
         }
         return null
@@ -425,7 +425,7 @@ class YTMusicRepository(context: Context) {
                     playerRequestPoToken = result?.playerRequestPoToken
                     streamingDataPoToken = result?.streamingDataPoToken
                 } catch (e: Exception) {
-                    Log.w("YTMusicRepo", "PoToken generation failed for $videoId: ${e.message}")
+                    Timber.w("YTMusicRepo PoToken generation failed for $videoId: ${e.message}")
                 }
             }
         }
@@ -452,7 +452,7 @@ class YTMusicRepository(context: Context) {
         val playability = json.optJSONObject("playabilityStatus")
         val status = playability?.optString("status", "OK")
         if (status != "OK") {
-            Log.w("YTMusicRepo", "InnerTube player $videoId: $status - ${playability?.optString("reason")}")
+            Timber.w("YTMusicRepo InnerTube player $videoId: $status - ${playability?.optString("reason")}")
             return null
         }
 
@@ -554,7 +554,7 @@ class YTMusicRepository(context: Context) {
             }
             val raw = post("search", body)
             if (raw == null) {
-                Log.e("YTMusicRepo", "InnerTube search POST returned null")
+                Timber.e("YTMusicRepo InnerTube search POST returned null")
                 return@withContext StreamSearchResult.ParsingFailed
             }
 
@@ -564,7 +564,7 @@ class YTMusicRepository(context: Context) {
             // Kalau top-level "contents" sendiri gak ada, itu jelas bukan "hasil kosong" biasa --
             // response-nya berubah bentuk total.
             if (!response.has("contents")) {
-                Log.w("YTMusicRepo", "Response missing 'contents' key entirely - structure likely changed")
+                Timber.w("YTMusicRepo Response missing 'contents' key entirely - structure likely changed")
                 return@withContext StreamSearchResult.ParsingFailed
             }
 
@@ -574,7 +574,7 @@ class YTMusicRepository(context: Context) {
                 // "contents" ADA tapi walkMusicContents() gak nemu satupun renderer yang dikenal
                 // (musicShelfRenderer/musicCardShelfRenderer/dst) -> kemungkinan besar YouTube
                 // ganti nama/skema renderer-nya, bukan sekadar "gak ada lagu yang cocok".
-                Log.w("YTMusicRepo", "Zero items parsed from non-empty contents - possible structure change")
+                Timber.w("YTMusicRepo Zero items parsed from non-empty contents - possible structure change")
                 return@withContext StreamSearchResult.ParsingFailed
             }
 
@@ -597,7 +597,7 @@ class YTMusicRepository(context: Context) {
                     results.add(song)
                     onPartial(listOf(song))
                 } catch (e: Exception) {
-                    Log.w("YTMusicRepo", "Parse item failed: ${e.message}")
+                    Timber.w("YTMusicRepo Parse item failed: ${e.message}")
                 }
             }
 
@@ -605,7 +605,7 @@ class YTMusicRepository(context: Context) {
             // itu juga sinyal kuat field internal item berubah struktur.
             if (results.isEmpty()) StreamSearchResult.ParsingFailed else StreamSearchResult.Success(results)
         } catch (e: Exception) {
-            Log.e("YTMusicRepo", "Search gagal: ${e.message}", e)
+            Timber.e(e, "YTMusicRepo Search gagal: ${e.message}")
             StreamSearchResult.ParsingFailed
         }
     }
@@ -657,13 +657,13 @@ class YTMusicRepository(context: Context) {
                     results.add(song)
                     onPartial(listOf(song))
                 } catch (e: Exception) {
-                    Log.w("YTMusicRepo", "Parse regular item failed: ${e.message}")
+                    Timber.w("YTMusicRepo Parse regular item failed: ${e.message}")
                 }
             }
 
             if (results.isEmpty()) StreamSearchResult.ParsingFailed else StreamSearchResult.Success(results)
         } catch (e: Exception) {
-            Log.e("YTMusicRepo", "Regular YT search failed: ${e.message}", e)
+            Timber.e(e, "YTMusicRepo Regular YT search failed: ${e.message}")
             StreamSearchResult.ParsingFailed
         }
     }
@@ -815,7 +815,7 @@ class YTMusicRepository(context: Context) {
 
         // 1. In-memory cache dulu (tercepat, hidup selama proses app masih jalan)
         streamUrlCache[videoId]?.let {
-            Log.d("YTMusicRepo", "Memory cache hit for: ${song.title}")
+            Timber.d("YTMusicRepo Memory cache hit for: ${song.title}")
             return@withContext it
         }
 
@@ -823,15 +823,15 @@ class YTMusicRepository(context: Context) {
         try {
             val cached = streamCacheDao.getById(videoId)
             if (cached != null && cached.expiresAtMs > System.currentTimeMillis()) {
-                Log.d("YTMusicRepo", "DB cache hit for: ${song.title}")
+                Timber.d("YTMusicRepo DB cache hit for: ${song.title}")
                 streamUrlCache[videoId] = cached.url
                 return@withContext cached.url
             }
         } catch (e: Exception) {
-            Log.w("YTMusicRepo", "Cache read failed: ${e.message}")
+            Timber.w("YTMusicRepo Cache read failed: ${e.message}")
         }
 
-        Log.d("YTMusicRepo", "Resolving stream URL for: ${song.title}")
+        Timber.d("YTMusicRepo Resolving stream URL for: ${song.title}")
         try {
             playerSemaphore.acquire()
             var audioUrl = fetchViaInvidious(videoId)
@@ -851,11 +851,11 @@ class YTMusicRepository(context: Context) {
                         )
                     )
                 } catch (e: Exception) {
-                    Log.w("YTMusicRepo", "Cache write failed: ${e.message}")
+                    Timber.w("YTMusicRepo Cache write failed: ${e.message}")
                 }
-                Log.d("YTMusicRepo", "Resolved stream: ${song.title} - ${song.artist}")
+                Timber.d("YTMusicRepo Resolved stream: ${song.title} - ${song.artist}")
             } else {
-                Log.w("YTMusicRepo", "Failed to resolve stream for: ${song.title}")
+                Timber.w("YTMusicRepo Failed to resolve stream for: ${song.title}")
             }
             return@withContext audioUrl
         } finally {

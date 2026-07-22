@@ -1,19 +1,24 @@
 package com.ianocent.musicplayer.ui
 
+import android.Manifest
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
 import android.media.AudioRecord
 import android.media.AudioFormat
+import android.media.AudioPlaybackCaptureConfiguration
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.media.MediaRecorder
 import android.media.audiofx.Visualizer
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.provider.MediaStore
-import android.util.Log
+import timber.log.Timber
 import android.view.Surface
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -42,6 +47,7 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresPermission
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -58,16 +64,15 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.runtime.withFrameNanos
+import java.io.File
 import java.nio.ByteBuffer
 import kotlin.math.sqrt
-
-private const val TAG = "WaveRecord"
 
 // ---------- SPECTRUM ----------
 
 @Composable
 fun rememberMagnitudeState(audioSessionId: Int, isPlaying: Boolean): State<FloatArray> {
-    val barCount = 14
+    val barCount = 6
     val mags = remember { mutableStateOf(FloatArray(barCount) { 0f }) }
 
     DisposableEffect(audioSessionId, isPlaying) {
@@ -104,8 +109,8 @@ fun rememberMagnitudeState(audioSessionId: Int, isPlaying: Boolean): State<Float
                                     
                                     // Balanced sensitivity for minimalist 14 bars
                                     val sensitivity = when {
-                                        i < 2 -> 0.5f  // Kick/Bass
-                                        i < 8 -> 1.5f  // Mids/Vocal
+                                        i < 4 -> 1.0f  // Kick/Bass
+                                        i < 10 -> 3.0f  // Mids/Vocal
                                         else -> 2.0f + (p.toFloat() * 15.0f) // Treble boost
                                     }
                                     
@@ -119,7 +124,7 @@ fun rememberMagnitudeState(audioSessionId: Int, isPlaying: Boolean): State<Float
                                     nextMags[i] = if (target > prev) {
                                         target // INSTANT attack for beat sync
                                     } else {
-                                        prev * 0.82f // Clean, fast decay
+                                        prev * 1.0f // Clean, fast decay
                                     }
                                 }
                                 mags.value = nextMags
@@ -130,7 +135,7 @@ fun rememberMagnitudeState(audioSessionId: Int, isPlaying: Boolean): State<Float
                     enabled = isPlaying
                 }
             }
-        } catch (e: Exception) { Log.w(TAG, "Visualizer init failed: session=$audioSessionId err=$e") }
+        } catch (e: Exception) { Timber.w("Visualizer init failed: session=$audioSessionId err=$e") }
         onDispose { try { visualizer?.run { enabled = false; release() } } catch (_: Exception) {} }
     }
 
@@ -303,8 +308,9 @@ private class AvRecorder(
             start()
         }
         true
-    } catch (e: Exception) { Log.e(TAG, "video codec start failed", e); false }
+    } catch (e: Exception) { Timber.e(e, "video codec start failed"); false }
 
+    @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     fun startAudio(): Boolean = try {
         audioCodec = MediaCodec.createEncoderByType("audio/mp4a-latm").apply {
             configure(MediaFormat.createAudioFormat("audio/mp4a-latm", sampleRate, 2).apply {
@@ -313,11 +319,11 @@ private class AvRecorder(
             }, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             start()
         }
-        if (useSystemAudio && mediaProjection != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-            val audioPlaybackConfig = android.media.AudioPlaybackCaptureConfiguration.Builder(mediaProjection!!)
-                .addMatchingUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                .addMatchingUsage(android.media.AudioAttributes.USAGE_GAME)
-                .addMatchingUsage(android.media.AudioAttributes.USAGE_UNKNOWN)
+        if (useSystemAudio && mediaProjection != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val audioPlaybackConfig = AudioPlaybackCaptureConfiguration.Builder(mediaProjection!!)
+                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
                 .build()
             val af = AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                 .setSampleRate(sampleRate).setChannelMask(AudioFormat.CHANNEL_IN_STEREO).build()
@@ -330,11 +336,11 @@ private class AvRecorder(
                 .setSampleRate(sampleRate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build()
             val bs = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT) * 4
             audioRecord = AudioRecord.Builder()
-                .setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+                .setAudioSource(MediaRecorder.AudioSource.MIC)
                 .setAudioFormat(af).setBufferSizeInBytes(bs).build().apply { startRecording() }
         }
         true
-    } catch (e: Exception) { Log.e(TAG, "audio start failed", e); false }
+    } catch (e: Exception) { Timber.e(e, "audio start failed"); false }
 
     fun startAudioFeed() {
         audioFeedJob = audioFeedScope.launch {
@@ -508,7 +514,7 @@ fun WaveRecordSheet(
             val mgr = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             projLauncher.launch(mgr.createScreenCaptureIntent())
         } else {
-            Log.w(TAG, "RECORD_AUDIO denied, recording without system audio")
+            Timber.w("RECORD_AUDIO denied, recording without system audio")
         }
     }
 
@@ -516,15 +522,18 @@ fun WaveRecordSheet(
     // (BUKAN LaunchedEffect keyed ke isRecording), supaya coroutine-nya gak kena cancel
     // saat isRecording berubah jadi false pas tombol Stop diklik.
     fun startRecording() {
-        coroutineScope.launch {
+        coroutineScope.launch @androidx.annotation.RequiresPermission(android.Manifest.permission.RECORD_AUDIO) {
+            // Start service only AFTER we have projection
+            ContextCompat.startForegroundService(context, Intent(context, WaveProjectionService::class.java))
+
             val tempPath = context.cacheDir.resolve("wave_temp.mp4").absolutePath
             val cardW = with(density) { 360.dp.toPx().toInt().coerceAtMost(720) }
             val cardH = with(density) { 480.dp.toPx().toInt().coerceAtMost(960) }
             val bps = (4_000_000L * cardW * cardH / (360 * 480)).toInt().coerceIn(3_000_000, 10_000_000)
-            val rec = AvRecorder(cardW, cardH, bitRate = bps, frameRate = 30, mediaProjection = mediaProjection, useSystemAudio = true)
+            val rec = AvRecorder(cardW, cardH, bitRate = bps, frameRate = 60, mediaProjection = mediaProjection, useSystemAudio = true)
 
             if (!rec.startVideo()) { isRecording = false; return@launch }
-            if (!rec.startAudio()) { Log.w(TAG, "audio start failed") }
+            if (!rec.startAudio()) { Timber.w("audio start failed") }
 
             val startNs = System.nanoTime()
             rec.setStartTime(startNs)
@@ -539,7 +548,7 @@ fun WaveRecordSheet(
             withFrameNanos { }
 
             var lastNs = 0L
-            val intervalNs = 1_000_000_000L / 30 // 30 FPS
+            val intervalNs = 1_000_000_000L / 60 // 30 FPS
             while (isActive && isRecording) {
                 val frameNs = withFrameNanos { it }
                 if (frameNs - lastNs >= intervalNs) {
@@ -560,10 +569,10 @@ fun WaveRecordSheet(
             // Save to gallery
             withContext(Dispatchers.IO) {
                 try {
-                    val f = java.io.File(tempPath)
-                    Log.d(TAG, "save: file exists=${f.exists()} size=${f.length()} muxerStarted=$muxerWasStarted")
+                    val f = File(tempPath)
+                    Timber.d("save: file exists=${f.exists()} size=${f.length()} muxerStarted=$muxerWasStarted")
                     if (!f.exists() || f.length() == 0L) {
-                        Log.e(TAG, "save: empty file, skipping")
+                        Timber.e("save: empty file, skipping")
                         return@withContext
                     }
                     val filename = "wave_${System.currentTimeMillis()}.mp4"
@@ -573,16 +582,16 @@ fun WaveRecordSheet(
                         put(MediaStore.Video.Media.RELATIVE_PATH, "Pictures/IanPlayer")
                     }
                     val uri = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, cv)
-                    Log.d(TAG, "save: uri=$uri")
+                    Timber.d("save: uri=$uri")
                     uri?.let {
                         context.contentResolver.openOutputStream(it)?.use { out ->
                             f.inputStream().use { inp -> inp.copyTo(out) }
                         }
-                        Log.d(TAG, "save: copied to media store")
+                        Timber.d("save: copied to media store")
                     }
                     f.delete()
-                    Log.d(TAG, "save: done")
-                } catch (e: Exception) { Log.e(TAG, "save failed", e) }
+                    Timber.d("save: done")
+                } catch (e: Exception) { Timber.e(e, "save failed") }
             }
         }
     }
@@ -612,7 +621,6 @@ fun WaveRecordSheet(
                 if (!isRecording) {
                     Button(
                         onClick = {
-                            ContextCompat.startForegroundService(context, Intent(context, WaveProjectionService::class.java))
                             val hasAudioPerm = ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) ==
                                     android.content.pm.PackageManager.PERMISSION_GRANTED
                             when {
@@ -646,7 +654,7 @@ fun WaveRecordSheet(
                     OutlinedButton(onClick = {
                         coroutineScope.launch {
                             try { saveBitmapToGallery(context, graphicsLayer.toImageBitmap().asAndroidBitmap()) }
-                            catch (e: Exception) { Log.w(TAG, "img fail", e) }
+                            catch (e: Exception) { Timber.w(e, "img fail") }
                         }
                     }, modifier = Modifier.weight(1f)) { Text("Save to Gallery") }
                 }

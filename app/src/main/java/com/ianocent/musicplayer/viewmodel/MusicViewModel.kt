@@ -3,13 +3,21 @@ package com.ianocent.musicplayer.viewmodel
 import android.app.Application
 import android.content.BroadcastReceiver
 import android.net.Uri
-import android.util.Log
+import timber.log.Timber
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import com.ianocent.musicplayer.data.AlbumArtLoader
+import com.ianocent.musicplayer.data.AudioFormat
+import com.ianocent.musicplayer.data.LyricLine
 import com.ianocent.musicplayer.data.LyricRepository
+import com.ianocent.musicplayer.data.MonthlyRecap
 import com.ianocent.musicplayer.data.MusicRepository
 import com.ianocent.musicplayer.data.Song
+import com.ianocent.musicplayer.player.IanVoiceAssistantService
+import com.ianocent.musicplayer.player.PlaybackService
 import com.ianocent.musicplayer.player.PlayerManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,8 +40,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import android.content.IntentSender
+import android.app.RecoverableSecurityException
+
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val ytMusicRepository = YTMusicRepository(application.applicationContext)
+    
+    private val _deleteIntentSender = MutableSharedFlow<IntentSender>()
+    val deleteIntentSender: SharedFlow<IntentSender> = _deleteIntentSender
+    
+    private val _editIntentSender = MutableSharedFlow<IntentSender>()
+    val editIntentSender: SharedFlow<IntentSender> = _editIntentSender
+
+    data class PendingUpdate(val id: Long, val title: String, val artist: String, val uri: Uri?)
+    var pendingUpdateInfo: PendingUpdate? = null
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         if (throwable !is CancellationException) {
@@ -108,7 +130,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     _genreSongs.value = current
                 }
             } catch (e: Exception) {
-                Log.e("MusicViewModel", "fetch genre ${genreName} failed", e)
+                Timber.e(e, "MusicViewModel fetch genre ${genreName} failed")
             } finally {
                 _isGenreLoading.value = false
             }
@@ -137,11 +159,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     val merged = (_trendingSongs.value + newSongs).distinctBy { it.id }
                     _trendingSongs.value = merged
                 }
-                if (result !is com.ianocent.musicplayer.data.StreamSearchResult.Success) {
-                    Log.w("MusicViewModel", "Trending fetch: $result")
+                if (result !is StreamSearchResult.Success) {
+                    Timber.w("MusicViewModel Trending fetch: $result")
                 }
             } catch (e: Exception) {
-                Log.e("MusicViewModel", "fetchTrending failed", e)
+                Timber.e(e, "MusicViewModel fetchTrending failed")
             } finally {
                 _isTrendingLoading.value = false
             }
@@ -179,7 +201,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                             _streamSongs.value = streamList
                         }
                     } catch (e: Exception) {
-                        Log.e("MusicViewModel", "preResolveTrending failed for ${song.title}", e)
+                        Timber.e(e, "MusicViewModel preResolveTrending failed for ${song.title}")
                     }
                 }
             }
@@ -206,7 +228,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                             _streamSongs.value = list
                         }
                     } catch (e: Exception) {
-                        Log.e("MusicViewModel", "preResolveSearch failed for ${song.title}", e)
+                        Timber.e(e, "MusicViewModel preResolveSearch failed for ${song.title}")
                     }
                 }
             }
@@ -361,7 +383,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
                     val monthName = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(now))
 
-                    com.ianocent.musicplayer.data.MonthlyRecap(
+                    MonthlyRecap(
                         monthLabel = monthName,
                         totalPlays = totalPlays,
                         totalMinutes = totalMinutes,
@@ -395,7 +417,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val mockSongs = _songs.value.take(5).ifEmpty {
                 listOf(Song(0, "Sample Song", "Sample Artist", 240000, Uri.EMPTY))
             }
-            _monthlyRecap.value = com.ianocent.musicplayer.data.MonthlyRecap(
+            _monthlyRecap.value = MonthlyRecap(
                 monthLabel = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(now)),
                 totalPlays = (history.size).coerceAtLeast(5),
                 totalMinutes = 30L,
@@ -472,7 +494,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         maxOf(_streamSongs.value.size + newSongs.size, streamPageSize)
                     )
                 }
-                if (result is com.ianocent.musicplayer.data.StreamSearchResult.ParsingFailed) {
+                if (result is StreamSearchResult.ParsingFailed) {
                     _streamParsingFailed.value = true
                 } else {
                     // Pre-resolve search results in background
@@ -562,11 +584,58 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             // data corrupt, abaikan
         }
     }
-    private val _isDarkMode = MutableStateFlow(true)
+    private val _isDarkMode = MutableStateFlow(prefs.getBoolean("is_dark_mode", true))
     val isDarkMode: StateFlow<Boolean> = _isDarkMode
+
+    private val _isVoiceAssistantEnabled = MutableStateFlow(prefs.getBoolean("voice_assistant_enabled", false))
+    val isVoiceAssistantEnabled: StateFlow<Boolean> = _isVoiceAssistantEnabled
+
+    fun toggleVoiceAssistant() {
+        val newValue = !_isVoiceAssistantEnabled.value
+        _isVoiceAssistantEnabled.value = newValue
+        prefs.edit().putBoolean("voice_assistant_enabled", newValue).apply()
+        
+        if (newValue) {
+            IanVoiceAssistantService.start(appContext)
+        } else {
+            IanVoiceAssistantService.stop(appContext)
+        }
+    }
 
     fun toggleDarkMode() {
         _isDarkMode.value = !_isDarkMode.value
+        prefs.edit().putBoolean("is_dark_mode", _isDarkMode.value).apply()
+    }
+
+    private val _isPillAtBottom = MutableStateFlow(prefs.getBoolean("is_pill_at_bottom", false))
+    val isPillAtBottom: StateFlow<Boolean> = _isPillAtBottom
+
+    fun setPillAtBottom(atBottom: Boolean) {
+        _isPillAtBottom.value = atBottom
+        prefs.edit().putBoolean("is_pill_at_bottom", atBottom).apply()
+    }
+
+    private val _miniLayoutIndex = MutableStateFlow(prefs.getInt("mini_layout_index", 0))
+    val miniLayoutIndex: StateFlow<Int> = _miniLayoutIndex
+
+    fun setMiniLayoutIndex(index: Int) {
+        _miniLayoutIndex.value = index
+        prefs.edit().putInt("mini_layout_index", index).apply()
+    }
+
+    private val _showListeningPill = MutableStateFlow(false)
+    val showListeningPill: StateFlow<Boolean> = _showListeningPill
+
+    private var hidePillJob: Job? = null
+
+    private fun startHidePillTimer() {
+        hidePillJob?.cancel()
+        hidePillJob = viewModelScope.launch {
+            delay(60_000) // 1 minute
+            if (!_isPlaying.value) {
+                _showListeningPill.value = false
+            }
+        }
     }
 
     fun savePlaylistOrder(playlist: Playlist, newSongIds: List<Long>) {
@@ -719,8 +788,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _isDownloading = MutableStateFlow(false)
     val isDownloading: StateFlow<Boolean> = _isDownloading
 
-    private val _monthlyRecap = MutableStateFlow<com.ianocent.musicplayer.data.MonthlyRecap?>(null)
-    val monthlyRecap: StateFlow<com.ianocent.musicplayer.data.MonthlyRecap?> = _monthlyRecap
+    private val _monthlyRecap = MutableStateFlow<MonthlyRecap?>(null)
+    val monthlyRecap: StateFlow<MonthlyRecap?> = _monthlyRecap
 
     private val _showRecapBanner = MutableStateFlow(false)
     val showRecapBanner: StateFlow<Boolean> = _showRecapBanner
@@ -755,7 +824,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         android.graphics.BitmapFactory.decodeStream(conn.inputStream)
                     } catch (e: Exception) { null }
                 } else {
-                    com.ianocent.musicplayer.data.AlbumArtLoader.getEmbeddedArt(appContext, song.uri)
+                    AlbumArtLoader.getEmbeddedArt(appContext, song.uri)
                 }
             }
             artCache[song.id] = art
@@ -797,7 +866,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         android.graphics.BitmapFactory.decodeStream(conn.inputStream)
                     } catch (e: Exception) { null }
                 } else {
-                    com.ianocent.musicplayer.data.AlbumArtLoader.getEmbeddedArt(appContext, song.uri, targetSize = 800)
+                    AlbumArtLoader.getEmbeddedArt(appContext, song.uri, targetSize = 800)
                 }
             }
             highResArtCache[cacheKey] = art
@@ -822,7 +891,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 ytMusicRepository.cleanupExpiredCache()
             } catch (e: Exception) {
-                Log.w("MusicViewModel", "cleanupExpiredCache failed", e)
+                Timber.w(e, "MusicViewModel cleanupExpiredCache failed")
             }
         }
         fetchTrending()
@@ -834,8 +903,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             player?.addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     _isPlaying.value = isPlaying
+                    if (isPlaying) {
+                        _showListeningPill.value = true
+                        hidePillJob?.cancel()
+                    } else {
+                        startHidePillTimer()
+                    }
                 }
-                override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                     _duration.value = playerManager.getDuration()
                     syncStateFromPlayer()
                     
@@ -863,12 +938,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                             player?.prepare()
                             player?.play()
                         } catch (e: Exception) {
-                            Log.w("MusicViewModel", "player retry failed, skip to next", e)
+                            Timber.w(e, "MusicViewModel player retry failed, skip to next")
                             playNext()
                         }
                     }
                 }
-                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                override fun onPlayerError(error: PlaybackException) {
                     error.printStackTrace()
                     _isPlaying.value = false
                     
@@ -887,6 +962,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 if (mediaId != null) {
                     pendingMediaId = mediaId
                     tryRestoreCurrentSong()
+                    if (player.isPlaying) {
+                        _showListeningPill.value = true
+                    } else {
+                        startHidePillTimer()
+                    }
                 }
             }
         }
@@ -911,8 +991,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     
                     // Fallback to static ID if needed
-                    if (_audioSessionId.value == 0 && com.ianocent.musicplayer.player.PlaybackService.audioSessionId != 0) {
-                        _audioSessionId.value = com.ianocent.musicplayer.player.PlaybackService.audioSessionId
+                    if (_audioSessionId.value == 0 && PlaybackService.audioSessionId != 0) {
+                        _audioSessionId.value = PlaybackService.audioSessionId
                     }
 
                     val remaining = _duration.value - _currentPosition.value
@@ -920,7 +1000,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         prefetchNextIfNeeded()
                     }
                 } catch (e: Exception) {
-                    Log.w("MusicViewModel", "position polling error", e)
+                    Timber.w(e, "MusicViewModel position polling error")
                 }
                 delay(100)
             }
@@ -937,7 +1017,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             val resolvedUrl = withContext(Dispatchers.IO) {
-                try { ytMusicRepository.resolveStreamUrl(next) } catch (e: Exception) { Log.w("MusicViewModel", "prefetchNext failed", e); null }
+                try { ytMusicRepository.resolveStreamUrl(next) } catch (e: Exception) { Timber.w(e, "MusicViewModel prefetchNext failed"); null }
             }
             prefetchingIds.remove(next.id)
             if (resolvedUrl == null) return@launch
@@ -986,7 +1066,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             loadArt(song)
             loadLyric(song)
         } catch (e: Exception) {
-            Log.w("MusicViewModel", "syncStateFromPlayer failed", e)
+            Timber.w(e, "MusicViewModel syncStateFromPlayer failed")
         }
     }
 
@@ -995,7 +1075,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         try {
             tryRestoreCurrentSongInternal()
         } catch (e: Exception) {
-            Log.w("MusicViewModel", "tryRestoreCurrentSong failed", e)
+            Timber.w(e, "MusicViewModel tryRestoreCurrentSong failed")
         }
     }
 
@@ -1134,6 +1214,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         if (index == -1) return
 
         viewModelScope.launch {
+            _showListeningPill.value = true
+            hidePillJob?.cancel()
+            
             // Smooth Crossfade out
             if (playerManager.player?.isPlaying == true) {
                 fadeVolume(1f, 0f, 150)
@@ -1179,6 +1262,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private fun resolveAndPlayStream(song: Song) {
         val savedIndex = _queue.value.indexOf(song)
         viewModelScope.launch {
+            _showListeningPill.value = true
+            hidePillJob?.cancel()
+
             // Fade out if playing
             if (playerManager.player?.isPlaying == true) {
                 fadeVolume(1f, 0f, 150)
@@ -1267,20 +1353,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         android.graphics.BitmapFactory.decodeStream(conn.inputStream)
                     } catch (e: Exception) { null }
                 } else {
-                    com.ianocent.musicplayer.data.AlbumArtLoader.getEmbeddedArt(appContext, song.uri, targetSize = 400)
+                    AlbumArtLoader.getEmbeddedArt(appContext, song.uri, targetSize = 400)
                 }
             }
             _albumArt.value = bitmap
             _ambientColor.value = bitmap?.let {
-                com.ianocent.musicplayer.data.AlbumArtLoader.extractDominantColor(it)
+                AlbumArtLoader.extractDominantColor(it)
             } ?: Color(0xFF333333)
             _paletteColors.value = bitmap?.let {
-                com.ianocent.musicplayer.data.AlbumArtLoader.extractPaletteColors(it)
+                AlbumArtLoader.extractPaletteColors(it)
             } ?: emptyList()
         }
     }
-    private val _syncedLyric = MutableStateFlow<List<com.ianocent.musicplayer.data.LyricLine>?>(null)
-    val syncedLyric: StateFlow<List<com.ianocent.musicplayer.data.LyricLine>?> = _syncedLyric
+    private val _syncedLyric = MutableStateFlow<List<LyricLine>?>(null)
+    val syncedLyric: StateFlow<List<LyricLine>?> = _syncedLyric
 
     private val _plainLyric = MutableStateFlow<String?>(null)
     val plainLyric: StateFlow<String?> = _plainLyric
@@ -1396,9 +1482,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun getAudioFormats(song: Song, onResult: (List<com.ianocent.musicplayer.data.AudioFormat>) -> Unit) {
+    fun getAudioFormats(song: Song, onResult: (List<AudioFormat>) -> Unit) {
         val remoteId = song.remoteId ?: run {
-            onResult(listOf(com.ianocent.musicplayer.data.AudioFormat(
+            onResult(listOf(AudioFormat(
                 url = song.uri.toString(),
                 mimeType = "audio/mpeg",
                 bitrate = 0,
@@ -1418,7 +1504,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 formats = ytMusicRepository.getAudioFormats(remoteId)
 
                 if (formats.isEmpty()) {
-                    onResult(listOf(com.ianocent.musicplayer.data.AudioFormat(
+                    onResult(listOf(AudioFormat(
                         url = resolvedUrl ?: song.uri.toString(),
                         mimeType = "audio/mpeg",
                         bitrate = 0,
@@ -1434,7 +1520,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     @android.annotation.SuppressLint("UnspecifiedRegisterReceiverFlag")
-    fun downloadSong(song: Song, format: com.ianocent.musicplayer.data.AudioFormat) {
+    fun downloadSong(song: Song, format: AudioFormat) {
         viewModelScope.launch {
             // 1. Resolve URL if it's a placeholder
             val realUrl = if (format.url.startsWith("ytmusic://placeholder/")) {
@@ -1446,7 +1532,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             if (realUrl == null || !realUrl.startsWith("http")) {
-                Log.e("MusicViewModel", "Could not resolve download URL for: ${song.title}")
+                Timber.e("MusicViewModel Could not resolve download URL for: ${song.title}")
                 withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(appContext, "Download failed: URL could not be resolved", android.widget.Toast.LENGTH_SHORT).show()
                 }
@@ -1519,6 +1605,24 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var deleteTimerJob: Job? = null
 
     fun deleteSong(song: Song) {
+        _lastDeletedSong.value = song
+        viewModelScope.launch {
+            try {
+                val success = withContext(Dispatchers.IO) { repository.deleteSong(song) }
+                if (success) {
+                    confirmDelete(song)
+                }
+            } catch (e: Exception) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q && e is RecoverableSecurityException) {
+                    _deleteIntentSender.emit(e.userAction.actionIntent.intentSender)
+                } else {
+                    Timber.e(e, "MusicViewModel delete failed")
+                }
+            }
+        }
+    }
+
+    fun confirmDelete(song: Song) {
         _songs.value = _songs.value.filter { it.id != song.id }
         _queue.value = _queue.value.filter { it.id != song.id }
         if (_currentSong.value?.id == song.id) {
@@ -1529,18 +1633,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             playlist.copy(songIds = playlist.songIds.filter { it != song.id }.toMutableList())
         }
         savePlaylistsToPrefs()
-        _lastDeletedSong.value = song
-
-        deleteTimerJob?.cancel()
-        deleteTimerJob = viewModelScope.launch {
-            delay(5000)
-            val s = _lastDeletedSong.value ?: return@launch
-            _lastDeletedSong.value = null
-            withContext(Dispatchers.IO) {
-                try { repository.deleteSong(s) }
-                catch (e: Exception) { Log.e("MusicViewModel", "delete file failed", e) }
-            }
-        }
     }
 
     fun undoDelete() {
@@ -1551,20 +1643,74 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _queue.value = _queue.value + song
     }
 
-    fun updateSongInfo(songId: Long, newTitle: String, newArtist: String) {
+    fun updateSongInfo(songId: Long, newTitle: String, newArtist: String, newImageUri: Uri? = null) {
+        pendingUpdateInfo = PendingUpdate(songId, newTitle, newArtist, newImageUri)
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                repository.updateSongInfo(songId, newTitle, newArtist)
+            val song = _songs.value.find { it.id == songId } ?: return@launch
+            
+            try {
+                withContext(Dispatchers.IO) {
+                    var newBitmap: android.graphics.Bitmap? = null
+                    if (newImageUri != null) {
+                        try {
+                            val inputStream = appContext.contentResolver.openInputStream(newImageUri)
+                            newBitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+                            inputStream?.close()
+                        } catch (e: Exception) {
+                            Timber.e(e, "MusicViewModel Failed to load picked image")
+                        }
+                    }
+
+                    // 1. Update file metadata if possible
+                    val filePath = getFilePathFromUri(song.uri)
+                    if (filePath != null) {
+                        val updatedSong = song.copy(title = newTitle, artist = newArtist)
+                        com.ianocent.musicplayer.data.MetadataWriter.writeMetadata(appContext, filePath, updatedSong, newBitmap)
+                        
+                        // Trigger scan to update MediaStore from file tags
+                        android.media.MediaScannerConnection.scanFile(
+                            appContext,
+                            arrayOf(filePath),
+                            null,
+                            null
+                        )
+                    }
+                    
+                    // 2. Update MediaStore directly
+                    repository.updateSongInfo(songId, newTitle, newArtist)
+                }
+                
+                // 3. Update UI state
+                _songs.value = _songs.value.map {
+                    if (it.id == songId) it.copy(title = newTitle, artist = newArtist) else it
+                }
+                _queue.value = _queue.value.map {
+                    if (it.id == songId) it.copy(title = newTitle, artist = newArtist) else it
+                }
+                if (_currentSong.value?.id == songId) {
+                    _currentSong.value = _currentSong.value?.copy(title = newTitle, artist = newArtist)
+                }
+                
+                artCache.remove(songId)
+                highResArtCache.remove(-songId)
+                pendingUpdateInfo = null
+            } catch (e: Exception) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q && e is RecoverableSecurityException) {
+                    _editIntentSender.emit(e.userAction.actionIntent.intentSender)
+                } else {
+                    Timber.e(e, "MusicViewModel update failed")
+                }
             }
-            _songs.value = _songs.value.map {
-                if (it.id == songId) it.copy(title = newTitle, artist = newArtist) else it
-            }
-            _queue.value = _queue.value.map {
-                if (it.id == songId) it.copy(title = newTitle, artist = newArtist) else it
-            }
-            if (_currentSong.value?.id == songId) {
-                _currentSong.value = _currentSong.value?.copy(title = newTitle, artist = newArtist)
-            }
+        }
+    }
+
+    private fun getFilePathFromUri(uri: Uri): String? {
+        if (uri.scheme != "content") return uri.path
+        val projection = arrayOf(android.provider.MediaStore.Audio.Media.DATA)
+        return appContext.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getString(cursor.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media.DATA))
+            } else null
         }
     }
 }
