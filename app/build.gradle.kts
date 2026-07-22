@@ -5,9 +5,25 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+val ksProps = rootProject.file("keystore.properties").readLines()
+    .filter { it.contains("=") }
+    .associate {
+        val (k, v) = it.split("=", limit = 2)
+        k.trim() to v.trim()
+    }
+
 android {
     namespace = "com.ianocent.musicplayer"
     compileSdk = 36
+
+    signingConfigs {
+        create("release") {
+            storeFile = file(ksProps["storeFile"] ?: "")
+            storePassword = ksProps["storePassword"] ?: ""
+            keyAlias = ksProps["keyAlias"] ?: ""
+            keyPassword = ksProps["keyPassword"] ?: ""
+        }
+    }
 
     defaultConfig {
         applicationId = "com.ianocent.musicplayer"
@@ -21,6 +37,7 @@ android {
 
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
