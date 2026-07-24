@@ -83,6 +83,7 @@ import com.ianocent.musicplayer.data.Song
 import com.ianocent.musicplayer.data.ElementRect
 import com.ianocent.musicplayer.ui.AddSongsToPlaylistDialog
 import com.ianocent.musicplayer.ui.AlbumRow
+import com.ianocent.musicplayer.ui.ArtistRow
 import com.ianocent.musicplayer.ui.CreatePlaylistDialog
 import com.ianocent.musicplayer.ui.EditPlaylistDialog
 import com.ianocent.musicplayer.ui.NowPlayingScreen
@@ -491,6 +492,8 @@ fun ListingScreen(
     var editingPlaylist by remember { mutableStateOf<com.ianocent.musicplayer.data.Playlist?>(null) }
     var selectedPlaylistId by remember { mutableStateOf<Long?>(null) }
     var selectedAlbum by remember { mutableStateOf<String?>(null) }
+    var selectedArtist by remember { mutableStateOf<String?>(null) }
+    var showAlbumsArtists by remember { mutableStateOf(false) } // false=Albums, true=Artists
     val playlists by viewModel.playlists.collectAsState()
     val selectedPlaylist = remember(playlists, selectedPlaylistId) {
         playlists.find { it.id == selectedPlaylistId }
@@ -1248,15 +1251,30 @@ fun ListingScreen(
                                 ) { song, _ ->
                                     SwipeableSongRow(song, viewModel, customOnClick = {
                                         viewModel.setQueue(displaySongs, startSong = song)
-                                    }, adaptiveColor = adaptiveColor)
+                                    }, adaptiveColor = adaptiveColor,
+                                    onGoToArtist = { s ->
+                                        selectedArtist = s.artist
+                                        selectedAlbum = null
+                                        showAlbumsArtists = true
+                                        selectedTab = 1
+                                    },
+                                    onGoToAlbum = { s ->
+                                        selectedAlbum = s.album
+                                        selectedArtist = null
+                                        showAlbumsArtists = false
+                                        selectedTab = 1
+                                    })
                                 }
                             }
                         }
                     }
 
-                    1 -> { // ALBUMS
+                    1 -> { // ALBUMS / ARTISTS
                         val albumGroups = remember(songs) {
                             songs.groupBy { it.album }.entries.toList()
+                        }
+                        val artistGroups = remember(songs) {
+                            songs.groupBy { it.artist }.entries.toList()
                         }
 
                         if (selectedAlbum != null) {
@@ -1275,27 +1293,145 @@ fun ListingScreen(
                                     }
                                 }
                             )
+                        } else if (selectedArtist != null) {
+                            val artistSongList = artistGroups.find { it.key == selectedArtist }?.value ?: emptyList()
+                            ArtistDetailView(
+                                artist = selectedArtist!!,
+                                songs = artistSongList,
+                                viewModel = viewModel,
+                                adaptiveColor = adaptiveColor,
+                                onBack = { selectedArtist = null },
+                                onShuffle = {
+                                    if (artistSongList.isNotEmpty()) {
+                                        if (!isShuffleOn) viewModel.toggleShuffle()
+                                        viewModel.setQueue(artistSongList)
+                                    }
+                                }
+                            )
                         } else {
-                            ResponsiveSnapList(
-                                items = albumGroups,
-                                key = { it.key },
-                                scrollbarColor = adaptiveColor,
-                                topPadding = 16.dp
-                            ) { entry, _ ->
-                                AlbumRow(
-                                    album = entry.key,
-                                    songs = entry.value,
-                                    viewModel = viewModel,
-                                    count = entry.value.size,
-                                    onClick = { selectedAlbum = entry.key }
-                                )
+                            Column(Modifier.fillMaxSize()) {
+                                // Top row: toggle icon
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 20.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        IconButton(
+                                            onClick = { showAlbumsArtists = !showAlbumsArtists },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = if (showAlbumsArtists) Icons.Rounded.Album else Icons.Rounded.Person,
+                                                contentDescription = if (showAlbumsArtists) "Show Albums" else "Show Artists",
+                                                tint = adaptiveColor,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                val listItems = if (showAlbumsArtists) artistGroups else albumGroups
+                                ResponsiveSnapList(
+                                    items = listItems,
+                                    key = { it.key },
+                                    scrollbarColor = adaptiveColor,
+                                    modifier = Modifier.weight(1f),
+                                    topPadding = 4.dp
+                                ) { entry, _ ->
+                                    if (showAlbumsArtists) {
+                                        ArtistRow(
+                                            artist = entry.key,
+                                            songs = entry.value,
+                                            viewModel = viewModel,
+                                            count = entry.value.size,
+                                            onClick = { selectedArtist = entry.key }
+                                        )
+                                    } else {
+                                        AlbumRow(
+                                            album = entry.key,
+                                            songs = entry.value,
+                                            viewModel = viewModel,
+                                            count = entry.value.size,
+                                            onClick = { selectedAlbum = entry.key }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
 
                     2 -> { // STREAM
+                        var streamFilterArtist by remember { mutableStateOf<String?>(null) }
+                        var streamFilterAlbum by remember { mutableStateOf<String?>(null) }
+
+                        val filterActive = streamFilterArtist != null || streamFilterAlbum != null
+                        val filterLabel = streamFilterArtist ?: streamFilterAlbum ?: ""
+                        val clearFilter = { streamFilterArtist = null; streamFilterAlbum = null }
+
                         Box(modifier = Modifier.fillMaxSize()) {
-                            if (searchQuery.isBlank()) {
+                            if (filterActive) {
+                                // Stream filter by artist/album
+                                val allSongs = if (searchQuery.isBlank()) {
+                                    val genreSongsMap by viewModel.genreSongs.collectAsState()
+                                    val selectedGenre by viewModel.selectedGenre.collectAsState()
+                                    genreSongsMap[selectedGenre] ?: emptyList()
+                                } else {
+                                    streamSongs
+                                }
+                                val filteredSongs = allSongs.filter { s ->
+                                    (streamFilterArtist == null || s.artist == streamFilterArtist) &&
+                                    (streamFilterAlbum == null || s.album == streamFilterAlbum)
+                                }
+
+                                Column(modifier = Modifier.fillMaxSize()) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        IconButton(onClick = clearFilter) {
+                                            Icon(Icons.Rounded.ArrowBack, null, tint = adaptiveColor)
+                                        }
+                                        Text(
+                                            filterLabel,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = adaptiveColor
+                                        )
+                                        Spacer(Modifier.weight(1f))
+                                        Text(
+                                            "${filteredSongs.size} songs",
+                                            color = Color.Gray,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+
+                                    if (filteredSongs.isEmpty()) {
+                                        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                            Text("No songs found", color = Color.Gray)
+                                        }
+                                    } else {
+                                        val listState = rememberLazyListState()
+                                        ResponsiveSnapList(
+                                            items = filteredSongs,
+                                            key = { it.id },
+                                            scrollbarColor = adaptiveColor,
+                                            modifier = Modifier.weight(1f),
+                                            listState = listState
+                                        ) { song, _ ->
+                                            SwipeableSongRow(song, viewModel, customOnClick = {
+                                                viewModel.setQueue(filteredSongs, startSong = song)
+                                            }, adaptiveColor = adaptiveColor,
+                                                onGoToArtist = { s -> streamFilterArtist = s.artist; streamFilterAlbum = null },
+                                                onGoToAlbum = { s -> streamFilterAlbum = s.album; streamFilterArtist = null })
+                                        }
+                                    }
+                                }
+                            } else if (searchQuery.isBlank()) {
                                 val selectedGenre by viewModel.selectedGenre.collectAsState()
                                 val genreSongsMap by viewModel.genreSongs.collectAsState()
                                 val isGenreLoading by viewModel.isGenreLoading.collectAsState()
@@ -1353,7 +1489,9 @@ fun ListingScreen(
                                             ) { song, _ ->
                                                 SwipeableSongRow(song, viewModel, customOnClick = {
                                                     viewModel.setQueue(genreSongList, startSong = song)
-                                                }, adaptiveColor = adaptiveColor)
+                                                }, adaptiveColor = adaptiveColor,
+                                                    onGoToArtist = { s -> streamFilterArtist = s.artist; streamFilterAlbum = null },
+                                                    onGoToAlbum = { s -> streamFilterAlbum = s.album; streamFilterArtist = null })
                                             }
                                         }
                                     }
@@ -1535,7 +1673,9 @@ fun ListingScreen(
                                     ) { song, _ ->
                                         SwipeableSongRow(song, viewModel, customOnClick = {
                                             viewModel.setQueue(streamSongs, startSong = song)
-                                        }, adaptiveColor = adaptiveColor)
+                                        }, adaptiveColor = adaptiveColor,
+                                            onGoToArtist = { s -> streamFilterArtist = s.artist; streamFilterAlbum = null },
+                                            onGoToAlbum = { s -> streamFilterAlbum = s.album; streamFilterArtist = null })
                                     }
                                 }
                             }
@@ -2125,6 +2265,129 @@ fun AlbumDetailView(
                 onClick = { isMenuExpanded = !isMenuExpanded },
                 containerColor = if (isMenuExpanded) MaterialTheme.colorScheme.surfaceVariant else adaptiveColor,
                 contentColor = if (isMenuExpanded) MaterialTheme.colorScheme.onSurfaceVariant else minibarTextColor,
+                shape = CircleShape
+            ) {
+                Icon(
+                    imageVector = if (isMenuExpanded) Icons.Rounded.Close else Icons.Rounded.Menu,
+                    contentDescription = "Menu"
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ArtistDetailView(
+    artist: String,
+    songs: List<Song>,
+    viewModel: MusicViewModel,
+    adaptiveColor: Color,
+    onBack: () -> Unit,
+    onShuffle: () -> Unit
+) {
+    val lazyListState = rememberLazyListState()
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Text(
+                text = artist,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 24.dp, bottom = 16.dp),
+                textAlign = TextAlign.Center
+            )
+
+            if (songs.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No songs by this artist", color = Color.Gray)
+                }
+            } else {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        state = lazyListState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 12.dp),
+                        contentPadding = PaddingValues(bottom = 120.dp, end = 20.dp)
+                    ) {
+                        items(songs, key = { it.id }) { song ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
+                                        alpha = 0.3f
+                                    )
+                                ),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                SongRow(
+                                    song = song,
+                                    viewModel = viewModel,
+                                    customOnClick = {
+                                        viewModel.setQueue(songs, startSong = song)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    DraggableScrollbar(lazyListState, adaptiveColor)
+                }
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            var isMenuExpanded by remember { mutableStateOf(false) }
+
+            AnimatedVisibility(
+                visible = isMenuExpanded,
+                enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 })
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    SmallFloatingActionButton(
+                        onClick = onBack,
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ) { Icon(Icons.Rounded.ArrowBackIosNew, contentDescription = "Back") }
+
+                    SmallFloatingActionButton(
+                        onClick = {
+                            if (songs.isNotEmpty()) {
+                                viewModel.setQueue(songs)
+                            }
+                        },
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ) { Icon(Icons.Rounded.PlayArrow, contentDescription = "Play All") }
+
+                    SmallFloatingActionButton(
+                        onClick = { onShuffle() },
+                        containerColor = adaptiveColor,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    ) { Icon(Icons.Rounded.Shuffle, contentDescription = "Shuffle") }
+                }
+            }
+
+            FloatingActionButton(
+                onClick = { isMenuExpanded = !isMenuExpanded },
+                containerColor = if (isMenuExpanded) MaterialTheme.colorScheme.surfaceVariant else adaptiveColor,
+                contentColor = if (isMenuExpanded) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimary,
                 shape = CircleShape
             ) {
                 Icon(

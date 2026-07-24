@@ -433,11 +433,9 @@ fun WaveRecordSheet(
         }
     }
 
-    // Fungsi ini yang jalanin seluruh siklus record. Dipanggil via coroutineScope.launch
-    // (BUKAN LaunchedEffect keyed ke isRecording), supaya coroutine-nya gak kena cancel
-    // saat isRecording berubah jadi false pas tombol Stop diklik.
+    @androidx.annotation.RequiresPermission(android.Manifest.permission.RECORD_AUDIO)
     fun startRecording() {
-        coroutineScope.launch @androidx.annotation.RequiresPermission(android.Manifest.permission.RECORD_AUDIO) {
+        coroutineScope.launch {
             try {
 
             val tempPath = context.cacheDir.resolve("wave_temp.mp4").absolutePath
@@ -457,21 +455,25 @@ fun WaveRecordSheet(
             recorderRef.value = rec
             isRecording = true
 
-            // Skip first frame (graphicsLayer might be stale)
-            withFrameNanos { }
-            withFrameNanos { }
+            try {
+                // Skip first frame (graphicsLayer might be stale)
+                withFrameNanos { }
+                withFrameNanos { }
+            } catch (_: Exception) {}
 
             var lastNs = 0L
             val intervalNs = 1_000_000_000L / 60 // 60 FPS
             while (isActive && isRecording) {
-                val frameNs = withFrameNanos { it }
-                if (frameNs - lastNs >= intervalNs) {
-                    lastNs = frameNs
-                    val ptsUs = (frameNs - startNs) / 1000
-                    // Update observed position to trigger recomposition with latest lyrics
-                    observedPosition = currentPosition()
-                    rec.frame(graphicsLayer.toImageBitmap(), ptsUs)
-                }
+                try {
+                    val frameNs = withFrameNanos { it }
+                    if (frameNs - lastNs >= intervalNs) {
+                        lastNs = frameNs
+                        val ptsUs = (frameNs - startNs) / 1000
+                        // Update observed position to trigger recomposition with latest lyrics
+                        observedPosition = currentPosition()
+                        rec.frame(graphicsLayer.toImageBitmap(), ptsUs)
+                    }
+                } catch (_: Exception) { break }
             }
 
             // Bagian ini sekarang SELALU jalan sampai selesai, gak lagi ke-cancel
@@ -544,7 +546,8 @@ fun WaveRecordSheet(
                             val hasAudioPerm = ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) ==
                                     android.content.pm.PackageManager.PERMISSION_GRANTED
                             when {
-                                mediaProjection != null -> startRecording()
+                                mediaProjection != null && hasAudioPerm -> startRecording()
+                                mediaProjection != null -> recordAudioPermLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
                                 hasAudioPerm -> {
                                     val mgr = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                                     projLauncher.launch(mgr.createScreenCaptureIntent())

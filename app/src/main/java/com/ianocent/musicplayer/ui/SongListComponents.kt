@@ -481,6 +481,61 @@ fun AlbumRow(album: String, songs: List<Song>, viewModel: MusicViewModel, count:
 }
 
 @Composable
+fun ArtistRow(artist: String, songs: List<Song>, viewModel: MusicViewModel, count: Int, onClick: () -> Unit = {}) {
+    var art by remember(artist) { mutableStateOf<ImageBitmap?>(null) }
+
+    LaunchedEffect(artist, songs) {
+        val firstSong = songs.firstOrNull()
+        firstSong?.let { song ->
+            viewModel.getCachedArt(song) { bitmap -> art = bitmap?.asImageBitmap() }
+        }
+    }
+
+    val animatedTitleColor by animateColorAsState(
+        targetValue = MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(500),
+        label = "titleColor"
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.secondaryContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            if (art != null) {
+                Image(
+                    bitmap = art!!,
+                    contentDescription = "Artist Art",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Icon(Icons.Rounded.Person, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+            }
+        }
+        Spacer(modifier = Modifier.width(16.dp))
+        Column {
+            Text(
+                artist,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                color = animatedTitleColor
+            )
+            Text("$count songs", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+        }
+    }
+}
+
+@Composable
 fun RoundedClickableRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -503,7 +558,9 @@ fun SwipeableSongRow(
     viewModel: MusicViewModel,
     customOnClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
-    adaptiveColor: Color
+    adaptiveColor: Color,
+    onGoToArtist: ((Song) -> Unit)? = null,
+    onGoToAlbum: ((Song) -> Unit)? = null
 ) {
     val density = LocalDensity.current
     val swipeThresholdPx = with(density) { 72.dp.toPx() }
@@ -679,6 +736,30 @@ fun SwipeableSongRow(
                         Icon(Icons.Rounded.PlaylistAdd, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(12.dp))
                         Text("Add to Queue", fontWeight = FontWeight.SemiBold)
+                    }
+
+                    // Go to Artist
+                    if (onGoToArtist != null) {
+                        RoundedClickableRow(
+                            onClick = { showActionDialog = false; onGoToArtist(song) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.Person, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Text("Go to Artist", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+
+                    // Go to Album
+                    if (onGoToAlbum != null) {
+                        RoundedClickableRow(
+                            onClick = { showActionDialog = false; onGoToAlbum(song) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.Album, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Text("Go to Album", fontWeight = FontWeight.SemiBold)
+                        }
                     }
 
                     if (song.isStream) {

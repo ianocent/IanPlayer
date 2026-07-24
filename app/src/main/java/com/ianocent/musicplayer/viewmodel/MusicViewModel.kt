@@ -94,11 +94,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _genreFirstSong = MutableStateFlow<Map<String, Song?>>(emptyMap())
     val genreFirstSong: StateFlow<Map<String, Song?>> = _genreFirstSong
+    private var genreArtLoaded = false
     private var genreArtLoadJob: Job? = null
 
     fun loadGenreArtworks() {
+        if (genreArtLoaded) return
         if (genreArtLoadJob?.isActive == true) return
         genreArtLoadJob = viewModelScope.launch {
+            genreArtLoaded = true
             for (genre in genres) {
                 if (!isActive) break
                 try {
