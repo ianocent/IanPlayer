@@ -68,114 +68,8 @@ import java.io.File
 import java.nio.ByteBuffer
 import kotlin.math.sqrt
 
-// ---------- SPECTRUM ----------
-
-@Composable
-fun rememberMagnitudeState(audioSessionId: Int, isPlaying: Boolean): State<FloatArray> {
-    val barCount = 6
-    val mags = remember { mutableStateOf(FloatArray(barCount) { 0f }) }
-
-    DisposableEffect(audioSessionId, isPlaying) {
-        var visualizer: Visualizer? = null
-        try {
-            if (audioSessionId > 0) {
-                visualizer = Visualizer(audioSessionId).apply {
-                    captureSize = 512 // Smaller capture size for faster response/lower latency
-                    setDataCaptureListener(
-                        object : Visualizer.OnDataCaptureListener {
-                            override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, s: Int) {}
-                            override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, s: Int) {
-                                val d = fft ?: return
-                                val n = d.size / 2
-                                val currentMags = mags.value
-                                val nextMags = FloatArray(barCount)
-                                
-                                for (i in 0 until barCount) {
-                                    // Mapping for 14 bars - focused on audible musical range
-                                    val maxBin = (n * 0.5).toInt() 
-                                    val p = i.toDouble() / barCount
-                                    val start = (Math.pow(p, 1.4) * (maxBin - 2)).toInt() + 2
-                                    val end = (Math.pow((i + 1).toDouble() / barCount, 1.4) * (maxBin - 2)).toInt() + 2
-                                    
-                                    var energy = 0f
-                                    val range = (end - start).coerceAtLeast(1)
-                                    for (j in start until end.coerceAtMost(n)) {
-                                        val r = d[2 * j].toFloat()
-                                        val im = d[2 * j + 1].toFloat()
-                                        energy += sqrt(r * r + im * im)
-                                    }
-                                    
-                                    val avg = energy / range
-                                    
-                                    // Balanced sensitivity for minimalist 14 bars
-                                    val sensitivity = when {
-                                        i < 4 -> 1.0f  // Kick/Bass
-                                        i < 10 -> 3.0f  // Mids/Vocal
-                                        else -> 2.0f + (p.toFloat() * 15.0f) // Treble boost
-                                    }
-                                    
-                                    val noiseFloor = 0.5f
-                                    val cleanAvg = (avg - noiseFloor).coerceAtLeast(0f)
-                                    
-                                    val target = (cleanAvg * sensitivity / 30f).coerceIn(0f, 1f)
-                                    
-                                    // VERY snappy for "Nyampe banget" feel
-                                    val prev = currentMags[i]
-                                    nextMags[i] = if (target > prev) {
-                                        target // INSTANT attack for beat sync
-                                    } else {
-                                        prev * 1.0f // Clean, fast decay
-                                    }
-                                }
-                                mags.value = nextMags
-                            }
-                        },
-                        Visualizer.getMaxCaptureRate(), false, true // Higher capture rate
-                    )
-                    enabled = isPlaying
-                }
-            }
-        } catch (e: Exception) { Timber.w("Visualizer init failed: session=$audioSessionId err=$e") }
-        onDispose { try { visualizer?.run { enabled = false; release() } } catch (_: Exception) {} }
-    }
-
-    return mags
-}
-
-@Composable
-fun SpectrumBars(magnitudes: FloatArray, accentColor: Color, modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.Bottom
-    ) {
-        magnitudes.forEachIndexed { i, magnitude ->
-            val barHeight by animateDpAsState(
-                targetValue = (magnitude * 36 + 2).dp,
-                animationSpec = spring(
-                    dampingRatio = 0.8f, 
-                    stiffness = 1000f // Super stiff for zero delay feel
-                ),
-                label = "bar_$i"
-            )
-            
-            Box(
-                modifier = Modifier
-                    .width(4.dp) // Fixed small width for minimalist look
-                    .height(barHeight)
-                    .clip(RoundedCornerShape(topStart = 2.dp, topEnd = 2.dp))
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(accentColor.copy(alpha = 0.95f), accentColor.copy(alpha = 0.2f))
-                        )
-                    )
-            )
-        }
-    }
-}
-
 // ---------- ANIMATED LYRIC ----------
+
 
 // ---------- ANIMATED LYRIC ----------
 // FIX BUG B: sebelumnya prevText gapernah di-reassign ke text baru, jadi abis line
@@ -227,31 +121,29 @@ fun AnimatedLyricLine(syncedLyric: List<LyricLine>?, plainLyric: String?, curren
 // ---------- CARD ----------
 
 @Composable
-fun WaveRecordContent(song: Song?, syncedLyric: List<LyricLine>?, plainLyric: String?, currentPosition: Long, albumArt: android.graphics.Bitmap?, accentColor: Color, magnitudes: FloatArray, modifier: Modifier = Modifier) {
+fun WaveRecordContent(song: Song?, syncedLyric: List<LyricLine>?, plainLyric: String?, currentPosition: Long, albumArt: android.graphics.Bitmap?, accentColor: Color, modifier: Modifier = Modifier) {
     val hl = !syncedLyric.isNullOrEmpty() || !plainLyric.isNullOrBlank()
-    Box(modifier.width(360.dp).height(480.dp).clip(RoundedCornerShape(20.dp))) {
+    Box(modifier.width(360.dp).height(250.dp).clip(RoundedCornerShape(20.dp))) {
         if (albumArt != null) Image(albumArt.asImageBitmap(), null, Modifier.fillMaxSize().blur(30.dp), contentScale = ContentScale.Crop)
         else Box(Modifier.fillMaxSize().background(accentColor))
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(0.3f), Color.Black.copy(0.85f)))))
-        Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.Bottom) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.Bottom) {
             if (hl) {
-                Text("\u201C", fontSize = 56.sp, color = Color.White.copy(0.4f), fontWeight = FontWeight.Black)
-                Box(Modifier.weight(1f).fillMaxWidth(), Alignment.Center) { 
+                Text(
+                    "\u201C",
+                    fontSize = 56.sp,
+                    color = Color.White.copy(alpha = 0.4f),
+                    fontWeight = FontWeight.Black,
+                    textAlign = TextAlign.Start
+                )
+                Box(Modifier.weight(1f).fillMaxWidth(), Alignment.Center) {
                     AnimatedLyricLine(syncedLyric, plainLyric, currentPosition, accentColor, Modifier.fillMaxWidth()) 
                 }
             } else {
                 Spacer(Modifier.weight(1f))
             }
             
-            // Visualizer placement: Aligned with title start, shorter width
-            SpectrumBars(
-                magnitudes, 
-                accentColor, 
-                Modifier
-                    .padding(start = 14.dp, bottom = 12.dp)
-                    .height(40.dp)
-                    .fillMaxWidth()
-            )
+            Spacer(Modifier.height(4.dp))
 
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(4.dp, 24.dp).background(Color.White, RoundedCornerShape(2.dp)))
@@ -285,9 +177,12 @@ private class AvRecorder(
     private var videoTrack = -1
     private var audioTrack = -1
     var isMuxerStarted = false
+    private var videoFormatReady = false
+    private var audioFormatReady = false
     private var ptsUs = 0L
     private var audioPtsUs = 0L
     private var startNs = -1L
+    private val drainLock = Any()
     @Volatile var isRunning = false
     private var audioFeedJob: kotlinx.coroutines.Job? = null
     private val audioFeedScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
@@ -384,7 +279,14 @@ private class AvRecorder(
             val s = inputSurface ?: return
             val c = s.lockHardwareCanvas()
             val paint = android.graphics.Paint().apply { isFilterBitmap = true }
-            c.drawBitmap(bitmap.asAndroidBitmap(), null, android.graphics.Rect(0, 0, width, height), paint)
+            val srcW = bitmap.width
+            val srcH = bitmap.height
+            val scale = minOf(width.toFloat() / srcW, height.toFloat() / srcH)
+            val dstW = (srcW * scale).toInt()
+            val dstH = (srcH * scale).toInt()
+            val left = (width - dstW) / 2
+            val top = (height - dstH) / 2
+            c.drawBitmap(bitmap.asAndroidBitmap(), null, android.graphics.Rect(left, top, left + dstW, top + dstH), paint)
             s.unlockCanvasAndPost(c)
             ptsUs = presentationTimeUs
             drainVideo(false)
@@ -423,11 +325,11 @@ private class AvRecorder(
                     consecutiveEmpty++
                     if (consecutiveEmpty > 10) return
                 }
-                idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> if (!isMuxerStarted && videoTrack < 0) { videoTrack = m.addTrack(c.outputFormat); if (audioTrack < 0 && audioCodec != null) { try { audioTrack = m.addTrack(audioCodec!!.outputFormat) } catch (_: Exception) {} }; m.start(); isMuxerStarted = true }
+                idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> synchronized(drainLock) { if (!isMuxerStarted && !videoFormatReady) { videoTrack = m.addTrack(c.outputFormat); videoFormatReady = true; if (audioFormatReady || audioCodec == null) { m.start(); isMuxerStarted = true } } }
                 idx >= 0 -> {
                     consecutiveEmpty = 0
                     val buf = c.getOutputBuffer(idx) ?: return
-                    if (videoTrack >= 0 && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) { info.presentationTimeUs = ptsUs; m.writeSampleData(videoTrack, buf, info) }
+                    if (videoTrack >= 0 && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) { info.presentationTimeUs = ptsUs; synchronized(drainLock) { m.writeSampleData(videoTrack, buf, info) } }
                     c.releaseOutputBuffer(idx, false)
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) return
                 }
@@ -438,7 +340,6 @@ private class AvRecorder(
     private fun drainAudio(eos: Boolean) {
         val c = audioCodec ?: return
         val m = muxer ?: return
-        if (audioTrack < 0) return
         var consecutiveEmpty = 0
         while (true) {
             val info = MediaCodec.BufferInfo()
@@ -449,11 +350,12 @@ private class AvRecorder(
                     consecutiveEmpty++
                     if (consecutiveEmpty > 10) return
                 }
-                idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> { /* track already added */ }
+                idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> synchronized(drainLock) { if (!isMuxerStarted && !audioFormatReady) { audioTrack = m.addTrack(c.outputFormat); audioFormatReady = true; if (videoFormatReady) { m.start(); isMuxerStarted = true } } }
                 idx >= 0 -> {
                     consecutiveEmpty = 0
+                    if (audioTrack < 0) { c.releaseOutputBuffer(idx, false); continue }
                     val buf = c.getOutputBuffer(idx) ?: return
-                    if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) m.writeSampleData(audioTrack, buf, info)
+                    if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) synchronized(drainLock) { m.writeSampleData(audioTrack, buf, info) }
                     c.releaseOutputBuffer(idx, false)
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) return
                 }
@@ -485,7 +387,6 @@ fun WaveRecordSheet(
     audioSessionId: Int,
     onDismiss: () -> Unit
 ) {
-    val magnitudes = rememberMagnitudeState(audioSessionId, isPlaying)
     val graphicsLayer = rememberGraphicsLayer()
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -495,6 +396,11 @@ fun WaveRecordSheet(
     var recorderRef = remember { mutableStateOf<AvRecorder?>(null) }
     var mediaProjection by remember { mutableStateOf<MediaProjection?>(null) }
 
+    // Start WaveProjectionService immediately so it's active when getMediaProjection() fires
+    LaunchedEffect(Unit) {
+        ContextCompat.startForegroundService(context, Intent(context, WaveProjectionService::class.java))
+    }
+
     // Observed position for recomposition during recording
     var observedPosition by remember { mutableStateOf(0L) }
     
@@ -503,16 +409,25 @@ fun WaveRecordSheet(
 
     val projLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
-            val mgr = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            mediaProjection = mgr.getMediaProjection(result.resultCode, result.data!!)
+            try {
+                val mgr = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                mediaProjection = mgr.getMediaProjection(result.resultCode, result.data!!)
+            } catch (e: Exception) {
+                Timber.e(e, "MediaProjection init failed")
+            }
         }
     }
     val recordAudioPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            val mgr = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            projLauncher.launch(mgr.createScreenCaptureIntent())
+            try {
+                ContextCompat.startForegroundService(context, Intent(context, WaveProjectionService::class.java))
+                val mgr = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                projLauncher.launch(mgr.createScreenCaptureIntent())
+            } catch (e: Exception) {
+                Timber.e(e, "Screen capture intent launch failed")
+            }
         } else {
             Timber.w("RECORD_AUDIO denied, recording without system audio")
         }
@@ -523,12 +438,11 @@ fun WaveRecordSheet(
     // saat isRecording berubah jadi false pas tombol Stop diklik.
     fun startRecording() {
         coroutineScope.launch @androidx.annotation.RequiresPermission(android.Manifest.permission.RECORD_AUDIO) {
-            // Start service only AFTER we have projection
-            ContextCompat.startForegroundService(context, Intent(context, WaveProjectionService::class.java))
+            try {
 
             val tempPath = context.cacheDir.resolve("wave_temp.mp4").absolutePath
-            val cardW = with(density) { 360.dp.toPx().toInt().coerceAtMost(720) }
-            val cardH = with(density) { 480.dp.toPx().toInt().coerceAtMost(960) }
+            val cardW = with(density) { 360.dp.toPx().toInt().coerceAtMost(720).let { it - (it % 16) } }
+            val cardH = with(density) { 250.dp.toPx().toInt().coerceAtMost(500).let { it - (it % 16) } }
             val bps = (4_000_000L * cardW * cardH / (360 * 480)).toInt().coerceIn(3_000_000, 10_000_000)
             val rec = AvRecorder(cardW, cardH, bitRate = bps, frameRate = 60, mediaProjection = mediaProjection, useSystemAudio = true)
 
@@ -548,7 +462,7 @@ fun WaveRecordSheet(
             withFrameNanos { }
 
             var lastNs = 0L
-            val intervalNs = 1_000_000_000L / 60 // 30 FPS
+            val intervalNs = 1_000_000_000L / 60 // 60 FPS
             while (isActive && isRecording) {
                 val frameNs = withFrameNanos { it }
                 if (frameNs - lastNs >= intervalNs) {
@@ -563,6 +477,7 @@ fun WaveRecordSheet(
             // Bagian ini sekarang SELALU jalan sampai selesai, gak lagi ke-cancel
             // duluan oleh recomposition/key change dari isRecording.
             rec.stop()
+            context.stopService(Intent(context, WaveProjectionService::class.java))
             val muxerWasStarted = rec.isMuxerStarted
             recorderRef.value = null
 
@@ -593,6 +508,11 @@ fun WaveRecordSheet(
                     Timber.d("save: done")
                 } catch (e: Exception) { Timber.e(e, "save failed") }
             }
+            } catch (e: Exception) {
+                Timber.e(e, "record failed")
+                isRecording = false
+                recorderRef.value = null
+            }
         }
     }
 
@@ -614,7 +534,7 @@ fun WaveRecordSheet(
                 graphicsLayer.record { this@drawWithContent.drawContent() }
                 drawLayer(graphicsLayer)
             }) {
-                WaveRecordContent(song, syncedLyric, plainLyric, displayPosition, albumArt, accentColor, magnitudes.value)
+                WaveRecordContent(song, syncedLyric, plainLyric, displayPosition, albumArt, accentColor)
             }
             Spacer(Modifier.height(16.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {

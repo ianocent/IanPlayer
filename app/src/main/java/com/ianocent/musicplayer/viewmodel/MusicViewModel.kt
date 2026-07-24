@@ -48,14 +48,16 @@ import android.app.RecoverableSecurityException
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val ytMusicRepository = YTMusicRepository(application.applicationContext)
     
-    private val _deleteIntentSender = MutableSharedFlow<IntentSender>()
+    private val _deleteIntentSender = MutableSharedFlow<IntentSender>(extraBufferCapacity = 1)
     val deleteIntentSender: SharedFlow<IntentSender> = _deleteIntentSender
     
-    private val _editIntentSender = MutableSharedFlow<IntentSender>()
+    private val _editIntentSender = MutableSharedFlow<IntentSender>(extraBufferCapacity = 1)
     val editIntentSender: SharedFlow<IntentSender> = _editIntentSender
 
     data class PendingUpdate(val id: Long, val title: String, val artist: String, val uri: Uri?)
     var pendingUpdateInfo: PendingUpdate? = null
+
+    var pendingDeleteSong: Song? = null
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         if (throwable !is CancellationException) {
@@ -1614,7 +1616,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: Exception) {
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q && e is RecoverableSecurityException) {
-                    _deleteIntentSender.emit(e.userAction.actionIntent.intentSender)
+                    pendingDeleteSong = song
+                    _deleteIntentSender.tryEmit(e.userAction.actionIntent.intentSender)
                 } else {
                     Timber.e(e, "MusicViewModel delete failed")
                 }
@@ -1650,30 +1653,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             
             try {
                 withContext(Dispatchers.IO) {
-                    var newBitmap: android.graphics.Bitmap? = null
-                    if (newImageUri != null) {
-                        try {
-                            val inputStream = appContext.contentResolver.openInputStream(newImageUri)
-                            newBitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
-                            inputStream?.close()
-                        } catch (e: Exception) {
-                            Timber.e(e, "MusicViewModel Failed to load picked image")
-                        }
-                    }
-
-                    // 1. Update file metadata if possible
-                    val filePath = getFilePathFromUri(song.uri)
-                    if (filePath != null) {
-                        val updatedSong = song.copy(title = newTitle, artist = newArtist)
-                        com.ianocent.musicplayer.data.MetadataWriter.writeMetadata(appContext, filePath, updatedSong, newBitmap)
-                        
-                        // Trigger scan to update MediaStore from file tags
-                        android.media.MediaScannerConnection.scanFile(
-                            appContext,
-                            arrayOf(filePath),
-                            null,
-                            null
+                    // 1. Write metadata to actual file via ContentResolver
+                    try {
+                        com.ianocent.musicplayer.data.MetadataWriter.writeMetadataFromFile(
+                            appContext, songId, newTitle, newArtist, newImageUri
                         )
+                    } catch (e: RecoverableSecurityException) {
+                        Timber.w(e, "RecoverableSecurityException — rethrowing for SAF")
+                        throw e
+                    } catch (fe: java.io.FileNotFoundException) {
+                        Timber.w(fe, "File not found — falling through to SAF path")
+                        throw fe
+                    } catch (e: Exception) {
+                        Timber.e(e, "Metadata write failed, continuing with MediaStore update")
                     }
                     
                     // 2. Update MediaStore directly
@@ -1696,7 +1688,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 pendingUpdateInfo = null
             } catch (e: Exception) {
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q && e is RecoverableSecurityException) {
-                    _editIntentSender.emit(e.userAction.actionIntent.intentSender)
+                    _editIntentSender.tryEmit(e.userAction.actionIntent.intentSender)
                 } else {
                     Timber.e(e, "MusicViewModel update failed")
                 }

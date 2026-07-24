@@ -176,7 +176,7 @@ fun PlaylistCardContent(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "IanPlayer",
+                    text = "ıanocent",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White.copy(alpha = 0.5f)

@@ -5,7 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.media.AudioAttributes
+import android.media.AudioAttributes as AndroidAudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
@@ -40,10 +40,17 @@ class PlaybackService : MediaSessionService() {
             )
             .build()
 
+        val playbackAttributes = androidx.media3.common.AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+            .setAllowedCapturePolicy(C.ALLOW_CAPTURE_BY_ALL)
+            .build()
+
         player = ExoPlayer.Builder(this)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .setHandleAudioBecomingNoisy(true)
             .setLoadControl(loadControl)
+            .setAudioAttributes(playbackAttributes, true)
             .build().also { exoPlayer ->
                 audioSessionId = exoPlayer.audioSessionId
                 exoPlayer.addListener(object : Player.Listener {
@@ -123,9 +130,9 @@ class PlaybackService : MediaSessionService() {
 
     private fun setupAudioFocus() {
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val audioAttributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_MEDIA)
-            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+        val audioAttributes = AndroidAudioAttributes.Builder()
+            .setUsage(AndroidAudioAttributes.USAGE_MEDIA)
+            .setContentType(AndroidAudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

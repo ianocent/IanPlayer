@@ -1,8 +1,13 @@
 package com.ianocent.musicplayer.data
 
+import android.app.RecoverableSecurityException
+import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
+import android.provider.MediaStore
 import timber.log.Timber
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -150,6 +155,118 @@ object MetadataWriter {
             Timber.d("Album art embedded successfully")
         } catch (e: Exception) {
             Timber.e("Failed to embed album art: ${e.message}")
+        }
+    }
+
+    suspend fun writeMetadataFromFile(
+        context: Context,
+        songId: Long,
+        newTitle: String,
+        newArtist: String,
+        newImageUri: Uri? = null
+    ) = withContext(Dispatchers.IO) {
+        try {
+            val uri = ContentUris.withAppendedId(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, songId
+            )
+
+            // Get real file path
+            val dataCol = MediaStore.Audio.Media.DATA
+            val projection = arrayOf(dataCol)
+            val filePath = context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(cursor.getColumnIndexOrThrow(dataCol)) else null
+            }
+
+            if (filePath == null) {
+                Timber.e("Cannot get file path for URI: $uri")
+                return@withContext false
+            }
+
+            val file = File(filePath)
+            if (!file.exists()) {
+                Timber.e("File does not exist: $filePath")
+                return@withContext false
+            }
+
+            // Read via ContentResolver, modify with mp3agic, write back
+            val mp3file = context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                val bytes = inputStream.readBytes()
+                Mp3File(File(filePath)) // Use File directly since we have path
+            }
+
+            if (mp3file == null) {
+                Timber.e("Failed to read MP3 file")
+                return@withContext false
+            }
+
+            val id3v2tag = if (mp3file.hasId3v2Tag()) {
+                mp3file.id3v2Tag
+            } else {
+                ID3v24Tag()
+            }
+
+            id3v2tag.title = newTitle
+            id3v2tag.artist = newArtist
+
+            if (newImageUri != null) {
+                try {
+                    val inputStream = context.contentResolver.openInputStream(newImageUri)
+                    val bitmap = BitmapFactory.decodeStream(inputStream)
+                    inputStream?.close()
+                    if (bitmap != null) {
+                        val baos = ByteArrayOutputStream()
+                        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, baos)
+                        id3v2tag.setAlbumImage(baos.toByteArray(), "image/jpeg")
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to set album art from URI")
+                }
+            }
+
+            mp3file.id3v2Tag = id3v2tag
+
+            val tempFile = File(file.parentFile, "${file.nameWithoutExtension}_temp_${System.currentTimeMillis()}.mp3")
+            mp3file.save(tempFile.absolutePath)
+
+            if (!tempFile.exists() || tempFile.length() == 0L) {
+                Timber.e("Temp file invalid")
+                tempFile.delete()
+                return@withContext false
+            }
+
+            // Write back via ContentResolver
+            val tempBytes = tempFile.readBytes()
+            context.contentResolver.openOutputStream(uri, "wt")?.use { outputStream ->
+                outputStream.write(tempBytes)
+                outputStream.flush()
+            }
+
+            tempFile.delete()
+
+            // Also update MediaStore metadata
+            val values = ContentValues().apply {
+                put(MediaStore.Audio.Media.TITLE, newTitle)
+                put(MediaStore.Audio.Media.ARTIST, newArtist)
+            }
+            context.contentResolver.update(uri, values, null, null)
+
+            // Trigger scan via deprecated broadcast for broad compatibility
+            if (filePath != null) {
+                @Suppress("DEPRECATION")
+                context.sendBroadcast(android.content.Intent(android.content.Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, android.net.Uri.fromFile(file)))
+            }
+
+            Timber.d("Metadata written successfully via file stream for song $songId")
+            true
+        } catch (e: RecoverableSecurityException) {
+            Timber.w(e, "RecoverableSecurityException for song $songId — rethrowing for SAF")
+            throw e
+        } catch (e: java.io.FileNotFoundException) {
+            Timber.e(e, "File not found for song $songId — may need SAF permission")
+            throw e
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to write metadata from file: ${e.message}")
+            false
         }
     }
 }

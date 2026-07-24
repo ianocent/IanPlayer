@@ -3,12 +3,14 @@ package com.ianocent.musicplayer
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateDpAsState
@@ -100,6 +102,7 @@ import androidx.compose.ui.graphics.compositeOver
 import kotlin.math.roundToInt
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.material.icons.rounded.CloudOff
@@ -416,6 +419,43 @@ fun ListingScreen(
             voiceText = ""
             rmsLevel = 0f
             voiceManager?.startListening()
+        }
+    }
+
+    // ---- SAF (Storage Access Framework) permission handler for edit/delete ----
+    val safLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            // Permission granted — retry pending operation
+            viewModel.pendingUpdateInfo?.let { pending ->
+                viewModel.updateSongInfo(pending.id, pending.title, pending.artist, pending.uri)
+            }
+            viewModel.pendingDeleteSong?.let { song ->
+                viewModel.pendingDeleteSong = null
+                viewModel.deleteSong(song)
+            }
+        } else {
+            // User denied — clear pending so song stays in UI
+            viewModel.pendingDeleteSong = null
+        }
+    }
+
+    // Collect delete IntentSender from RecoverableSecurityException
+    LaunchedEffect(Unit) {
+        viewModel.deleteIntentSender.collect { intentSender ->
+            safLauncher.launch(
+                androidx.activity.result.IntentSenderRequest.Builder(intentSender).build()
+            )
+        }
+    }
+
+    // Collect edit IntentSender from RecoverableSecurityException
+    LaunchedEffect(Unit) {
+        viewModel.editIntentSender.collect { intentSender ->
+            safLauncher.launch(
+                androidx.activity.result.IntentSenderRequest.Builder(intentSender).build()
+            )
         }
     }
 
@@ -1072,6 +1112,26 @@ fun ListingScreen(
                 .padding(horizontal = 16.dp)
                 .clip(RoundedCornerShape(32.dp))
                 .background(animatedContainerColor)
+                .pointerInput(selectedTab) {
+                    var totalX = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { totalX = 0f },
+                        onDragEnd = {
+                            if (kotlin.math.abs(totalX) > 100) {
+                                val newTab = if (totalX > 0) (selectedTab - 1).coerceIn(0, 3)
+                                    else (selectedTab + 1).coerceIn(0, 3)
+                                if (newTab != selectedTab) {
+                                    selectedTab = newTab
+                                    tabPage = if (selectedTab >= 2) 1 else 0
+                                }
+                            }
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            totalX += dragAmount
+                        }
+                    )
+                }
         ) {
             Crossfade(targetState = selectedTab) { tab ->
                 when (tab) {
@@ -1510,41 +1570,47 @@ fun ListingScreen(
                                     }
                                 )
                             } else {
-                                if (playlists.isEmpty()) {
-                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                        Text("No playlists yet. Tap + to create.", color = Color.Gray)
-                                    }
-                                } else {
-                                    ResponsiveSnapList(
-                                        items = playlists,
-                                        key = { it.id },
-                                        scrollbarColor = adaptiveColor,
-                                        topPadding = 16.dp
-                                    ) { playlist, _ ->
-                                        SwipeablePlaylistCard(
-                                            playlist = playlist,
-                                            onClick = { selectedPlaylistId = playlist.id },
-                                            onDelete = { viewModel.deletePlaylist(playlist) },
-                                            onEdit = {
-                                                editingPlaylist = playlist
-                                                showEditDialog = true
-                                            },
-                                            viewModel = viewModel,
-                                            accentColor = adaptiveColor
+                                Column(modifier = Modifier.fillMaxSize()) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 16.dp, bottom = 8.dp, start = 16.dp, end = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Playlists",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.weight(1f)
                                         )
+                                        IconButton(onClick = { showCreateDialog = true }) {
+                                            Icon(Icons.Rounded.Add, contentDescription = "Create Playlist")
+                                        }
                                     }
-                                }
-                                // State buat nentuin menu kebuka atau ketutup
-                                FloatingActionButton(
-                                    onClick = { showCreateDialog = true },
-                                    modifier = Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .padding(24.dp),
-                                    containerColor = adaptiveColor,
-                                    contentColor = minibarTextColor,
-                                    shape = CircleShape
-                                ) {
-                                    Icon(Icons.Rounded.Add, contentDescription = "Create Playlist")
+                                    if (playlists.isEmpty()) {
+                                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                            Text("No playlists yet.", color = Color.Gray)
+                                        }
+                                    } else {
+                                        ResponsiveSnapList(
+                                            items = playlists,
+                                            key = { it.id },
+                                            scrollbarColor = adaptiveColor,
+                                            topPadding = 8.dp
+                                        ) { playlist, _ ->
+                                            SwipeablePlaylistCard(
+                                                playlist = playlist,
+                                                onClick = { selectedPlaylistId = playlist.id },
+                                                onDelete = { viewModel.deletePlaylist(playlist) },
+                                                onEdit = {
+                                                    editingPlaylist = playlist
+                                                    showEditDialog = true
+                                                },
+                                                viewModel = viewModel,
+                                                accentColor = adaptiveColor
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1724,6 +1790,8 @@ fun ListingScreen(
                                         currentSong = currentSong,
                                         onNowPlayingClick = onNowPlayingClick,
                                         isPillAtBottom = isPillAtBottom,
+                                        currentPosition = currentPosition,
+                                        duration = duration,
                                         onToggleVolume = { showVolumeControl = true }
                                     )
                                     2 -> MiniLayoutQueue(
@@ -1736,6 +1804,8 @@ fun ListingScreen(
                                         currentSong = currentSong,
                                         onNowPlayingClick = onNowPlayingClick,
                                         isPillAtBottom = isPillAtBottom,
+                                        currentPosition = currentPosition,
+                                        duration = duration,
                                         onToggleVolume = { showVolumeControl = true }
                                     )
                                 }
@@ -2512,15 +2582,49 @@ fun PlaylistDetailView(
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
-            Text(
-                text = playlist.name,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 24.dp, bottom = 16.dp),
-                textAlign = TextAlign.Center
-            )
+                    .padding(top = 24.dp, bottom = 16.dp, start = 4.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Rounded.ArrowBackIosNew, contentDescription = "Back")
+                }
+                Text(
+                    text = playlist.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Center
+                )
+                Box {
+                    var menuExpanded by remember { mutableStateOf(false) }
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(Icons.Rounded.MoreVert, contentDescription = "Menu")
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Add Songs") },
+                            onClick = { menuExpanded = false; showAddDialog = true },
+                            leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, null) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Share") },
+                            onClick = { menuExpanded = false; showCardSheet = true },
+                            leadingIcon = { Icon(Icons.Rounded.Share, null) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Shuffle") },
+                            onClick = { menuExpanded = false; onShuffle() },
+                            leadingIcon = { Icon(Icons.Rounded.Shuffle, null) }
+                        )
+                    }
+                }
+            }
 
             if (playlistSongs.isEmpty()) {
                 Box(
@@ -2600,64 +2704,7 @@ fun PlaylistDetailView(
                 }
             }
         }
-        // Small floating action buttons (symmetric 42.dp like minibar)
-        // State buat nentuin menu kebuka atau ketutup
-        var isMenuExpanded by remember { mutableStateOf(false) }
 
-        // Floating Buttons dikelompokkin di kanan bawah
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(24.dp),
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // Tombol-tombol yang muncul pas Hamburger di-klik
-            AnimatedVisibility(
-                visible = isMenuExpanded,
-                enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
-                exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 })
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    SmallFloatingActionButton(
-                        onClick = onBack,
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ) { Icon(Icons.Rounded.ArrowBackIosNew, contentDescription = "Back") }
-
-                    SmallFloatingActionButton(
-                        onClick = { showAddDialog = true; isMenuExpanded = false },
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ) { Icon(Icons.Rounded.PlaylistAdd, contentDescription = "Add Songs") }
-
-                    SmallFloatingActionButton(
-                        onClick = { showCardSheet = true; isMenuExpanded = false },
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ) { Icon(Icons.Rounded.Share, contentDescription = "Share") }
-
-                    SmallFloatingActionButton(
-                        onClick = { onShuffle(); isMenuExpanded = false },
-                        containerColor = adaptiveColor,
-                        contentColor = minibarTextColor
-                    ) { Icon(Icons.Rounded.Shuffle, contentDescription = "Shuffle") }
-                }
-            }
-
-            // Tombol Utama (Hamburger)
-            FloatingActionButton(
-                onClick = { isMenuExpanded = !isMenuExpanded },
-                containerColor = if (isMenuExpanded) MaterialTheme.colorScheme.surfaceVariant else adaptiveColor,
-                contentColor = if (isMenuExpanded) MaterialTheme.colorScheme.onSurfaceVariant else minibarTextColor,
-                shape = CircleShape
-            ) {
-                Icon(
-                    imageVector = if (isMenuExpanded) Icons.Rounded.Close else Icons.Rounded.Menu,
-                    contentDescription = "Menu"
-                )
-            }
-        }
     }
 
     if (showAddDialog) {
@@ -3042,6 +3089,7 @@ fun SwipeableSongRow(
     var showSongCardSheet by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showPlaylistSelector by remember { mutableStateOf(false) }
     var showDownloadDialog by remember { mutableStateOf(false) }
     var downloadFormats by remember { mutableStateOf<List<com.ianocent.musicplayer.data.AudioFormat>>(emptyList()) }
     var isLoadingFormats by remember { mutableStateOf(false) }
@@ -3204,6 +3252,18 @@ fun SwipeableSongRow(
                         RoundedClickableRow(
                             onClick = {
                                 showActionDialog = false
+                                showPlaylistSelector = true
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.PlaylistPlay, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Text("Add to Playlists", fontWeight = FontWeight.SemiBold)
+                        }
+
+                        RoundedClickableRow(
+                            onClick = {
+                                showActionDialog = false
                                 showEditDialog = true
                             },
                             modifier = Modifier.fillMaxWidth()
@@ -3245,8 +3305,8 @@ fun SwipeableSongRow(
         EditSongDialog(
             song = song,
             onDismiss = { showEditDialog = false },
-            onUpdate = { newTitle, newArtist ->
-                viewModel.updateSongInfo(song.id, newTitle, newArtist)
+            onUpdate = { newTitle, newArtist, newImageUri ->
+                viewModel.updateSongInfo(song.id, newTitle, newArtist, newImageUri)
                 showEditDialog = false
             }
         )
@@ -3320,16 +3380,48 @@ fun SwipeableSongRow(
             }
         )
     }
+
+    if (showPlaylistSelector) {
+        val allPlaylists by viewModel.playlists.collectAsState()
+        PlaylistSelectionDialog(
+            song = song,
+            playlists = allPlaylists,
+            onDismiss = { showPlaylistSelector = false },
+            onSelect = { playlist ->
+                viewModel.addSongsToPlaylist(playlist, listOf(song.id))
+                showPlaylistSelector = false
+            }
+        )
+    }
 }
 
 @Composable
 fun EditSongDialog(
     song: Song,
     onDismiss: () -> Unit,
-    onUpdate: (String, String) -> Unit
+    onUpdate: (String, String, Uri?) -> Unit
 ) {
     var title by remember { mutableStateOf(song.title) }
     var artist by remember { mutableStateOf(song.artist) }
+    var pickedImageUri by remember { mutableStateOf<Uri?>(null) }
+
+    val context = LocalContext.current
+    var songArt by remember(song.id, pickedImageUri) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(song.id, pickedImageUri) {
+        songArt = try {
+            val uri = pickedImageUri ?: return@LaunchedEffect
+            val inputStream = context.contentResolver.openInputStream(uri)
+            val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+            inputStream?.close()
+            bitmap?.asImageBitmap()
+        } catch (_: Exception) { null }
+    }
+
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        pickedImageUri = uri
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3338,26 +3430,135 @@ fun EditSongDialog(
         title = { Text("Edit Song Info", fontWeight = FontWeight.Bold) },
         text = {
             Column {
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("Title") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                // --- Album Art Picker ---
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(140.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val displayArt = songArt
+                    Box(
+                        modifier = Modifier
+                            .size(120.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                            .clickable { imagePicker.launch("image/*") },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (displayArt != null) {
+                            Image(
+                                bitmap = displayArt,
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Icon(
+                                Icons.Rounded.MusicNote,
+                                contentDescription = null,
+                                modifier = Modifier.size(40.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        // Overlay edit icon
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(4.dp)
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Rounded.Edit,
+                                contentDescription = "Change album art",
+                                modifier = Modifier.size(16.dp),
+                                tint = Color.White
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // --- Title field (like CreatePlaylist style) ---
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .padding(6.dp)
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    }
+                    BasicTextField(
+                        value = title,
+                        onValueChange = { title = it },
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 8.dp),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        decorationBox = { innerTextField ->
+                            if (title.isEmpty()) Text("Song title...", color = Color.Gray)
+                            innerTextField()
+                        }
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = artist,
-                    onValueChange = { artist = it },
-                    label = { Text("Artist") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+
+                // --- Artist field (same style) ---
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .padding(6.dp)
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Rounded.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    }
+                    BasicTextField(
+                        value = artist,
+                        onValueChange = { artist = it },
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 8.dp),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        decorationBox = { innerTextField ->
+                            if (artist.isEmpty()) Text("Artist name...", color = Color.Gray)
+                            innerTextField()
+                        }
+                    )
+                }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onUpdate(title, artist) },
+                onClick = { onUpdate(title, artist, pickedImageUri) },
                 enabled = title.isNotBlank() && artist.isNotBlank()
             ) { Text("Save") }
         },
@@ -3941,6 +4142,8 @@ fun MiniLayoutFloating(
     currentSong: Song? = null,
     onNowPlayingClick: () -> Unit = {},
     isPillAtBottom: Boolean = false,
+    currentPosition: Long = 0,
+    duration: Long = 0,
     onToggleVolume: () -> Unit = {}
 ) {
     val shuffleOn by viewModel.isShuffleOn.collectAsState()
@@ -3956,6 +4159,10 @@ fun MiniLayoutFloating(
                 adaptiveColor = adaptiveColor,
                 onNowPlayingClick = onNowPlayingClick,
                 isPillAtBottom = true,
+                isPlaying = isPlaying,
+                isBuffering = isBuffering,
+                currentPosition = currentPosition,
+                duration = duration,
                 onToggleVolume = onToggleVolume
             )
         }
@@ -4038,6 +4245,8 @@ fun MiniLayoutQueue(
     currentSong: Song? = null,
     onNowPlayingClick: () -> Unit = {},
     isPillAtBottom: Boolean = false,
+    currentPosition: Long = 0,
+    duration: Long = 0,
     onToggleVolume: () -> Unit = {}
 ) {
     val inactTint = btnTint.copy(alpha = 0.75f)
@@ -4051,6 +4260,10 @@ fun MiniLayoutQueue(
                 adaptiveColor = adaptiveColor,
                 onNowPlayingClick = onNowPlayingClick,
                 isPillAtBottom = true,
+                isPlaying = isPlaying,
+                isBuffering = false,
+                currentPosition = currentPosition,
+                duration = duration,
                 onToggleVolume = onToggleVolume
             )
         }
