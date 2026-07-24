@@ -15,8 +15,8 @@
 
 | Asset | Link                                                                                                          |
 | :--- |:--------------------------------------------------------------------------------------------------------------|
-| **APK (Latest)** | [IanPlayer-v.4.0.0.apk](https://github.com/ianocent/ianplayer/releases/download/v4.0.0/IanPlayer-v.4.0.0.apk) |
-| **Release Notes** | [v4.0.0](https://github.com/ianocent/IanPlayer/releases/tag/v4.0.0)                                           |
+| **APK (Latest)** | [IanPlayer-v.4.5.0.apk](https://github.com/ianocent/ianplayer/releases/download/v4.5.0/IanPlayer-v.4.5.0.apk) |
+| **Release Notes** | [v4.5.0](https://github.com/ianocent/IanPlayer/releases/tag/v4.5.0)                                           |
 
 ---
 
