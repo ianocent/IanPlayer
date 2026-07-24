@@ -396,11 +396,6 @@ fun WaveRecordSheet(
     var recorderRef = remember { mutableStateOf<AvRecorder?>(null) }
     var mediaProjection by remember { mutableStateOf<MediaProjection?>(null) }
 
-    // Start WaveProjectionService immediately so it's active when getMediaProjection() fires
-    LaunchedEffect(Unit) {
-        ContextCompat.startForegroundService(context, Intent(context, WaveProjectionService::class.java))
-    }
-
     // Observed position for recomposition during recording
     var observedPosition by remember { mutableStateOf(0L) }
     
@@ -549,6 +544,11 @@ fun WaveRecordSheet(
                                 mediaProjection != null && hasAudioPerm -> startRecording()
                                 mediaProjection != null -> recordAudioPermLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
                                 hasAudioPerm -> {
+                                    try {
+                                        ContextCompat.startForegroundService(context, Intent(context, WaveProjectionService::class.java))
+                                    } catch (e: Exception) {
+                                        Timber.e(e, "startForegroundService failed")
+                                    }
                                     val mgr = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                                     projLauncher.launch(mgr.createScreenCaptureIntent())
                                 }

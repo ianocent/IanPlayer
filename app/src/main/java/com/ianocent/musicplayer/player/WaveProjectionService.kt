@@ -9,6 +9,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import timber.log.Timber
 
 class WaveProjectionService : Service() {
     override fun onCreate() {
@@ -31,13 +32,23 @@ class WaveProjectionService : Service() {
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(1001, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } else {
-            startForeground(1001, n)
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(1001, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            } else {
+                startForeground(1001, n)
+            }
+        } catch (e: SecurityException) {
+            Timber.w(e, "startForeground with mediaProjection type failed, retrying without type")
+            try {
+                @Suppress("DEPRECATION")
+                startForeground(1001, n)
+            } catch (e2: Exception) {
+                Timber.e(e2, "startForeground fallback also failed")
+            }
         }
-        
+
         return START_NOT_STICKY
     }
 }

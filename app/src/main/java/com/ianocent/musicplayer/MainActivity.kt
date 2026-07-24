@@ -532,12 +532,14 @@ fun ListingScreen(
 
     val isBuffering by viewModel.isBuffering.collectAsState()
 
-    val adaptiveColor = remember(ambientColor, isDarkMode) {
+    val rawAdaptiveColor = remember(ambientColor, isDarkMode) {
         com.ianocent.musicplayer.data.getAdaptiveControlColor(ambientColor, isDarkMode)
     }
-    val minibarTextColor = remember(adaptiveColor) {
-        if (adaptiveColor.luminance() > 0.5f) Color.Black else Color.White
+    val adaptiveColor by animateColorAsState(rawAdaptiveColor, tween(500), label = "adaptiveColor")
+    val rawMinibarTextColor = remember(rawAdaptiveColor) {
+        if (rawAdaptiveColor.luminance() > 0.5f) Color.Black else Color.White
     }
+    val minibarTextColor by animateColorAsState(rawMinibarTextColor, tween(500), label = "minibarTextColor")
 
     val filteredSongs = remember(songs, searchQuery) {
         if (searchQuery.isBlank()) songs
@@ -1278,7 +1280,7 @@ fun ListingScreen(
                         }
 
                         if (selectedAlbum != null) {
-                            val albumSongs = albumGroups.find { it.key == selectedAlbum }?.value ?: emptyList()
+                            val albumSongs = albumGroups.find { it.key.equals(selectedAlbum, ignoreCase = true) }?.value ?: emptyList()
                             AlbumDetailView(
                                 album = selectedAlbum!!,
                                 songs = albumSongs,
@@ -1294,7 +1296,7 @@ fun ListingScreen(
                                 }
                             )
                         } else if (selectedArtist != null) {
-                            val artistSongList = artistGroups.find { it.key == selectedArtist }?.value ?: emptyList()
+                            val artistSongList = artistGroups.find { it.key.equals(selectedArtist, ignoreCase = true) }?.value ?: emptyList()
                             ArtistDetailView(
                                 artist = selectedArtist!!,
                                 songs = artistSongList,
@@ -1371,19 +1373,27 @@ fun ListingScreen(
                         val filterLabel = streamFilterArtist ?: streamFilterAlbum ?: ""
                         val clearFilter = { streamFilterArtist = null; streamFilterAlbum = null }
 
+                        // Trigger search when artist filter set, to load more songs
+                        val currentFilter = streamFilterArtist
+                        LaunchedEffect(currentFilter) {
+                            if (currentFilter != null && searchQuery.isBlank()) {
+                                viewModel.searchRemoteSongs(currentFilter)
+                            }
+                        }
+
                         Box(modifier = Modifier.fillMaxSize()) {
                             if (filterActive) {
                                 // Stream filter by artist/album
                                 val allSongs = if (searchQuery.isBlank()) {
                                     val genreSongsMap by viewModel.genreSongs.collectAsState()
                                     val selectedGenre by viewModel.selectedGenre.collectAsState()
-                                    genreSongsMap[selectedGenre] ?: emptyList()
+                                    genreSongsMap[selectedGenre] ?: streamSongs
                                 } else {
                                     streamSongs
                                 }
                                 val filteredSongs = allSongs.filter { s ->
-                                    (streamFilterArtist == null || s.artist == streamFilterArtist) &&
-                                    (streamFilterAlbum == null || s.album == streamFilterAlbum)
+                                    (streamFilterArtist == null || s.artist.equals(streamFilterArtist, ignoreCase = true)) &&
+                                    (streamFilterAlbum == null || s.album.equals(streamFilterAlbum, ignoreCase = true))
                                 }
 
                                 Column(modifier = Modifier.fillMaxSize()) {
@@ -2289,15 +2299,48 @@ fun ArtistDetailView(
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
-            Text(
-                text = artist,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
+            // Inline header: back | title | shuffle menu
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 24.dp, bottom = 16.dp),
-                textAlign = TextAlign.Center
-            )
+                    .padding(top = 24.dp, bottom = 16.dp, start = 4.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Rounded.ArrowBackIosNew, contentDescription = "Back")
+                }
+                Text(
+                    text = artist,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Center
+                )
+                Box {
+                    var menuExpanded by remember { mutableStateOf(false) }
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(Icons.Rounded.MoreVert, contentDescription = "Menu")
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Play All") },
+                            onClick = {
+                                menuExpanded = false
+                                if (songs.isNotEmpty()) viewModel.setQueue(songs)
+                            },
+                            leadingIcon = { Icon(Icons.Rounded.PlayArrow, null) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Shuffle") },
+                            onClick = { menuExpanded = false; onShuffle() },
+                            leadingIcon = { Icon(Icons.Rounded.Shuffle, null) }
+                        )
+                    }
+                }
+            }
 
             if (songs.isEmpty()) {
                 Box(
@@ -2341,59 +2384,6 @@ fun ArtistDetailView(
                     }
                     DraggableScrollbar(lazyListState, adaptiveColor)
                 }
-            }
-        }
-
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(24.dp),
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            var isMenuExpanded by remember { mutableStateOf(false) }
-
-            AnimatedVisibility(
-                visible = isMenuExpanded,
-                enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
-                exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 })
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    SmallFloatingActionButton(
-                        onClick = onBack,
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ) { Icon(Icons.Rounded.ArrowBackIosNew, contentDescription = "Back") }
-
-                    SmallFloatingActionButton(
-                        onClick = {
-                            if (songs.isNotEmpty()) {
-                                viewModel.setQueue(songs)
-                            }
-                        },
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ) { Icon(Icons.Rounded.PlayArrow, contentDescription = "Play All") }
-
-                    SmallFloatingActionButton(
-                        onClick = { onShuffle() },
-                        containerColor = adaptiveColor,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    ) { Icon(Icons.Rounded.Shuffle, contentDescription = "Shuffle") }
-                }
-            }
-
-            FloatingActionButton(
-                onClick = { isMenuExpanded = !isMenuExpanded },
-                containerColor = if (isMenuExpanded) MaterialTheme.colorScheme.surfaceVariant else adaptiveColor,
-                contentColor = if (isMenuExpanded) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimary,
-                shape = CircleShape
-            ) {
-                Icon(
-                    imageVector = if (isMenuExpanded) Icons.Rounded.Close else Icons.Rounded.Menu,
-                    contentDescription = "Menu"
-                )
             }
         }
     }
