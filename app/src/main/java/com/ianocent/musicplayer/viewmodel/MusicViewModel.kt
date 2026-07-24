@@ -21,6 +21,10 @@ import com.ianocent.musicplayer.player.PlaybackService
 import com.ianocent.musicplayer.player.PlayerManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -734,6 +738,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val songs: StateFlow<List<Song>> = _songs
+
+    // -- Smart playlists (derived from play counts + dateAdded) --
+    val mostPlayedSongs: StateFlow<List<Song>> = combine(_songs, _playCounts) { songs, counts ->
+        songs.filter { it.id in counts }
+            .sortedByDescending { counts[it.id] ?: 0 }
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val recentlyAddedSongs: StateFlow<List<Song>> = _songs.map { songs ->
+        songs.sortedByDescending { it.dateAdded }
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val neverPlayedSongs: StateFlow<List<Song>> = combine(_songs, _playCounts) { songs, counts ->
+        songs.filter { it.id !in counts }
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     private val _isLoadingSongs = MutableStateFlow(false)
     val isLoadingSongs: StateFlow<Boolean> = _isLoadingSongs
