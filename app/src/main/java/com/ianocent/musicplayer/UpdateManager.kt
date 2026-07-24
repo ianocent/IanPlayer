@@ -18,27 +18,36 @@ import java.net.URL
 
 object UpdateManager {
 
-    private const val UPDATE_URL =
-        "https://raw.githubusercontent.com/Ianocent/IanPlayer/refs/heads/main/version.json"
+    private const val GITHUB_API =
+        "https://api.github.com/repos/ianocent/IanPlayer/releases/latest"
 
     suspend fun checkForUpdate(): UpdateInfo? = withContext(Dispatchers.IO) {
         try {
-            val url = URL(UPDATE_URL)
+            val url = URL(GITHUB_API)
             val conn = url.openConnection() as HttpURLConnection
             conn.connectTimeout = 10000
             conn.readTimeout = 10000
             conn.requestMethod = "GET"
+            conn.setRequestProperty("Accept", "application/vnd.github+json")
 
             if (conn.responseCode != 200) return@withContext null
 
             val json = conn.inputStream.bufferedReader().use { it.readText() }
             val obj = JSONObject(json)
 
+            val tagName = obj.getString("tag_name") // "v5.0.0"
+            val versionName = tagName.removePrefix("v")
+            val releaseNotes = obj.optString("body", "")
+            val assets = obj.getJSONArray("assets")
+            if (assets.length() == 0) return@withContext null
+
+            val downloadUrl = assets.getJSONObject(0).getString("browser_download_url")
+
             UpdateInfo(
-                versionCode = obj.getInt("versionCode"),
-                versionName = obj.getString("versionName"),
-                downloadUrl = obj.getString("downloadUrl"),
-                releaseNotes = obj.optString("releaseNotes", "")
+                versionCode = 0, // not used — semver comparison via versionName
+                versionName = versionName,
+                downloadUrl = downloadUrl,
+                releaseNotes = releaseNotes
             )
         } catch (e: Exception) {
             null

@@ -996,14 +996,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     val pkgInfo = getApplication<android.app.Application>()
                         .packageManager
                         .getPackageInfo(getApplication<android.app.Application>().packageName, 0)
-                    val currentVersionCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                        pkgInfo.longVersionCode.toInt()
-                    } else {
-                        @Suppress("DEPRECATION")
-                        pkgInfo.versionCode
-                    }
+                    val currentVersionName = pkgInfo.versionName ?: ""
 
-                    if (info.versionCode > currentVersionCode) {
+                    if (compareSemVer(info.versionName, currentVersionName) > 0) {
                         _updateInfo.value = info
                         _isUpdateAvailable.value = true
                     }
@@ -1012,6 +1007,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    private fun compareSemVer(v1: String, v2: String): Int {
+        val parts1 = v1.split(".").map { it.toIntOrNull() ?: 0 }
+        val parts2 = v2.split(".").map { it.toIntOrNull() ?: 0 }
+        for (i in 0 until maxOf(parts1.size, parts2.size)) {
+            val diff = (parts1.getOrElse(i) { 0 }) - (parts2.getOrElse(i) { 0 })
+            if (diff != 0) return diff
+        }
+        return 0
     }
 
     fun downloadUpdate() {
