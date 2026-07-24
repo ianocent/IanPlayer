@@ -129,13 +129,13 @@ fun WaveRecordContent(song: Song?, syncedLyric: List<LyricLine>?, plainLyric: St
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(0.3f), Color.Black.copy(0.85f)))))
         Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.Bottom) {
             if (hl) {
-                Text(
-                    "\u201C",
-                    fontSize = 56.sp,
-                    color = Color.White.copy(alpha = 0.4f),
-                    fontWeight = FontWeight.Black,
-                    textAlign = TextAlign.Start
-                )
+//                Text(
+//                    "\u201C",
+//                    fontSize = 56.sp,
+//                    color = Color.White.copy(alpha = 0.4f),
+//                    fontWeight = FontWeight.Black,
+//                    textAlign = TextAlign.Start
+//                )
                 Box(Modifier.weight(1f).fillMaxWidth(), Alignment.Center) {
                     AnimatedLyricLine(syncedLyric, plainLyric, currentPosition, accentColor, Modifier.fillMaxWidth()) 
                 }

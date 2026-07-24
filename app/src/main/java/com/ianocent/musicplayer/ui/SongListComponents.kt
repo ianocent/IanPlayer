@@ -39,7 +39,9 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Photo
+import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.PlaylistPlay
+import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -653,6 +655,30 @@ fun SwipeableSongRow(
                         Icon(Icons.Rounded.Photo, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(12.dp))
                         Text("Song Card", fontWeight = FontWeight.SemiBold)
+                    }
+
+                    RoundedClickableRow(
+                        onClick = {
+                            showActionDialog = false
+                            viewModel.playNext(song)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Rounded.SkipNext, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text("Play Next", fontWeight = FontWeight.SemiBold)
+                    }
+
+                    RoundedClickableRow(
+                        onClick = {
+                            showActionDialog = false
+                            viewModel.addToQueue(song)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Rounded.PlaylistAdd, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text("Add to Queue", fontWeight = FontWeight.SemiBold)
                     }
 
                     if (song.isStream) {

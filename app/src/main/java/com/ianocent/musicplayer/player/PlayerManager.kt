@@ -188,6 +188,25 @@ class PlayerManager(private val context: Context) {
         return currentRepeatMode
     }
 
+    fun addToQueue(song: Song) {
+        try {
+            val p = player ?: return
+            p.addMediaItem(buildMediaItem(song))
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun insertAfterCurrent(song: Song, currentIndex: Int) {
+        try {
+            val p = player ?: return
+            val insertPos = (currentIndex + 1).coerceIn(0, p.mediaItemCount)
+            p.addMediaItem(insertPos, buildMediaItem(song))
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     fun release() {
         controllerFuture?.let { MediaController.releaseFuture(it) }
         player = null
