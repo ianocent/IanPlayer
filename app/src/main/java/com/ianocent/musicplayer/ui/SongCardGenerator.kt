@@ -20,6 +20,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -193,7 +194,10 @@ fun SongCardSheet(
         ) {
             Box(
                 modifier = Modifier.drawWithContent {
-                    graphicsLayer.record { this@drawWithContent.drawContent() }
+                    graphicsLayer.record {
+                        drawRect(Color.Transparent, size = this.size, blendMode = BlendMode.Src)
+                        this@drawWithContent.drawContent()
+                    }
                     drawLayer(graphicsLayer)
                 }
             ) {

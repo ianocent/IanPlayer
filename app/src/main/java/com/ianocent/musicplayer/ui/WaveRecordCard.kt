@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -165,7 +166,7 @@ private class AvRecorder(
     private val height: Int,
     private val bitRate: Int = 10_000_000,
     private val frameRate: Int = 60,
-    private val sampleRate: Int = 44100,
+    private val sampleRate: Int = 48000,
     private val mediaProjection: MediaProjection? = null,
     private val useSystemAudio: Boolean = false
 ) {
@@ -192,12 +193,15 @@ private class AvRecorder(
     }
 
     fun startVideo(): Boolean = try {
-        videoCodec = MediaCodec.createEncoderByType("video/avc").apply {
-            configure(MediaFormat.createVideoFormat("video/avc", width, height).apply {
+        videoCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_VP9).apply {
+            configure(MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_VP9, width, height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.VP9Profile2)
+                }
             }, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             inputSurface = createInputSurface()
             start()
@@ -207,10 +211,9 @@ private class AvRecorder(
 
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     fun startAudio(): Boolean = try {
-        audioCodec = MediaCodec.createEncoderByType("audio/mp4a-latm").apply {
-            configure(MediaFormat.createAudioFormat("audio/mp4a-latm", sampleRate, 2).apply {
+        audioCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS).apply {
+            configure(MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, sampleRate, 2).apply {
                 setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
-                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
             }, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             start()
         }
@@ -270,7 +273,7 @@ private class AvRecorder(
     }
 
     fun startMuxer(path: String) {
-        muxer = MediaMuxer(path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        muxer = MediaMuxer(path, MediaMuxer.OutputFormat.MUXER_OUTPUT_WEBM)
         isMuxerStarted = false
     }
 
@@ -278,6 +281,7 @@ private class AvRecorder(
         try {
             val s = inputSurface ?: return
             val c = s.lockHardwareCanvas()
+            c.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
             val paint = android.graphics.Paint().apply { isFilterBitmap = true }
             val srcW = bitmap.width
             val srcH = bitmap.height
@@ -433,7 +437,7 @@ fun WaveRecordSheet(
         coroutineScope.launch {
             try {
 
-            val tempPath = context.cacheDir.resolve("wave_temp.mp4").absolutePath
+            val tempPath = context.cacheDir.resolve("wave_temp.webm").absolutePath
             val cardW = with(density) { 360.dp.toPx().toInt().coerceAtMost(720).let { it - (it % 16) } }
             val cardH = with(density) { 250.dp.toPx().toInt().coerceAtMost(500).let { it - (it % 16) } }
             val bps = (4_000_000L * cardW * cardH / (360 * 480)).toInt().coerceIn(3_000_000, 10_000_000)
@@ -487,10 +491,10 @@ fun WaveRecordSheet(
                         Timber.e("save: empty file, skipping")
                         return@withContext
                     }
-                    val filename = "wave_${System.currentTimeMillis()}.mp4"
+                    val filename = "wave_${System.currentTimeMillis()}.webm"
                     val cv = ContentValues().apply {
                         put(MediaStore.Video.Media.DISPLAY_NAME, filename)
-                        put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                        put(MediaStore.Video.Media.MIME_TYPE, "video/webm")
                         put(MediaStore.Video.Media.RELATIVE_PATH, "Pictures/IanPlayer")
                     }
                     val uri = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, cv)
@@ -528,7 +532,10 @@ fun WaveRecordSheet(
     }) {
         Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.drawWithContent {
-                graphicsLayer.record { this@drawWithContent.drawContent() }
+                graphicsLayer.record {
+                    drawRect(Color.Transparent, size = this.size, blendMode = BlendMode.Src)
+                    this@drawWithContent.drawContent()
+                }
                 drawLayer(graphicsLayer)
             }) {
                 WaveRecordContent(song, syncedLyric, plainLyric, displayPosition, albumArt, accentColor)
