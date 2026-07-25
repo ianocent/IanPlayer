@@ -166,7 +166,7 @@ private class AvRecorder(
     private val height: Int,
     private val bitRate: Int = 10_000_000,
     private val frameRate: Int = 60,
-    private val sampleRate: Int = 48000,
+    private val sampleRate: Int = 44100,
     private val mediaProjection: MediaProjection? = null,
     private val useSystemAudio: Boolean = false
 ) {
@@ -193,8 +193,8 @@ private class AvRecorder(
     }
 
     fun startVideo(): Boolean = try {
-        videoCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_VP9).apply {
-            configure(MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_VP9, width, height).apply {
+        videoCodec = MediaCodec.createEncoderByType("video/x-vnd.on2.vp9").apply {
+            configure(MediaFormat.createVideoFormat("video/x-vnd.on2.vp9", width, height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
@@ -209,36 +209,10 @@ private class AvRecorder(
         true
     } catch (e: Exception) { Timber.e(e, "video codec start failed"); false }
 
-    @RequiresPermission(Manifest.permission.RECORD_AUDIO)
-    fun startAudio(): Boolean = try {
-        audioCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS).apply {
-            configure(MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, sampleRate, 2).apply {
-                setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
-            }, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            start()
-        }
-        if (useSystemAudio && mediaProjection != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val audioPlaybackConfig = AudioPlaybackCaptureConfiguration.Builder(mediaProjection!!)
-                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
-                .addMatchingUsage(AudioAttributes.USAGE_GAME)
-                .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
-                .build()
-            val af = AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                .setSampleRate(sampleRate).setChannelMask(AudioFormat.CHANNEL_IN_STEREO).build()
-            val bs = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT) * 4
-            audioRecord = AudioRecord.Builder()
-                .setAudioPlaybackCaptureConfig(audioPlaybackConfig)
-                .setAudioFormat(af).setBufferSizeInBytes(bs).build().apply { startRecording() }
-        } else {
-            val af = AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                .setSampleRate(sampleRate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build()
-            val bs = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT) * 4
-            audioRecord = AudioRecord.Builder()
-                .setAudioSource(MediaRecorder.AudioSource.MIC)
-                .setAudioFormat(af).setBufferSizeInBytes(bs).build().apply { startRecording() }
-        }
-        true
-    } catch (e: Exception) { Timber.e(e, "audio start failed"); false }
+    fun startAudio(): Boolean {
+        // VP9/WebM alpha: skip audio, video-only more reliable
+        return false
+    }
 
     fun startAudioFeed() {
         audioFeedJob = audioFeedScope.launch {
@@ -281,7 +255,7 @@ private class AvRecorder(
         try {
             val s = inputSurface ?: return
             val c = s.lockHardwareCanvas()
-            c.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+            c.drawColor(0xFF00B140.toInt())
             val paint = android.graphics.Paint().apply { isFilterBitmap = true }
             val srcW = bitmap.width
             val srcH = bitmap.height
@@ -397,6 +371,7 @@ fun WaveRecordSheet(
     val density = LocalDensity.current
 
     var isRecording by remember { mutableStateOf(false) }
+    var recordingJob = remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var recorderRef = remember { mutableStateOf<AvRecorder?>(null) }
     var mediaProjection by remember { mutableStateOf<MediaProjection?>(null) }
 
@@ -432,24 +407,22 @@ fun WaveRecordSheet(
         }
     }
 
-    @androidx.annotation.RequiresPermission(android.Manifest.permission.RECORD_AUDIO)
     fun startRecording() {
-        coroutineScope.launch {
+        recordingJob.value = coroutineScope.launch {
             try {
 
             val tempPath = context.cacheDir.resolve("wave_temp.webm").absolutePath
             val cardW = with(density) { 360.dp.toPx().toInt().coerceAtMost(720).let { it - (it % 16) } }
             val cardH = with(density) { 250.dp.toPx().toInt().coerceAtMost(500).let { it - (it % 16) } }
             val bps = (4_000_000L * cardW * cardH / (360 * 480)).toInt().coerceIn(3_000_000, 10_000_000)
-            val rec = AvRecorder(cardW, cardH, bitRate = bps, frameRate = 60, mediaProjection = mediaProjection, useSystemAudio = true)
+            val rec = AvRecorder(cardW, cardH, bitRate = bps, frameRate = 30, mediaProjection = mediaProjection, useSystemAudio = true)
 
-            if (!rec.startVideo()) { isRecording = false; return@launch }
-            if (!rec.startAudio()) { Timber.w("audio start failed") }
+            if (!rec.startVideo()) { isRecording = false; recordingJob.value = null; return@launch }
+            rec.startAudio()
 
             val startNs = System.nanoTime()
             rec.setStartTime(startNs)
             rec.isRunning = true
-            rec.startAudioFeed()
             rec.startMuxer(tempPath)
             recorderRef.value = rec
             isRecording = true
@@ -461,7 +434,7 @@ fun WaveRecordSheet(
             } catch (_: Exception) {}
 
             var lastNs = 0L
-            val intervalNs = 1_000_000_000L / 60 // 60 FPS
+            val intervalNs = 1_000_000_000L / 30 // 30 FPS
             while (isActive && isRecording) {
                 try {
                     val frameNs = withFrameNanos { it }
@@ -509,10 +482,12 @@ fun WaveRecordSheet(
                     Timber.d("save: done")
                 } catch (e: Exception) { Timber.e(e, "save failed") }
             }
+            recordingJob.value = null
             } catch (e: Exception) {
                 Timber.e(e, "record failed")
                 isRecording = false
                 recorderRef.value = null
+                recordingJob.value = null
             }
         }
     }
@@ -569,9 +544,6 @@ fun WaveRecordSheet(
                 } else {
                     Button(
                         onClick = {
-                            // Cukup matiin flag isRecording -> while loop di startRecording()
-                            // keluar natural, lalu job yang sama yang urus rec.stop() + save.
-                            // Ini hindari double-stop race dari 2 caller berbeda.
                             isRecording = false
                         },
                         modifier = Modifier.weight(1f),
