@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/Kotlin-2.1+-7F52FF?style=flat-square&logo=kotlin" alt="Kotlin" />
   <img src="https://img.shields.io/badge/Compose-Material3-0081CB?style=flat-square" alt="Compose" />
   <img src="https://img.shields.io/badge/Min%20SDK-24-333?style=flat-square" alt="Min SDK" />
-  <img src="https://img.shields.io/badge/Version-4.0.0-8A2BE2?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/Version-5.0.5-8A2BE2?style=flat-square" alt="Version" />
 </div>
 
 ---
@@ -15,8 +15,8 @@
 
 | Asset | Link                                                                                                          |
 | :--- |:--------------------------------------------------------------------------------------------------------------|
-| **APK (Latest)** | [IanPlayer-v.4.5.0.apk](https://github.com/ianocent/ianplayer/releases/download/v4.5.0/IanPlayer-v.4.5.0.apk) |
-| **Release Notes** | [v4.5.0](https://github.com/ianocent/IanPlayer/releases/tag/v4.5.0)                                           |
+| **APK (Latest)** | [IanPlayer-v.5.0.5.apk](https://github.com/ianocent/ianplayer/releases/download/v5.0.5/IanPlayer-v.5.0.5.apk) |
+| **Release Notes** | [v5.0.5](https://github.com/ianocent/IanPlayer/releases/tag/v5.0.5) |
 
 ---
 
@@ -74,7 +74,7 @@
 | **Playlist Card** | Playlist summary with song list; saved to gallery + shareable. |
 | **Recap Card** | Monthly music recap card (Wrapped-style) with stats. |
 
-All cards are rendered with Compose `GraphicsLayer`, saved to `Pictures/IanPlayer/`, and can be shared.
+All cards are rendered with Compose `GraphicsLayer`, saved to `Pictures/IanPlayer/` with transparent rounded corners, and can be shared.
 
 ### 📊 Monthly Music Recap
 
@@ -88,11 +88,11 @@ All cards are rendered with Compose `GraphicsLayer`, saved to `Pictures/IanPlaye
 
 - **14-bar audio spectrum** visualizer from `Visualizer` FFT.
 - **Animated lyric line** with crossfade between lines.
-- **Screen recording** with system audio via `MediaProjection` + `AudioPlaybackCapture`.
-- **H.264 + AAC** encoding via `MediaCodec` + `MediaMuxer`.
+- **Screen recording** via `MediaProjection` (video only, no system audio).
+- **VP9 + WebM** encoding via `MediaCodec` + `MediaMuxer` with chroma green background (`#00B140`) for keyable transparency in editors.
 - **Foreground service** for recording (`WaveProjectionService`).
 - **Save to gallery** — video saved to `Pictures/IanPlayer/`.
-- **Save static image** — bitmap frame capture.
+- **Save static image** — PNG with transparent rounded corners.
 - **Microphone fallback** if system audio capture unavailable.
 
 ### 📚 Library & Playlists
@@ -223,7 +223,7 @@ Ian Player uses swipe and drag gestures throughout. Here's a complete reference:
 | **Persistence** | SharedPreferences (playlists, favorites, play counts, history) |
 | **YouTube Streaming** | InnerTube API + ZemerCipher (PoToken/BotGuard) |
 | **Audio Visualizer** | Android `Visualizer` (FFT) |
-| **Screen Recording** | MediaProjection + MediaCodec + MediaMuxer |
+| **Screen Recording** | MediaProjection + VP9 + WebM + MediaMuxer |
 | **MP3 Tags** | mp3agic 0.9.1 |
 | **Lyrics** | lrclib.net |
 | **Drag & Drop** | reorderable 2.4.0 |
