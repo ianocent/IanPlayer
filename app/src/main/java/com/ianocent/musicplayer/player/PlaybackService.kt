@@ -3,17 +3,16 @@ package com.ianocent.musicplayer.player
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.content.Context
 import android.content.Intent
-import android.media.AudioAttributes as AndroidAudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
 import android.os.Build
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.LoadControl
+import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.ianocent.musicplayer.MainActivity
@@ -21,9 +20,6 @@ import com.ianocent.musicplayer.MainActivity
 class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private var player: ExoPlayer? = null
-    private var audioManager: AudioManager? = null
-    private var audioFocusRequest: AudioFocusRequest? = null
-    private var wasPlayingBeforeFocusLoss = false
 
     private var headsetReceiver: HeadsetReceiver? = null
 
@@ -46,7 +42,28 @@ class PlaybackService : MediaSessionService() {
             .setAllowedCapturePolicy(C.ALLOW_CAPTURE_BY_ALL)
             .build()
 
-        player = ExoPlayer.Builder(this)
+        // Exclude MediaTek HW decoders that fail with error 6 on this platform
+        val mediaCodecSelector = object : MediaCodecSelector {
+            override fun getDecoderInfos(
+                mimeType: String,
+                requiresSecureDecoder: Boolean,
+                requiresTunnelingDecoder: Boolean
+            ): List<MediaCodecInfo> {
+                val allInfos = MediaCodecSelector.DEFAULT.getDecoderInfos(
+                    mimeType, requiresSecureDecoder, requiresTunnelingDecoder
+                )
+                return allInfos.filter { info ->
+                    info.softwareOnly ||
+                        (info.name.let { n ->
+                            !n.startsWith("OMX.MTK.", ignoreCase = true)
+                                && !n.startsWith("c2.mtk.", ignoreCase = true)
+                        })
+                }
+            }
+        }
+        val renderersFactory = DefaultRenderersFactory(this)
+            .setMediaCodecSelector(mediaCodecSelector)
+        player = ExoPlayer.Builder(this, renderersFactory)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .setHandleAudioBecomingNoisy(true)
             .setLoadControl(loadControl)
@@ -68,19 +85,6 @@ class PlaybackService : MediaSessionService() {
             .setSessionActivity(sessionIntent)
             .setId("IanPlayerSession")
             .build()
-        setupAudioFocus()
-        player?.addListener(object : Player.Listener {
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (isPlaying) {
-                    requestAudioFocus()
-                } else {
-                    // Only abandon if we are NOT in a transient loss state
-                    if (!wasPlayingBeforeFocusLoss) {
-                        abandonAudioFocus()
-                    }
-                }
-            }
-        })
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
@@ -106,7 +110,6 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         unregisterReceiver(headsetReceiver)
-        abandonAudioFocus()
         mediaSession?.run {
             player?.release()
             release()
@@ -126,66 +129,6 @@ class PlaybackService : MediaSessionService() {
             addAction(android.bluetooth.BluetoothDevice.ACTION_ACL_DISCONNECTED)
         }
         registerReceiver(headsetReceiver, filter)
-    }
-
-    private fun setupAudioFocus() {
-        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val audioAttributes = AndroidAudioAttributes.Builder()
-            .setUsage(AndroidAudioAttributes.USAGE_MEDIA)
-            .setContentType(AndroidAudioAttributes.CONTENT_TYPE_MUSIC)
-            .build()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(audioAttributes)
-                .setOnAudioFocusChangeListener(::onAudioFocusChange)
-                .build()
-        }
-    }
-
-    private fun onAudioFocusChange(focusChange: Int) {
-        val p = player ?: return
-        when (focusChange) {
-            AudioManager.AUDIOFOCUS_GAIN -> {
-                if (wasPlayingBeforeFocusLoss) {
-                    p.play()
-                    wasPlayingBeforeFocusLoss = false
-                }
-            }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                wasPlayingBeforeFocusLoss = p.isPlaying
-                if (p.isPlaying) p.pause()
-            }
-            AudioManager.AUDIOFOCUS_LOSS -> {
-                wasPlayingBeforeFocusLoss = false
-                if (p.isPlaying) p.pause()
-                abandonAudioFocus()
-            }
-        }
-    }
-
-    private fun requestAudioFocus(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            audioFocusRequest?.let { audioManager?.requestAudioFocus(it) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED }
-                ?: false
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager?.requestAudioFocus(
-                { onAudioFocusChange(it) },
-                AudioManager.STREAM_MUSIC,
-                AudioManager.AUDIOFOCUS_GAIN
-            ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        }
-    }
-
-    private fun abandonAudioFocus() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            audioFocusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager?.abandonAudioFocus({ /* no-op */ })
-        }
     }
 
     private fun createNotificationChannel() {

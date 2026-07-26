@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
+    <attribution android:tag="MediaPlayback" android:label="@string/attribution_media_playback" />
+    <attribution android:tag="MediaProjection" android:label="@string/attribution_media_projection" />
+    <attribution android:tag="Microphone" android:label="@string/attribution_microphone" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -51,7 +54,8 @@
             android:name=".player.PlaybackService"
             android:foregroundServiceType="mediaPlayback"
             android:exported="true"
-            android:stopWithTask="false">
+            android:stopWithTask="false"
+            android:attributionTags="MediaPlayback">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
@@ -60,11 +64,13 @@
             android:name=".player.WaveProjectionService"
             android:foregroundServiceType="mediaProjection"
             android:exported="false"
-            android:stopWithTask="false" />
+            android:stopWithTask="false"
+            android:attributionTags="MediaProjection" />
         <service
             android:name=".player.IanVoiceAssistantService"
             android:foregroundServiceType="microphone"
-            android:exported="false" />
+            android:exported="false"
+            android:attributionTags="Microphone" />
         <receiver android:name=".player.HeadsetReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.HEADSET_PLUG" />
