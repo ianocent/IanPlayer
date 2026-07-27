@@ -740,6 +740,74 @@ class YTMusicRepository(context: Context) {
         return best
     }
 
+    suspend fun fetchRelatedSongs(videoId: String): List<Song> = withContext(Dispatchers.IO) {
+        try {
+            val body = JSONObject().apply {
+                put("context", clientContext())
+                put("videoId", videoId)
+            }
+            val raw = post("next", body) ?: return@withContext emptyList()
+            val response = JSONObject(raw)
+            
+            val results = mutableListOf<Song>()
+            
+            // Mencari array playlist dari berbagai kemungkinan struktur JSON YouTube
+            val contents = response.optJSONObject("contents")
+                ?.optJSONObject("singleColumnMusicWatchNextResultsRenderer")
+                ?.optJSONObject("tabbedRenderer")
+                ?.optJSONObject("watchNextTabbedResultsRenderer")
+                ?.optJSONArray("tabs")
+                ?.optJSONObject(0)
+                ?.optJSONObject("tabRenderer")
+                ?.optJSONObject("content")
+                ?.optJSONObject("musicQueueRenderer")
+                ?.optJSONArray("content")
+                ?.optJSONObject(0)
+                ?.optJSONObject("playlistPanelRenderer")
+                ?.optJSONArray("contents") 
+                ?: response.optJSONObject("contents")
+                    ?.optJSONObject("twoColumnWatchNextResultsRenderer")
+                    ?.optJSONObject("secondaryResults")
+                    ?.optJSONObject("secondaryResults")
+                    ?.optJSONArray("results")
+
+            if (contents == null) return@withContext emptyList()
+
+            for (i in 0 until contents.length()) {
+                val item = contents.optJSONObject(i)?.optJSONObject("playlistPanelVideoRenderer")
+                    ?: contents.optJSONObject(i)?.optJSONObject("compactVideoRenderer")
+                    ?: continue
+                
+                val vId = item.optString("videoId") ?: continue
+                if (vId == videoId) continue 
+
+                val title = item.optJSONObject("title")?.optString("simpleText")
+                    ?: item.optJSONObject("title")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                    ?: "Unknown"
+                
+                val artist = item.optJSONObject("longBylineText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                    ?: item.optJSONObject("shortBylineText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                    ?: "Unknown Artist"
+
+                results.add(Song(
+                    id = vId.hashCode().toLong(),
+                    title = title,
+                    artist = artist,
+                    album = "Related",
+                    duration = 0L,
+                    uri = Uri.parse("ytmusic://placeholder/$vId"),
+                    isStream = true,
+                    remoteArtUrl = item.optJSONObject("thumbnail")?.optJSONArray("thumbnails")?.optJSONObject(0)?.optString("url"),
+                    remoteId = vId
+                ))
+            }
+            results
+        } catch (e: Exception) {
+            Timber.e(e, "YTMusicRepo fetchRelated failed")
+            emptyList()
+        }
+    }
+
     suspend fun getAudioFormats(videoId: String): List<AudioFormat> = withContext(Dispatchers.IO) {
         val formats = mutableListOf<AudioFormat>()
         

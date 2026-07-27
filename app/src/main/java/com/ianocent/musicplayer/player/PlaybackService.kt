@@ -69,6 +69,8 @@ class PlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .setLoadControl(loadControl)
             .setAudioAttributes(playbackAttributes, true)
+            .setSkipSilenceEnabled(false) // Standar musik: jangan skip silence di lagu
+            .setPauseAtEndOfMediaItems(false)
             .build().also { exoPlayer ->
                 audioSessionId = exoPlayer.audioSessionId
                 exoPlayer.addListener(object : Player.Listener {

@@ -345,30 +345,43 @@ class PlaybackController(
         if (remaining > 4) return
         if (autoFillJob?.isActive == true) return
         val current = _currentSong.value ?: return
-        if (!current.isStream) return
+        if (!current.isStream || current.remoteId == null) return
 
-        val searchArtist = current.artist.takeIf { it != "Unknown Artist" && it.isNotBlank() }
-        val query = searchArtist ?: current.title
         autoFillJob = viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                try {
-                    ytMusicRepository.searchSongs(query) {}
-                } catch (e: Exception) { null }
+            Timber.d("PlaybackController Triggering smart auto-fill for: ${current.title}")
+            val relatedSongs = ytMusicRepository.fetchRelatedSongs(current.remoteId)
+            
+            if (relatedSongs.isEmpty()) {
+                // Fallback ke search biasa kalau endpoint 'next' gagal
+                val query = "${current.artist} ${current.title} radio"
+                val result = withContext(Dispatchers.IO) {
+                    try { ytMusicRepository.searchSongs(query) {} } catch (e: Exception) { null }
+                }
+                if (result is StreamSearchResult.Success) {
+                    processAutoFillResults(result.songs)
+                }
+            } else {
+                processAutoFillResults(relatedSongs)
             }
-            if (result !is StreamSearchResult.Success) return@launch
-            val currentList = _queue.value
-            val currentIds = currentList.map { it.id }.toSet()
-            val fresh = result.songs
-                .filterNot { it.id in playedSongIds }
-                .filterNot { it.id in currentIds }
-                .take(10)
-            if (fresh.isEmpty()) return@launch
-            val newQueue = currentList.toMutableList()
-            newQueue.addAll(fresh)
-            _queue.value = newQueue
-            fresh.forEach { playerManager.addToQueue(it) }
-            savePlayerState()
         }
+    }
+
+    private fun processAutoFillResults(songs: List<Song>) {
+        val currentList = _queue.value
+        val currentIds = currentList.map { it.id }.toSet()
+        val fresh = songs
+            .filterNot { it.id in playedSongIds }
+            .filterNot { it.id in currentIds }
+            .take(5)
+        
+        if (fresh.isEmpty()) return
+        
+        val newQueue = currentList.toMutableList()
+        newQueue.addAll(fresh)
+        _queue.value = newQueue
+        
+        fresh.forEach { playerManager.addToQueue(it) }
+        savePlayerState()
     }
 
     // == Playback Control ==
