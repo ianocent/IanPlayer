@@ -765,6 +765,18 @@ fun SwipeableSongRow(
                     if (song.isStream) {
                         RoundedClickableRow(
                             onClick = {
+                                showActionDialog = false
+                                showPlaylistSelector = true
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.PlaylistPlay, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Text("Add to Playlists", fontWeight = FontWeight.SemiBold)
+                        }
+
+                        RoundedClickableRow(
+                            onClick = {
                                 isLoadingFormats = true
                                 showActionDialog = false
                                 viewModel.getAudioFormats(song) { formats ->
@@ -780,18 +792,6 @@ fun SwipeableSongRow(
                             Text("Download", fontWeight = FontWeight.SemiBold)
                         }
                     } else {
-                        RoundedClickableRow(
-                            onClick = {
-                                showActionDialog = false
-                                showPlaylistSelector = true
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Rounded.PlaylistPlay, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(12.dp))
-                            Text("Add to Playlists", fontWeight = FontWeight.SemiBold)
-                        }
-
                         RoundedClickableRow(
                             onClick = {
                                 showActionDialog = false

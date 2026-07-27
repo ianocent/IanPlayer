@@ -2551,7 +2551,7 @@ fun PlaylistDetailView(
     if (showAddDialog) {
         AddSongsToPlaylistDialog(
             playlist = playlist,
-            allSongs = viewModel.songs.collectAsState().value,
+            allSongs = viewModel.getAllSongsForDialog(),
             onDismiss = { showAddDialog = false },
             onAdd = { ids ->
                 viewModel.addSongsToPlaylist(playlist, ids)

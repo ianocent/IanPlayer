@@ -7,10 +7,12 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import com.ianocent.musicplayer.data.AudioFormat
 import com.ianocent.musicplayer.data.Song
+import com.ianocent.musicplayer.data.StreamSearchResult
 import com.ianocent.musicplayer.data.YTMusicRepository
 import com.ianocent.musicplayer.player.PlayerManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -74,6 +76,8 @@ class PlaybackController(
     private var baseQueueBeforeShuffle: List<Song> = emptyList()
     var pendingMediaId: Long? = null
     val prefetchingIds = mutableSetOf<Long>()
+    val playedSongIds = mutableSetOf<Long>()
+    private var autoFillJob: Job? = null
 
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -322,6 +326,45 @@ class PlaybackController(
         prefs.edit().putInt("repeat_mode", _repeatMode.value).apply()
     }
 
+    fun markAsPlayed(songId: Long) {
+        playedSongIds.add(songId)
+    }
+
+    fun autoFillUpNext() {
+        if (_repeatMode.value == Player.REPEAT_MODE_ALL) return
+        val list = _queue.value
+        val idx = currentIndex
+        if (idx < 0) return
+        val remaining = list.size - idx - 1
+        if (remaining > 4) return
+        if (autoFillJob?.isActive == true) return
+        val current = _currentSong.value ?: return
+        if (!current.isStream) return
+
+        val searchArtist = current.artist.takeIf { it != "Unknown Artist" && it.isNotBlank() }
+        val query = searchArtist ?: current.title
+        autoFillJob = viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                try {
+                    ytMusicRepository.searchSongs(query) {}
+                } catch (e: Exception) { null }
+            }
+            if (result !is StreamSearchResult.Success) return@launch
+            val currentList = _queue.value
+            val currentIds = currentList.map { it.id }.toSet()
+            val fresh = result.songs
+                .filterNot { it.id in playedSongIds }
+                .filterNot { it.id in currentIds }
+                .take(10)
+            if (fresh.isEmpty()) return@launch
+            val newQueue = currentList.toMutableList()
+            newQueue.addAll(fresh)
+            _queue.value = newQueue
+            fresh.forEach { playerManager.addToQueue(it) }
+            savePlayerState()
+        }
+    }
+
     // == Playback Control ==
 
     private suspend fun fadeVolume(from: Float, to: Float, durationMs: Long) {
@@ -339,11 +382,12 @@ class PlaybackController(
     }
 
     fun playSong(song: Song) {
-        val snapshot = _queue.value.toMutableList()
-        val index = snapshot.indexOfFirst { it.id == song.id }
-        if (index == -1) return
-
         viewModelScope.launch {
+            // Baca queue di dalam coroutine agar atomic dengan write-back
+            val queue = _queue.value.toMutableList()
+            val index = queue.indexOfFirst { it.id == song.id }
+            if (index == -1) return@launch
+
             if (playerManager.player?.isPlaying == true) {
                 fadeVolume(1f, 0f, 150)
             } else {
@@ -369,11 +413,11 @@ class PlaybackController(
                 song
             }
 
-            if (index >= 0 && index < snapshot.size) {
-                snapshot[index] = resolvedSong
-                _queue.value = snapshot
+            if (index >= 0 && index < queue.size) {
+                queue[index] = resolvedSong
+                _queue.value = queue
             }
-            playerManager.playSong(resolvedSong, snapshot, index)
+            playerManager.playSong(resolvedSong, queue, index)
 
             fadeVolume(0f, 1f, 150)
 
@@ -428,6 +472,7 @@ class PlaybackController(
             else -> currentIndex + 1
         }
         playSong(list[nextIndex])
+        autoFillUpNext()
     }
 
     fun playPrevious() {

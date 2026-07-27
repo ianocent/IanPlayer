@@ -2,7 +2,9 @@ package com.ianocent.musicplayer.viewmodel
 
 import android.app.Application
 import android.content.BroadcastReceiver
+import android.graphics.Bitmap
 import android.net.Uri
+import android.util.LruCache
 import timber.log.Timber
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -46,6 +48,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import android.content.IntentSender
 import android.app.RecoverableSecurityException
+import java.util.concurrent.ConcurrentHashMap
+import java.io.InputStream
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val ytMusicRepository = YTMusicRepository(application.applicationContext)
@@ -132,6 +136,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     _genreSongs.value = current
                 }
                 if (result is StreamSearchResult.Success) {
+                    addToStreamSongsCache(result.songs)
                     val current = _genreSongs.value.toMutableMap()
                     current[genreName] = result.songs
                     _genreSongs.value = current
@@ -154,7 +159,69 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _isTrendingLoading = MutableStateFlow(false)
     val isTrendingLoading: StateFlow<Boolean> = _isTrendingLoading
     private var trendingLoadAttempted = false
-    private val preResolvedIds = mutableSetOf<Long>()
+    private val preResolvedIds = ConcurrentHashMap.newKeySet<Long>()
+
+    // == Stream songs cache (persist stream song metadata for playlists) ==
+    private val _streamSongsCache = MutableStateFlow<Map<Long, Song>>(emptyMap())
+    val streamSongsCache: StateFlow<Map<Long, Song>> = _streamSongsCache
+
+    private fun saveStreamSongsCache() {
+        val snapshot = _streamSongsCache.value
+        viewModelScope.launch(Dispatchers.IO) {
+            val arr = JSONArray()
+            snapshot.forEach { (_, song) ->
+                val obj = JSONObject()
+                obj.put("id", song.id)
+                obj.put("title", song.title)
+                obj.put("artist", song.artist)
+                obj.put("album", song.album)
+                obj.put("duration", song.duration)
+                obj.put("uri", song.uri.toString())
+                obj.put("isStream", song.isStream)
+                song.remoteArtUrl?.let { obj.put("remoteArtUrl", it) }
+                song.remoteId?.let { obj.put("remoteId", it) }
+                obj.put("dateAdded", song.dateAdded)
+                arr.put(obj)
+            }
+            prefs.edit().putString("stream_songs_cache", arr.toString()).apply()
+        }
+    }
+
+    private fun loadStreamSongsCache(): Map<Long, Song> {
+        val raw = prefs.getString("stream_songs_cache", null) ?: return emptyMap()
+        return try {
+            val arr = JSONArray(raw)
+            val map = mutableMapOf<Long, Song>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val song = Song(
+                    id = obj.getLong("id"),
+                    title = obj.getString("title"),
+                    artist = obj.getString("artist"),
+                    duration = obj.optLong("duration", 0L),
+                    uri = Uri.parse(obj.getString("uri")),
+                    album = obj.optString("album", "Unknown Album"),
+                    isStream = obj.optBoolean("isStream", true),
+                    remoteArtUrl = if (obj.has("remoteArtUrl")) obj.optString("remoteArtUrl", null) else null,
+                    remoteId = if (obj.has("remoteId")) obj.optString("remoteId", null) else null,
+                    dateAdded = obj.optLong("dateAdded", 0L)
+                )
+                map[song.id] = song
+            }
+            map
+        } catch (_: Exception) { emptyMap() }
+    }
+
+    private fun addToStreamSongsCache(songs: List<Song>) {
+        val updated = _streamSongsCache.value.toMutableMap()
+        for (s in songs) {
+            if (s.id !in updated) {
+                updated[s.id] = s
+            }
+        }
+        _streamSongsCache.value = updated
+        saveStreamSongsCache()
+    }
 
     fun fetchTrending(force: Boolean = false) {
         if (!force && trendingLoadAttempted) return
@@ -163,9 +230,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val result = ytMusicRepository.fetchHomeSongs { newSongs ->
+                    addToStreamSongsCache(newSongs)
                     val merged = (_trendingSongs.value + newSongs).distinctBy { it.id }
                     _trendingSongs.value = merged
                 }
+                if (result is StreamSearchResult.Success) addToStreamSongsCache(result.songs)
                 if (result !is StreamSearchResult.Success) {
                     Timber.w("MusicViewModel Trending fetch: $result")
                 }
@@ -296,9 +365,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun savePlayCounts(counts: Map<Long, Int>) {
-        val obj = JSONObject()
-        counts.forEach { (id, count) -> obj.put(id.toString(), count) }
-        prefs.edit().putString("play_counts", obj.toString()).apply()
+        viewModelScope.launch(Dispatchers.IO) {
+            val obj = JSONObject()
+            counts.forEach { (id, count) -> obj.put(id.toString(), count) }
+            prefs.edit().putString("play_counts", obj.toString()).apply()
+        }
     }
 
     fun incrementPlayCount(songId: Long) {
@@ -333,14 +404,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun savePlayHistory(history: List<Pair<Long, Long>>) {
-        val arr = JSONArray()
-        history.forEach { (id, ts) ->
-            val obj = JSONObject()
-            obj.put("id", id)
-            obj.put("ts", ts)
-            arr.put(obj)
+        viewModelScope.launch(Dispatchers.IO) {
+            val arr = JSONArray()
+            history.forEach { (id, ts) ->
+                val obj = JSONObject()
+                obj.put("id", id)
+                obj.put("ts", ts)
+                arr.put(obj)
+            }
+            prefs.edit().putString("play_history", arr.toString()).apply()
         }
-        prefs.edit().putString("play_history", arr.toString()).apply()
     }
 
     fun checkMonthlyRecap() {
@@ -495,6 +568,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             delay(400)
             try {
                 val result = ytMusicRepository.searchSongs(query) { newSongs ->
+                    addToStreamSongsCache(newSongs)
                     val merged = (_allStreamSongs.value + newSongs).distinctBy { it.id }
                     _allStreamSongs.value = merged
                     _streamSongs.value = merged.take(
@@ -504,6 +578,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 if (result is StreamSearchResult.ParsingFailed) {
                     _streamParsingFailed.value = true
                 } else {
+                    if (result is StreamSearchResult.Success) addToStreamSongsCache(result.songs)
                     // Pre-resolve search results in background
                     preResolveSearchResults()
                 }
@@ -552,7 +627,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun getSongsInPlaylist(playlist: Playlist): List<Song> {
-        return _songs.value.filter { it.id in playlist.songIds }
+        val localMap = _songs.value.associateBy { it.id }
+        val cacheMap = _streamSongsCache.value
+        return playlist.songIds.mapNotNull { id -> localMap[id] ?: cacheMap[id] }
     }
 
     fun deletePlaylist(playlist: Playlist) {
@@ -561,16 +638,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun savePlaylistsToPrefs() {
-        val jsonArray = JSONArray()
-        _playlists.value.forEach { playlist ->
-            val obj = JSONObject()
-            obj.put("id", playlist.id)
-            obj.put("name", playlist.name)
-            obj.put("songIds", JSONArray(playlist.songIds))
-            playlist.imageUri?.let { obj.put("imageUri", it) }
-            jsonArray.put(obj)
+        val snapshot = _playlists.value
+        viewModelScope.launch(Dispatchers.IO) {
+            val jsonArray = JSONArray()
+            snapshot.forEach { playlist ->
+                val obj = JSONObject()
+                obj.put("id", playlist.id)
+                obj.put("name", playlist.name)
+                obj.put("songIds", JSONArray(playlist.songIds))
+                playlist.imageUri?.let { obj.put("imageUri", it) }
+                jsonArray.put(obj)
+            }
+            prefs.edit().putString("playlists", jsonArray.toString()).apply()
         }
-        prefs.edit().putString("playlists", jsonArray.toString()).apply()
     }
 
     private fun loadPlaylistsFromPrefs() {
@@ -717,72 +797,115 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _showRecapCard.value = false
     }
 
-    private val artCache = mutableMapOf<Long, android.graphics.Bitmap?>()
-    private val highResArtCache = mutableMapOf<Long, android.graphics.Bitmap?>()
+    // Bounded bitmap caches — LRU byte-based eviction prevents OOM on large libraries.
+    // Low-res thumbnails ~48dp: 4MB cap (~100 entries at ~40KB each).
+    // High-res album art (song card only): 8MB cap (~2 entries at ~4MB each).
+    private val artCache = object : LruCache<Long, Bitmap>(4 * 1024 * 1024) {
+        override fun sizeOf(key: Long, bitmap: Bitmap): Int = bitmap.byteCount
+    }
+    private val highResArtCache = object : LruCache<Long, Bitmap>(8 * 1024 * 1024) {
+        override fun sizeOf(key: Long, bitmap: Bitmap): Int = bitmap.byteCount
+    }
 
-    fun getCachedArt(song: Song, onLoaded: (android.graphics.Bitmap?) -> Unit) {
-        if (artCache.containsKey(song.id)) {
-            onLoaded(artCache[song.id])
-            return
-        }
-        viewModelScope.launch {
-            val art = withContext(Dispatchers.IO) {
-                if (song.isStream && !song.remoteArtUrl.isNullOrEmpty()) {
-                    try {
-                        val url = java.net.URL(song.remoteArtUrl)
-                        val conn = url.openConnection() as java.net.HttpURLConnection
-                        conn.doInput = true
-                        conn.connect()
-                        android.graphics.BitmapFactory.decodeStream(conn.inputStream)
-                    } catch (e: Exception) { null }
-                } else {
-                    AlbumArtLoader.getEmbeddedArt(appContext, song.uri)
-                }
+    // Disk cache untuk remote album art — file-based di cacheDir, otomatis dibersihkan OS
+    private fun diskCacheDir(): java.io.File {
+        val dir = java.io.File(appContext.cacheDir, "album_art")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    private fun diskCacheKey(url: String): String = url.hashCode().toLong().toString()
+
+    private fun saveToDiskCache(url: String, bitmap: Bitmap) {
+        try {
+            val file = java.io.File(diskCacheDir(), diskCacheKey(url))
+            if (file.exists()) return
+            file.outputStream().use { out ->
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.WEBP, 85, out)
             }
-            artCache[song.id] = art
-            onLoaded(art)
+        } catch (_: Exception) {}
+    }
+
+    private fun loadFromDiskCache(url: String): Bitmap? {
+        return try {
+            val file = java.io.File(diskCacheDir(), diskCacheKey(url))
+            if (file.exists()) {
+                file.inputStream().use { android.graphics.BitmapFactory.decodeStream(it) }
+            } else null
+        } catch (_: Exception) { null }
+    }
+
+    private fun downloadBitmap(urlStr: String): Bitmap? {
+        // Cek disk cache dulu
+        loadFromDiskCache(urlStr)?.let { return it }
+
+        var conn: java.net.HttpURLConnection? = null
+        var `is`: InputStream? = null
+        val bitmap = try {
+            val url = java.net.URL(urlStr)
+            conn = url.openConnection() as java.net.HttpURLConnection
+            conn.doInput = true
+            conn.connect()
+            `is` = conn.inputStream
+            android.graphics.BitmapFactory.decodeStream(`is`)
+        } catch (e: Exception) { null } finally {
+            try { `is`?.close() } catch (_: Exception) {}
+            try { conn?.disconnect() } catch (_: Exception) {}
+        }
+        // Simpan ke disk cache untuk下次
+        if (bitmap != null) saveToDiskCache(urlStr, bitmap)
+        return bitmap
+    }
+
+    fun getCachedArt(song: Song, onLoaded: (Bitmap?) -> Unit) {
+        val cached = artCache.get(song.id)
+        if (cached != null) { onLoaded(cached); return }
+        if (song.isStream && !song.remoteArtUrl.isNullOrEmpty()) {
+            viewModelScope.launch {
+                val art = withContext(Dispatchers.IO) { downloadBitmap(song.remoteArtUrl) }
+                if (art != null) artCache.put(song.id, art)
+                onLoaded(art)
+            }
+        } else {
+            viewModelScope.launch {
+                val art = withContext(Dispatchers.IO) { AlbumArtLoader.getEmbeddedArt(appContext, song.uri) }
+                if (art != null) artCache.put(song.id, art)
+                onLoaded(art)
+            }
         }
     }
 
-    fun getHighResArt(song: Song, onLoaded: (android.graphics.Bitmap?) -> Unit) {
+    fun getHighResArt(song: Song, onLoaded: (Bitmap?) -> Unit) {
         val cacheKey = -song.id
-        if (highResArtCache.containsKey(cacheKey)) {
-            onLoaded(highResArtCache[cacheKey])
-            return
-        }
-        viewModelScope.launch {
-            val art = withContext(Dispatchers.IO) {
-                if (song.isStream && !song.remoteArtUrl.isNullOrEmpty()) {
-                    try {
-                        val highResUrl = when {
-                            song.remoteArtUrl.contains("=w") && song.remoteArtUrl.contains("-h") -> {
-                                song.remoteArtUrl.replace(Regex("=w\\d+-h\\d+.*"), "=w1000-h1000-l90-rj")
-                            }
-                            song.remoteArtUrl.contains("=s") -> {
-                                song.remoteArtUrl.replace(Regex("=s\\d+.*"), "=s1000-c-rj")
-                            }
-                            song.remoteArtUrl.contains("googleusercontent.com") && !song.remoteArtUrl.contains("=") -> {
-                                "${song.remoteArtUrl}=w1000-h1000-l90-rj"
-                            }
-                            song.remoteArtUrl.contains("ytimg.com") -> {
-                                song.remoteArtUrl.replace("default.jpg", "maxresdefault.jpg")
-                                    .replace("mqdefault.jpg", "maxresdefault.jpg")
-                                    .replace("hqdefault.jpg", "maxresdefault.jpg")
-                            }
-                            else -> song.remoteArtUrl
-                        }
-                        val url = java.net.URL(highResUrl)
-                        val conn = url.openConnection() as java.net.HttpURLConnection
-                        conn.doInput = true
-                        conn.connect()
-                        android.graphics.BitmapFactory.decodeStream(conn.inputStream)
-                    } catch (e: Exception) { null }
-                } else {
-                    AlbumArtLoader.getEmbeddedArt(appContext, song.uri, targetSize = 800)
+        val cached = highResArtCache.get(cacheKey)
+        if (cached != null) { onLoaded(cached); return }
+        if (song.isStream && !song.remoteArtUrl.isNullOrEmpty()) {
+            viewModelScope.launch {
+                val art = withContext(Dispatchers.IO) {
+                    val highResUrl = when {
+                        song.remoteArtUrl.contains("=w") && song.remoteArtUrl.contains("-h") ->
+                            song.remoteArtUrl.replace(Regex("=w\\d+-h\\d+.*"), "=w1000-h1000-l90-rj")
+                        song.remoteArtUrl.contains("=s") ->
+                            song.remoteArtUrl.replace(Regex("=s\\d+.*"), "=s1000-c-rj")
+                        song.remoteArtUrl.contains("googleusercontent.com") && !song.remoteArtUrl.contains("=") ->
+                            "${song.remoteArtUrl}=w1000-h1000-l90-rj"
+                        song.remoteArtUrl.contains("ytimg.com") ->
+                            song.remoteArtUrl.replace("default.jpg", "maxresdefault.jpg")
+                                .replace("mqdefault.jpg", "maxresdefault.jpg")
+                                .replace("hqdefault.jpg", "maxresdefault.jpg")
+                        else -> song.remoteArtUrl
+                    }
+                    downloadBitmap(highResUrl)
                 }
+                if (art != null) highResArtCache.put(cacheKey, art)
+                onLoaded(art)
             }
-            highResArtCache[cacheKey] = art
-            onLoaded(art)
+        } else {
+            viewModelScope.launch {
+                val art = withContext(Dispatchers.IO) { AlbumArtLoader.getEmbeddedArt(appContext, song.uri, targetSize = 800) }
+                if (art != null) highResArtCache.put(cacheKey, art)
+                onLoaded(art)
+            }
         }
     }
 
@@ -806,6 +929,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _playCounts.value = loadPlayCounts()
         _sortMode.value = prefs.getInt("sort_mode", 0)
         loadFavoriteIds()
+        _streamSongsCache.value = loadStreamSongsCache()
         checkForUpdate()
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -824,6 +948,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             getSongs = { _songs.value },
             getAllStreamSongs = { _allStreamSongs.value },
             onSongPlayed = { song ->
+                if (song.isStream) addToStreamSongsCache(listOf(song))
+                playbackController.markAsPlayed(song.id)
                 incrementPlayCount(song.id)
                 loadArt(song)
                 loadLyric(song)
@@ -908,13 +1034,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val bitmap = withContext(Dispatchers.IO) {
                 if (song.isStream && !song.remoteArtUrl.isNullOrEmpty()) {
-                    try {
-                        val url = java.net.URL(song.remoteArtUrl)
-                        val conn = url.openConnection() as java.net.HttpURLConnection
-                        conn.doInput = true
-                        conn.connect()
-                        android.graphics.BitmapFactory.decodeStream(conn.inputStream)
-                    } catch (e: Exception) { null }
+                    downloadBitmap(song.remoteArtUrl)
                 } else {
                     AlbumArtLoader.getEmbeddedArt(appContext, song.uri, targetSize = 400)
                 }
@@ -961,6 +1081,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        genreArtLoadJob?.cancel()
+        genreFetchJobs.values.forEach { it.cancel() }
+        genreFetchJobs.clear()
         downloadReceiver?.let { receiver ->
             appContext.unregisterReceiver(receiver)
         }
@@ -989,6 +1112,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         currentList[idx] = currentList[idx].copy(songIds = mutableIds)
         _playlists.value = currentList
         savePlaylistsToPrefs()
+        // Ensure stream songs in playlist stay cached
+        val cache = _streamSongsCache.value
+        songIds.forEach { id -> if (id in cache) addToStreamSongsCache(listOf(cache[id]!!)) }
+    }
+
+    fun getAllSongsForDialog(): List<Song> {
+        return _songs.value + _streamSongsCache.value.values.filter { it.id !in _songs.value.map { s -> s.id } }
     }
 
     fun checkForUpdate() {

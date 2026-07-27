@@ -27,12 +27,14 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         registerHeadsetReceiver()
         createNotificationChannel()
+        // Balanced buffer for streaming — 2x default gives smooth playback
+        // on all network conditions without wasting memory on low-end devices
         val loadControl: LoadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                DefaultLoadControl.DEFAULT_MIN_BUFFER_MS * 4,
-                DefaultLoadControl.DEFAULT_MAX_BUFFER_MS * 4,
-                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS * 4,
-                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS * 4
+                DefaultLoadControl.DEFAULT_MIN_BUFFER_MS * 2,
+                DefaultLoadControl.DEFAULT_MAX_BUFFER_MS * 2,
+                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS * 2,
+                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS * 2
             )
             .build()
 
@@ -42,7 +44,11 @@ class PlaybackService : MediaSessionService() {
             .setAllowedCapturePolicy(C.ALLOW_CAPTURE_BY_ALL)
             .build()
 
-        // Exclude MediaTek HW decoders that fail with error 6 on this platform
+        // Smart decoder selection for all SoCs:
+        // - Hardware decoders first (battery efficient — Qualcomm/MTK/Exynos/Kirin DSP)
+        // - Software decoders as fallback (compatible — if HW fails, Media3 retries with SW)
+        // - No arbitrary exclusion of any vendor — if a HW decoder crashes,
+        //   fallback mechanism catches it and retries with the next decoder in list
         val mediaCodecSelector = object : MediaCodecSelector {
             override fun getDecoderInfos(
                 mimeType: String,
@@ -52,17 +58,12 @@ class PlaybackService : MediaSessionService() {
                 val allInfos = MediaCodecSelector.DEFAULT.getDecoderInfos(
                     mimeType, requiresSecureDecoder, requiresTunnelingDecoder
                 )
-                return allInfos.filter { info ->
-                    info.softwareOnly ||
-                        (info.name.let { n ->
-                            !n.startsWith("OMX.MTK.", ignoreCase = true)
-                                && !n.startsWith("c2.mtk.", ignoreCase = true)
-                        })
-                }
+                return allInfos.sortedBy { it.softwareOnly }
             }
         }
         val renderersFactory = DefaultRenderersFactory(this)
             .setMediaCodecSelector(mediaCodecSelector)
+            .setEnableDecoderFallback(true)
         player = ExoPlayer.Builder(this, renderersFactory)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .setHandleAudioBecomingNoisy(true)

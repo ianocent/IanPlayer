@@ -11,7 +11,9 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
+import java.util.Collections
 import java.util.LinkedHashMap
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Semaphore
 import android.content.Context
 
@@ -24,11 +26,14 @@ class YTMusicRepository(context: Context) {
     // In-memory cache tetap dipertahankan sebagai layer tercepat (hindari hit DB
     // berkali-kali dalam 1 sesi aktif); Room jadi layer kedua yang persist antar
     // sesi app (survive app-kill), yang gak bisa dicover LinkedHashMap doang.
-    private val streamUrlCache = object : LinkedHashMap<String, String>(50, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean {
-            return size > 50
+    // Wrapped ConcurrentHashMap untuk thread-safety dari multiple coroutine.
+    private val streamUrlCache: MutableMap<String, String> = Collections.synchronizedMap(
+        object : LinkedHashMap<String, String>(50, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean {
+                return size > 50
+            }
         }
-    }
+    )
 
     // Coba parse 'expire=<unix_epoch_detik>' dari URL googlevideo (paling akurat).
     // Kalau gak ketemu (misal dari fallback Invidious), asumsi aman 5 jam dari sekarang.
