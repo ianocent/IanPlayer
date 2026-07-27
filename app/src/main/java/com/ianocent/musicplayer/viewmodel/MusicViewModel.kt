@@ -48,11 +48,15 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import android.content.IntentSender
 import android.app.RecoverableSecurityException
+import com.ianocent.musicplayer.data.TidalRepository
+import kotlinx.coroutines.*
 import java.util.concurrent.ConcurrentHashMap
 import java.io.InputStream
+import java.io.File
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val ytMusicRepository = YTMusicRepository(application.applicationContext)
+    private val tidalRepository = TidalRepository()
     
     private val _deleteIntentSender = MutableSharedFlow<IntentSender>(extraBufferCapacity = 1)
     val deleteIntentSender: SharedFlow<IntentSender> = _deleteIntentSender
@@ -572,18 +576,33 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         searchJob = viewModelScope.launch {
             delay(400)
             try {
-                val result = ytMusicRepository.searchSongs(query) { newSongs ->
+                // Search both YT Music and Tidal
+                val tidalResult = async { tidalRepository.searchSongs(query) }
+                
+                val ytResult = ytMusicRepository.searchSongs(query) { newSongs ->
                     addToStreamSongsCache(newSongs)
-                    val merged = (_allStreamSongs.value + newSongs).distinctBy { it.id }
+                    val merged = (_allStreamSongs.value + newSongs).distinctBy { s -> s.id }
                     _allStreamSongs.value = merged
                     _streamSongs.value = merged.take(
                         maxOf(_streamSongs.value.size + newSongs.size, streamPageSize)
                     )
                 }
-                if (result is StreamSearchResult.ParsingFailed) {
+
+                val tidalSongs = tidalResult.await()
+                if (tidalSongs.isNotEmpty()) {
+                    addToStreamSongsCache(tidalSongs)
+                    val currentList = _allStreamSongs.value
+                    val mergedWithTidal = (currentList + tidalSongs).distinctBy { s -> s.id }
+                    _allStreamSongs.value = mergedWithTidal
+                    _streamSongs.value = mergedWithTidal.take(
+                        maxOf(_streamSongs.value.size + tidalSongs.size, streamPageSize)
+                    )
+                }
+
+                if (ytResult is StreamSearchResult.ParsingFailed && tidalSongs.isEmpty()) {
                     _streamParsingFailed.value = true
                 } else {
-                    if (result is StreamSearchResult.Success) addToStreamSongsCache(result.songs)
+                    if (ytResult is StreamSearchResult.Success) addToStreamSongsCache(ytResult.songs)
                     // Pre-resolve search results in background
                     preResolveSearchResults()
                 }
@@ -1178,13 +1197,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     @android.annotation.SuppressLint("UnspecifiedRegisterReceiverFlag")
     fun downloadSong(song: Song, format: AudioFormat) {
         viewModelScope.launch {
-            // 1. Resolve URL if it's a placeholder
-            val realUrl = if (format.url.startsWith("ytmusic://placeholder/")) {
-                withContext(Dispatchers.IO) {
+            // 1. Resolve URL
+            val realUrl = withContext(Dispatchers.IO) {
+                if (song.uri.toString().startsWith("tidal://")) {
+                    tidalRepository.resolveTidalStream(song, ytMusicRepository)
+                } else if (format.url.startsWith("ytmusic://placeholder/")) {
                     ytMusicRepository.resolveStreamUrl(song)
+                } else {
+                    format.url
                 }
-            } else {
-                format.url
             }
 
             if (realUrl == null || !realUrl.startsWith("http")) {
@@ -1201,11 +1222,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             // Clean filename: remove illegal characters
             val cleanTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
             val cleanArtist = song.artist.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-            val fileName = "$cleanTitle - $cleanArtist.mp3"
+            val fileName = "$cleanArtist - $cleanTitle.mp3"
+
+            // Show starting toast
+            android.widget.Toast.makeText(appContext, "Starting download: $cleanTitle", android.widget.Toast.LENGTH_SHORT).show()
 
             val request = android.app.DownloadManager.Request(android.net.Uri.parse(realUrl))
                 .setTitle(song.title)
-                .setDescription("Downloading $cleanArtist - ${format.qualityLabel}")
+                .setDescription("$cleanArtist - IanPlayer")
                 .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_MUSIC, "IanPlayer/$fileName")
                 .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 .setAllowedOverMetered(true)
@@ -1213,18 +1237,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
             val downloadId = downloadManager.enqueue(request)
             
-            val completionReceiver = com.ianocent.musicplayer.data.DownloadCompletionReceiver(
+            // Register completion receiver to apply metadata
+            val receiver = com.ianocent.musicplayer.data.DownloadCompletionReceiver(
                 downloadId,
                 song
             ) {
                 refreshSongs()
+                android.widget.Toast.makeText(appContext, "Download complete: $cleanTitle", android.widget.Toast.LENGTH_SHORT).show()
             }
             
             val filter = android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                context.registerReceiver(completionReceiver, filter, android.content.Context.RECEIVER_EXPORTED)
+                context.registerReceiver(receiver, filter, android.content.Context.RECEIVER_EXPORTED)
             } else {
-                context.registerReceiver(completionReceiver, filter)
+                context.registerReceiver(receiver, filter)
             }
         }
     }
@@ -1247,7 +1273,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _songs.value = list
             playbackController.setDefaultQueueIfEmpty(list)
         }
-    }    fun dismissUpdate() {
+    }
+    fun dismissUpdate() {
         _isUpdateAvailable.value = false
         _updateInfo.value = null
     }

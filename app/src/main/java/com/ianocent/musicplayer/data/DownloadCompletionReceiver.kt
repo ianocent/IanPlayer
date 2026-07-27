@@ -13,6 +13,7 @@ import android.provider.OpenableColumns
 import timber.log.Timber
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -86,22 +87,28 @@ class DownloadCompletionReceiver(
                 if (status == DownloadManager.STATUS_SUCCESSFUL && !filePath.isNullOrEmpty()) {
                     GlobalScope.launch(Dispatchers.IO) {
                         try {
+                            // Beri delay sedikit agar DownloadManager selesai melepas file lock
+                            delay(500)
+                            
                             // 1. Write ID3 tags directly to the file
-                            MetadataWriter.writeMetadata(ctx, filePath!!, song)
+                            val success = MetadataWriter.writeMetadata(ctx, filePath!!, song)
+                            Timber.d("Metadata writing success: $success for $filePath")
 
-                            // 2. Scan the file so MediaStore picks up the new tags
-                            kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
+                            // 2. Scan the file agar MediaStore sadar ada file baru dengan tag baru
+                            val mediaUri = kotlinx.coroutines.suspendCancellableCoroutine<Uri?> { cont ->
                                 MediaScannerConnection.scanFile(
                                     ctx,
                                     arrayOf(filePath),
                                     arrayOf("audio/mpeg")
-                                ) { _, _ ->
-                                    if (cont.isActive) cont.resume(Unit) {}
+                                ) { _, uri ->
+                                    if (cont.isActive) cont.resume(uri) { }
                                 }
                             }
 
-                            // 3. Optional: Direct MediaStore update for immediate result
-                            updateMediaStoreEntry(ctx, filePath!!, song)
+                            // 3. Paksa update MediaStore secara spesifik jika pemindaian otomatis lambat
+                            if (mediaUri != null) {
+                                updateMediaStoreEntry(ctx, filePath!!, song)
+                            }
 
                             onComplete()
                         } catch (e: Exception) {

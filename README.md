@@ -42,7 +42,7 @@
 - Search YouTube Music via **InnerTube API** (WEB_REMIX client).
 - **PoToken / BotGuard** attestation via ZemerCipher WebView.
 - **Multi-client fallback** (WEB → ANDROID → IOS → Invidious) if stream fails.
-- **Highest available bitrate** (up to 256k AAC / Opus).
+- **Highest available bitrate** (up to 320k AAC / Opus).
 - **Three-tier stream cache** (in-memory LRU → Room DB → file-based disk cache for album art) with URL expiry tracking.
 - **Smart engine tuning** — balanced buffer (2x default) for smooth playback on all network conditions without wasting memory on low-end devices; HW-first decoder selection with fallback (supports Qualcomm, MediaTek, Exynos, Kirin).
 - **Stream metadata persistence** — stream song data survives app restart via SharedPreferences cache (enables playlists with stream songs to work across sessions).
