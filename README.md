@@ -67,7 +67,7 @@
 - Falls back to **plain lyrics**.
 - **Lyric card generator** — select lines to create a quote-style card.
 - **Drag-to-dismiss** (swipe down) with scale-fade-spring animation.
-- **Wave Record** button — record audio visualizer video with synced lyrics overlay.
+- **Wave Record** button — record animated lyric video with synced lyrics overlay.
 
 ### 🖼️ Card Generators
 
@@ -88,9 +88,8 @@ All cards are rendered with Compose `GraphicsLayer`, saved to `Pictures/IanPlaye
 - Dismissible recap banner in Songs tab.
 - Debug trigger available (tap debug button in Songs tab).
 
-### 🌊 Wave Record (Audio Visualizer Video)
+### 🌊 Wave Record (Animated Lyric Video)
 
-- **14-bar audio spectrum** visualizer from `Visualizer` FFT.
 - **Animated lyric line** with crossfade between lines.
 - **Screen recording** via `MediaProjection` (video only, no system audio).
 - **VP9 + WebM** encoding via `MediaCodec` + `MediaMuxer` with chroma green background (`#00B140`) for keyable transparency in editors.
@@ -161,13 +160,12 @@ Ian Player uses swipe and drag gestures throughout. Here's a complete reference:
 
 ### Mini-Player (Bottom Bar)
 
-| Gesture | Action |
-| :--- | :--- |
-| **Swipe UP** on mini-player | Open Now Playing Screen |
+| Gesture | Action                                                          |
+| :--- |:----------------------------------------------------------------|
+| **Swipe UP** on mini-player | Open Now Playing Screen                                         |
 | **Swipe DOWN** on mini-player | Cycle mini-player layout (Default → Floating → Queue → Default) |
-| **Swipe LEFT** on mini-player | Reset ambient background color |
-| **Swipe RIGHT** on mini-player | Cycle to next palette color scheme |
-| **Tap** mini-player | Open Now Playing Screen |
+| **Swipe LEFT** on mini-player | Volume control slider                                             |
+| **Tap** mini-player | Open Now Playing Screen                                         |
 
 ### Now Playing Screen
 
@@ -238,7 +236,6 @@ Ian Player uses swipe and drag gestures throughout. Here's a complete reference:
 | **Persistence** | SharedPreferences (playlists, favorites, play counts, history, stream song cache) |
 | **Disk Cache** | File-based album art cache (`cacheDir/album_art/`, WEBP 85%) |
 | **YouTube Streaming** | InnerTube API + ZemerCipher (PoToken/BotGuard) |
-| **Audio Visualizer** | Android `Visualizer` (FFT) |
 | **Screen Recording** | MediaProjection + VP9 + WebM + MediaMuxer |
 | **MP3 Tags** | mp3agic 0.9.1 |
 | **Lyrics** | lrclib.net |

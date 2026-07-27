@@ -78,6 +78,8 @@ class PlaybackController(
     val prefetchingIds = mutableSetOf<Long>()
     val playedSongIds = mutableSetOf<Long>()
     private var autoFillJob: Job? = null
+    private var playbackJob: Job? = null
+    private var continuousFailures = 0
 
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -182,6 +184,7 @@ class PlaybackController(
             val item = p.currentMediaItem ?: return
             val meta = item.mediaMetadata
             val songUri = item.localConfiguration?.uri ?: Uri.EMPTY
+            val isStream = songUri.scheme == "http" || songUri.scheme == "https"
             activeSong = Song(
                 id = item.mediaId.toLongOrNull() ?: mediaId,
                 title = meta.title?.toString() ?: "Unknown",
@@ -189,10 +192,9 @@ class PlaybackController(
                 duration = p.duration,
                 uri = songUri,
                 album = meta.albumTitle?.toString() ?: "Unknown Album",
-                isStream = songUri.scheme == "http" || songUri.scheme == "https" ||
-                    (item.mediaId.toLongOrNull()?.let { it < 0 } == true),
+                isStream = isStream,
                 remoteArtUrl = meta.artworkUri?.toString(),
-                remoteId = item.mediaId.takeIf { it.toLongOrNull() == null || it.toLongOrNull()!! < 0 }
+                remoteId = if (isStream) item.mediaId else null
             )
         }
         if (activeSong != null) {
@@ -217,6 +219,7 @@ class PlaybackController(
             val item = p.currentMediaItem ?: return
             val meta = item.mediaMetadata
             val songUri = item.localConfiguration?.uri ?: Uri.EMPTY
+            val isStream = songUri.scheme == "http" || songUri.scheme == "https"
             activeSong = Song(
                 id = item.mediaId.toLongOrNull() ?: mediaId,
                 title = meta.title?.toString() ?: "Unknown",
@@ -224,10 +227,9 @@ class PlaybackController(
                 duration = p.duration,
                 uri = songUri,
                 album = meta.albumTitle?.toString() ?: "Unknown Album",
-                isStream = songUri.scheme == "http" || songUri.scheme == "https" ||
-                    (item.mediaId.toLongOrNull()?.let { it < 0 } == true),
+                isStream = isStream,
                 remoteArtUrl = meta.artworkUri?.toString(),
-                remoteId = item.mediaId.takeIf { it.toLongOrNull() == null || it.toLongOrNull()!! < 0 }
+                remoteId = if (isStream) item.mediaId else null
             )
         }
         if (activeSong != null) {
@@ -243,18 +245,18 @@ class PlaybackController(
         try {
             val p = playerManager.player ?: return
             val item = p.currentMediaItem ?: return
-            val mediaId = item.mediaId.toLongOrNull() ?: return
-            if (_currentSong.value?.id == mediaId) return
-
-            var song = _queue.value.find { it.id == mediaId }
-                ?: getSongs().find { it.id == mediaId }
-                ?: getAllStreamSongs().find { it.id == mediaId }
+            val mediaIdStr = item.mediaId
+            
+            // Coba cari berdasarkan ID (Long) atau RemoteID (String)
+            var song = _queue.value.find { it.id.toString() == mediaIdStr || it.remoteId == mediaIdStr }
+                ?: getSongs().find { it.id.toString() == mediaIdStr }
+                ?: getAllStreamSongs().find { it.remoteId == mediaIdStr }
 
             if (song == null) {
                 val meta = item.mediaMetadata
                 val songUri = item.localConfiguration?.uri ?: Uri.EMPTY
                 song = Song(
-                    id = mediaId,
+                    id = mediaIdStr.toLongOrNull() ?: mediaIdStr.hashCode().toLong(),
                     title = meta.title?.toString() ?: "Unknown",
                     artist = meta.artist?.toString() ?: "Unknown Artist",
                     duration = p.duration,
@@ -262,7 +264,7 @@ class PlaybackController(
                     album = meta.albumTitle?.toString() ?: "Unknown Album",
                     isStream = songUri.scheme == "http" || songUri.scheme == "https",
                     remoteArtUrl = meta.artworkUri?.toString(),
-                    remoteId = item.mediaId.takeIf { it.toLongOrNull() == null || it.toLongOrNull()!! < 0 }
+                    remoteId = if (songUri.scheme == "http" || songUri.scheme == "https") mediaIdStr else null
                 )
             }
             _currentSong.value = song
@@ -318,7 +320,11 @@ class PlaybackController(
         }
 
         val target = startSong ?: _queue.value.firstOrNull()
-        target?.let { playSong(it) }
+        target?.let { song ->
+            // Pastikan kita play song yang ada di queue terbaru (pakai ID)
+            val currentInQueue = _queue.value.find { it.id == song.id } ?: song
+            playSong(currentInQueue)
+        }
     }
 
     fun toggleRepeat() {
@@ -382,11 +388,11 @@ class PlaybackController(
     }
 
     fun playSong(song: Song) {
-        viewModelScope.launch {
-            // Baca queue di dalam coroutine agar atomic dengan write-back
-            val queue = _queue.value.toMutableList()
-            val index = queue.indexOfFirst { it.id == song.id }
-            if (index == -1) return@launch
+        playbackJob?.cancel()
+        playbackJob = viewModelScope.launch {
+            // Check current index in current queue (don't snapshot yet)
+            val initialIndex = _queue.value.indexOfFirst { it.id == song.id }
+            if (initialIndex == -1) return@launch
 
             if (playerManager.player?.isPlaying == true) {
                 fadeVolume(1f, 0f, 150)
@@ -394,8 +400,8 @@ class PlaybackController(
                 playerManager.player?.volume = 0f
             }
 
-            currentIndex = index
             _currentSong.value = song
+            currentIndex = initialIndex
 
             val resolvedSong = if (song.isStream && song.uri.toString().startsWith("ytmusic://placeholder/")) {
                 _isBuffering.value = true
@@ -403,21 +409,44 @@ class PlaybackController(
                     try {
                         val streamUrl = ytMusicRepository.resolveStreamUrl(song)
                         _isBuffering.value = false
-                        if (streamUrl != null) song.copy(uri = Uri.parse(streamUrl)) else song
+                        if (streamUrl != null && !streamUrl.startsWith("ytmusic://placeholder/")) {
+                            song.copy(uri = Uri.parse(streamUrl))
+                        } else {
+                            null
+                        }
                     } catch (e: Exception) {
                         _isBuffering.value = false
-                        song
+                        null
                     }
                 }
             } else {
                 song
             }
 
-            if (index >= 0 && index < queue.size) {
-                queue[index] = resolvedSong
-                _queue.value = queue
+            if (resolvedSong == null) {
+                Timber.w("PlaybackController Failed to resolve stream for ${song.title}, aborting")
+                _isBuffering.value = false
+                continuousFailures++
+                if (continuousFailures < 3) {
+                    playNext()
+                } else {
+                    continuousFailures = 0
+                    _isPlaying.value = false
+                }
+                return@launch
             }
-            playerManager.playSong(resolvedSong, queue, index)
+            continuousFailures = 0
+
+            // Update only the specific song in the LATEST queue
+            val currentQueue = _queue.value.toMutableList()
+            val finalIndex = currentQueue.indexOfFirst { it.id == resolvedSong.id }
+            if (finalIndex != -1) {
+                currentQueue[finalIndex] = resolvedSong
+                _queue.value = currentQueue
+                currentIndex = finalIndex
+            }
+
+            playerManager.playSong(resolvedSong, _queue.value, if (finalIndex != -1) finalIndex else 0)
 
             fadeVolume(0f, 1f, 150)
 
@@ -427,8 +456,8 @@ class PlaybackController(
     }
 
     private fun resolveAndPlayStream(song: Song) {
-        val savedIndex = _queue.value.indexOfFirst { it.id == song.id }
-        viewModelScope.launch {
+        playbackJob?.cancel()
+        playbackJob = viewModelScope.launch {
             if (playerManager.player?.isPlaying == true) {
                 fadeVolume(1f, 0f, 150)
             } else {
@@ -438,23 +467,42 @@ class PlaybackController(
             val resolvedSong = withContext(Dispatchers.IO) {
                 try {
                     val streamUrl = ytMusicRepository.resolveStreamUrl(song)
-                    if (streamUrl != null) song.copy(uri = Uri.parse(streamUrl)) else song
+                    if (streamUrl != null && !streamUrl.startsWith("ytmusic://placeholder/")) {
+                        song.copy(uri = Uri.parse(streamUrl))
+                    } else {
+                        null
+                    }
                 } catch (e: Exception) {
-                    song
+                    null
                 }
             }
-            val useIndex = if (savedIndex >= 0) savedIndex else _queue.value.indexOfFirst { it.id == resolvedSong.id }.coerceAtLeast(0)
-            if (resolvedSong.uri != song.uri) {
-                val queue = _queue.value.toMutableList()
-                if (useIndex >= 0 && useIndex < queue.size) {
-                    queue[useIndex] = resolvedSong
-                    _queue.value = queue
+
+            if (resolvedSong == null) {
+                Timber.w("PlaybackController Failed to resolve stream in auto-transition, skipping")
+                continuousFailures++
+                if (continuousFailures < 3) {
+                    playNext()
+                } else {
+                    continuousFailures = 0
+                    _isPlaying.value = false
                 }
+                return@launch
             }
+            continuousFailures = 0
+
+            val currentQueue = _queue.value.toMutableList()
+            val useIndex = currentQueue.indexOfFirst { it.id == resolvedSong.id }
+            
+            if (useIndex != -1) {
+                currentQueue[useIndex] = resolvedSong
+                _queue.value = currentQueue
+                currentIndex = useIndex
+            }
+
             playerManager.playSong(
-                if (resolvedSong.uri != song.uri) resolvedSong else song,
+                resolvedSong,
                 _queue.value,
-                startIndex = useIndex
+                startIndex = if (useIndex != -1) useIndex else 0
             )
 
             fadeVolume(0f, 1f, 150)

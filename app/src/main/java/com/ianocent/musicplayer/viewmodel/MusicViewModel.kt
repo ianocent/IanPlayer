@@ -253,13 +253,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         fetchTrending(force = true)
     }
 
+    private var preResolveJob: Job? = null
+
     private fun preResolveTrending() {
         val trending = _trendingSongs.value
         if (trending.isEmpty()) return
-        viewModelScope.launch {
-            for (song in trending) {
+        preResolveJob?.cancel()
+        preResolveJob = viewModelScope.launch {
+            // Pre-resolve 20 item trending agar transisi mulus
+            for (song in trending.take(20)) {
                 if (!song.isStream || !song.uri.toString().startsWith("ytmusic://placeholder/")) continue
                 if (!preResolvedIds.add(song.id)) continue
+                
+                delay(200) // Jeda singkat agar tidak membebani semaphore
+                
                 launch {
                     try {
                         val url = withContext(Dispatchers.IO) {
@@ -267,18 +274,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         if (url != null) {
                             val resolved = song.copy(uri = Uri.parse(url))
-                            val list = _trendingSongs.value.toMutableList()
-                            val idx = list.indexOfFirst { it.id == resolved.id }
-                            if (idx >= 0) list[idx] = resolved
-                            _trendingSongs.value = list
-                            val streamList = _streamSongs.value.toMutableList()
-                            val sidx = streamList.indexOfFirst { it.id == resolved.id }
-                            if (sidx >= 0) streamList[sidx] = resolved
-                            _streamSongs.value = streamList
+                            _trendingSongs.value = _trendingSongs.value.map { 
+                                if (it.id == resolved.id) resolved else it 
+                            }
+                            _streamSongs.value = _streamSongs.value.map {
+                                if (it.id == resolved.id) resolved else it
+                            }
                         }
-                    } catch (e: Exception) {
-                        Timber.e(e, "MusicViewModel preResolveTrending failed for ${song.title}")
-                    }
+                    } catch (_: Exception) {}
                 }
             }
         }
@@ -287,10 +290,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private fun preResolveSearchResults() {
         val searchResults = _streamSongs.value
         if (searchResults.isEmpty()) return
-        viewModelScope.launch {
-            for (song in searchResults) {
+        preResolveJob?.cancel()
+        preResolveJob = viewModelScope.launch {
+            // Pre-resolve hingga 40 item hasil pencarian (Satu halaman penuh)
+            for (song in searchResults.take(40)) {
                 if (!song.isStream || !song.uri.toString().startsWith("ytmusic://placeholder/")) continue
                 if (!preResolvedIds.add(song.id)) continue
+                
+                delay(300) // Beri nafas untuk request utama (Play)
+                
                 launch {
                     try {
                         val url = withContext(Dispatchers.IO) {
@@ -298,14 +306,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         if (url != null) {
                             val resolved = song.copy(uri = Uri.parse(url))
-                            val list = _streamSongs.value.toMutableList()
-                            val idx = list.indexOfFirst { it.id == resolved.id }
-                            if (idx >= 0) list[idx] = resolved
-                            _streamSongs.value = list
+                            _streamSongs.value = _streamSongs.value.map {
+                                if (it.id == resolved.id) resolved else it
+                            }
                         }
-                    } catch (e: Exception) {
-                        Timber.e(e, "MusicViewModel preResolveSearch failed for ${song.title}")
-                    }
+                    } catch (_: Exception) {}
                 }
             }
         }
@@ -1014,7 +1019,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         playbackController.setQueue(newQueue, startSong)
     fun toggleRepeat() = playbackController.toggleRepeat()
 
-    fun playSong(song: Song) = playbackController.playSong(song)
+    fun playSong(song: Song) {
+        preResolveJob?.cancel() // Prioritaskan jalur jaringan untuk lagu yang diklik
+        playbackController.playSong(song)
+    }
 
     fun playNext() = playbackController.playNext()
 

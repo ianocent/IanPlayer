@@ -64,7 +64,9 @@ class PlayerManager(private val context: Context) {
         try {
             val p = player ?: return
 
-            if (p.currentMediaItem?.mediaId == song.id.toString() && 
+            val targetMediaId = if (song.isStream && !song.remoteId.isNullOrBlank()) song.remoteId else song.id.toString()
+
+            if (p.currentMediaItem?.mediaId == targetMediaId &&
                 p.currentMediaItem?.localConfiguration?.uri?.toString()?.startsWith("ytmusic://placeholder/") == true &&
                 !song.uri.toString().startsWith("ytmusic://placeholder/")) {
                 
@@ -136,9 +138,11 @@ class PlayerManager(private val context: Context) {
                 }
             }
             .build()
+        // Gunakan remoteId (Video ID YouTube) sebagai MediaId kalau ada, lebih unik dari hashCode
+        val mediaId = if (s.isStream && !s.remoteId.isNullOrBlank()) s.remoteId else s.id.toString()
         return MediaItem.Builder()
             .setUri(s.uri)
-            .setMediaId(s.id.toString())
+            .setMediaId(mediaId)
             .setMediaMetadata(meta)
             .build()
     }

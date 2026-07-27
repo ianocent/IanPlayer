@@ -839,10 +839,16 @@ class YTMusicRepository(context: Context) {
         Timber.d("YTMusicRepo Resolving stream URL for: ${song.title}")
         try {
             playerSemaphore.acquire()
-            var audioUrl = fetchViaInvidious(videoId)
+            
+            // Coba InnerTube dulu karena lebih stabil dengan PoToken
+            var audioUrl = fetchViaInnerTube(videoId)
+            
+            // Kalau gagal, baru fallback ke Invidious
             if (audioUrl == null) {
-                audioUrl = fetchViaInnerTube(videoId)
+                Timber.d("YTMusicRepo InnerTube failed, trying Invidious for: ${song.title}")
+                audioUrl = fetchViaInvidious(videoId)
             }
+
             if (audioUrl != null) {
                 streamUrlCache[videoId] = audioUrl
                 try {
@@ -860,7 +866,7 @@ class YTMusicRepository(context: Context) {
                 }
                 Timber.d("YTMusicRepo Resolved stream: ${song.title} - ${song.artist}")
             } else {
-                Timber.w("YTMusicRepo Failed to resolve stream for: ${song.title}")
+                Timber.e("YTMusicRepo ALL methods failed to resolve stream for: ${song.title} ($videoId)")
             }
             return@withContext audioUrl
         } finally {
