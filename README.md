@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/Kotlin-2.1+-7F52FF?style=flat-square&logo=kotlin" alt="Kotlin" />
   <img src="https://img.shields.io/badge/Compose-Material3-0081CB?style=flat-square" alt="Compose" />
   <img src="https://img.shields.io/badge/Min%20SDK-24-333?style=flat-square" alt="Min SDK" />
-  <img src="https://img.shields.io/badge/Version-5.0.5-8A2BE2?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/Version-5.1.5-8A2BE2?style=flat-square" alt="Version" />
 </div>
 
 ---
@@ -15,8 +15,8 @@
 
 | Asset | Link                                                                                                          |
 | :--- |:--------------------------------------------------------------------------------------------------------------|
-| **APK (Latest)** | [IanPlayer-v.5.1.0.apk](https://github.com/ianocent/ianplayer/releases/download/v5.1.0/IanPlayer-v.5.1.0.apk) |
-| **Release Notes** | [v5.1.0](https://github.com/ianocent/IanPlayer/releases/tag/v5.1.0)                                           |
+| **APK (Latest)** | [IanPlayer-v.5.1.5.apk](https://github.com/ianocent/ianplayer/releases/download/v5.1.5/IanPlayer-v.5.1.5.apk) |
+| **Release Notes** | [v5.1.5](https://github.com/ianocent/IanPlayer/releases/tag/v5.1.5)                                           |
 
 ---
 
@@ -34,6 +34,8 @@
 - **Crossfade** between tracks (150ms volume fade in/out).
 - **Pre-fetch** next track automatically when 8 seconds remaining.
 - **Player state persistence** — queue survives app restart.
+- **Smart auto-fill UpNext** — when queue runs low (~5 remaining), auto-searches YouTube Music for related songs and appends them to queue (skips already-played songs).
+- **Played song tracking** — tracks `playedSongIds` set; auto-fill and queue logic skip songs already played in current session.
 
 ### 🌐 YouTube Music Streaming
 
@@ -41,7 +43,9 @@
 - **PoToken / BotGuard** attestation via ZemerCipher WebView.
 - **Multi-client fallback** (WEB → ANDROID → IOS → Invidious) if stream fails.
 - **Highest available bitrate** (up to 256k AAC / Opus).
-- **Two-tier stream cache** (in-memory + Room DB) with URL expiry tracking.
+- **Three-tier stream cache** (in-memory LRU → Room DB → file-based disk cache for album art) with URL expiry tracking.
+- **Smart engine tuning** — balanced buffer (2x default) for smooth playback on all network conditions without wasting memory on low-end devices; HW-first decoder selection with fallback (supports Qualcomm, MediaTek, Exynos, Kirin).
+- **Stream metadata persistence** — stream song data survives app restart via SharedPreferences cache (enables playlists with stream songs to work across sessions).
 - Genre browsing (10 genres: Pop, Rock, Hip Hop, R&B, Electronic, Jazz, Classical, Country, Indie, Metal).
 - Trending section.
 - Infinite scroll on search results.
@@ -102,6 +106,7 @@ All cards are rendered with Compose `GraphicsLayer`, saved to `Pictures/IanPlaye
 - **Favorites filter** — toggle to show only favorites.
 - **Album grouping** with drill-down detail view, play-all / shuffle-all FAB.
 - **Custom playlists**: create, rename, add/remove songs via checkbox dialog + search.
+- **Stream songs in playlists** — stream songs persist across app restarts and display correctly in playlist details.
 - **Drag‑to‑reorder** songs inside playlists.
 - **Custom playlist image** (pick from gallery via Coil).
 
@@ -137,6 +142,16 @@ All cards are rendered with Compose `GraphicsLayer`, saved to `Pictures/IanPlaye
 - Checks GitHub Releases on startup for new version.
 - In‑app download + install (triggers system package installer).
 - Works with `FileProvider` for Android N+.
+
+### ⚡ Performance & Stability
+
+- **Bounded image caches** — `LruCache` for bitmap memory (4MB low-res, 8MB high-res); prevents OOM on large libraries.
+- **File-based disk cache** for remote album art (`cacheDir/album_art/`) — avoids re-downloading art on every viewport entry; auto-cleaned by OS.
+- **Thread-safe stream URL cache** — `Collections.synchronizedMap` wrapping `LinkedHashMap` with LRU eviction (50 entries); multiple coroutines can read/write safely.
+- **`ConcurrentHashMap` for preResolvedIds** — eliminates race conditions during background search pre-resolution.
+- **All JSON serialization offloaded to `Dispatchers.IO`** — playlist saves, stream cache saves, play count/history writes no longer block main thread.
+- **Cancellable background jobs** — genre fetch and art load jobs properly cancelled in `onCleared()` to prevent leaks.
+- **Queue race fix** — `playSong()` reads and writes queue within same coroutine block; no more overwritten concurrent mutations.
 
 ---
 
@@ -220,7 +235,8 @@ Ian Player uses swipe and drag gestures throughout. Here's a complete reference:
 | **Image Loading** | Coil Compose |
 | **Adaptive Colors** | Palette API (androidx.palette) |
 | **Database** | Room (cached stream URLs) |
-| **Persistence** | SharedPreferences (playlists, favorites, play counts, history) |
+| **Persistence** | SharedPreferences (playlists, favorites, play counts, history, stream song cache) |
+| **Disk Cache** | File-based album art cache (`cacheDir/album_art/`, WEBP 85%) |
 | **YouTube Streaming** | InnerTube API + ZemerCipher (PoToken/BotGuard) |
 | **Audio Visualizer** | Android `Visualizer` (FFT) |
 | **Screen Recording** | MediaProjection + VP9 + WebM + MediaMuxer |
@@ -254,13 +270,15 @@ app/src/main/java/com/ianocent/musicplayer/
 │   ├── PlayerManager.kt              # Media3 controller wrapper
 │   └── WaveProjectionService.kt      # Foreground service for wave screen recording
 ├── viewmodel/
-│   └── MusicViewModel.kt             # Central state — playback, queue, search, download, recap, favorites
+│   ├── MusicViewModel.kt             # Central state — playback, queue, search, download, recap, favorites, stream cache
+│   └── PlaybackController.kt         # Playback logic — play/resume/pause, queue management, auto-fill UpNext, shuffle/repeat
 ├── ui/
 │   ├── NowPlayingScreen.kt           # Full player overlay + lyrics + controls + up-next
 │   ├── SongCardGenerator.kt          # "Now Playing" card generator
 │   ├── LyricCardGenerator.kt         # Lyric quote card generator
 │   ├── PlaylistCardGenerator.kt      # Playlist summary card generator
 │   ├── RecapCardGenerator.kt         # Monthly recap card generator
+│   ├── SongListComponents.kt         # Reusable song list composables (swipeable rows, action dialogs)
 │   ├── WaveRecordCard.kt             # Audio visualizer + screen recording sheet
 │   ├── ResponsiveSnapList.kt         # Full-height snap list + draggable scrollbar
 │   └── theme/
