@@ -15,8 +15,8 @@
 
 | Asset | Link                                                                                                          |
 | :--- |:--------------------------------------------------------------------------------------------------------------|
-| **APK (Latest)** | [IanPlayer-v.5.3.5.apk](https://github.com/ianocent/ianplayer/releases/download/v5.3.5/IanPlayer-v.5.3.5.apk) |
-| **Release Notes** | [v5.3.5](https://github.com/ianocent/IanPlayer/releases/tag/v5.3.5)                                           |
+| **APK (Latest)** | [IanPlayer-v.5.4.5.apk](https://github.com/ianocent/ianplayer/releases/download/v5.4.5/IanPlayer-v.5.4.5.apk) |
+| **Release Notes** | [v5.4.5](https://github.com/ianocent/IanPlayer/releases/tag/v5.4.5)                                           |
 
 ---
 
