@@ -17,6 +17,7 @@ import com.ianocent.musicplayer.data.LyricRepository
 import com.ianocent.musicplayer.data.MonthlyRecap
 import com.ianocent.musicplayer.data.MusicRepository
 import com.ianocent.musicplayer.data.Song
+import com.ianocent.musicplayer.data.SocialSignalListener
 import com.ianocent.musicplayer.player.IanVoiceAssistantService
 import com.ianocent.musicplayer.player.PlaybackService
 import com.ianocent.musicplayer.player.PlayerManager
@@ -76,21 +77,54 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ---- Genre browsing ----
-    data class Genre(val name: String, val query: String)
+    // ---- Genre & Mood browsing ----
+    data class Category(val name: String, val query: String, val isMood: Boolean = false)
 
+    // Genre & mood browsing. Queries anchor on US Billboard / UK charts and are sent with
+    // gl=US (see selectGenre/loadGenreArtworks) so YT Music returns Western hits, not
+    // device-locale (ID) local content or random non-chart songs.
     val genres = listOf(
-        Genre("Pop", "pop music"),
-        Genre("Rock", "rock music"),
-        Genre("Hip Hop", "hip hop music"),
-        Genre("R&B", "rnb music"),
-        Genre("Electronic", "electronic music"),
-        Genre("Jazz", "jazz music"),
-        Genre("Classical", "classical music"),
-        Genre("Country", "country music"),
-        Genre("Indie", "indie music"),
-        Genre("Metal", "metal music")
+        Category("Pop", "popular pop songs 2024 2025"),
+        Category("Rock", "rock music hits modern classic"),
+        Category("Hip Hop", "hip hop rap songs hits"),
+        Category("R&B", "r&b soul music songs"),
+        Category("Electronic", "edm dance electronic music"),
+        Category("Jazz", "jazz music classics"),
+        Category("Indie", "indie alternative rock songs"),
+        Category("Metal", "heavy metal hard rock songs")
     )
+
+    val moods = listOf(
+        Category("Sad", "sad emotional pop rock songs hits", true),
+        Category("Energetic", "upbeat energy workout songs", true),
+        Category("Chill", "chill lofi relaxing music", true),
+        Category("Happy", "happy feel good songs", true),
+        Category("Romantic", "romantic love songs hits", true),
+        Category("Dark", "dark moody aesthetic songs", true),
+        Category("Calm", "calm acoustic peaceful music", true),
+        Category("Focus", "focus study instrumental music", true)
+    )
+
+    // Contextual personalization: Time-based query
+    fun getContextualQuery(): String {
+        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        return when (hour) {
+            in 5..10 -> "morning upbeat coffee"
+            in 11..16 -> "productive afternoon focus"
+            in 17..20 -> "sunset evening chill"
+            else -> "night drive aesthetic"
+        }
+    }
+
+    fun getContextualTitle(): String {
+        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        return when (hour) {
+            in 5..10 -> "Morning Coffee"
+            in 11..16 -> "Afternoon Flow"
+            in 17..20 -> "Evening Sunset"
+            else -> "Late Night Vibes"
+        }
+    }
 
     private val _selectedGenre = MutableStateFlow<String?>(null)
     val selectedGenre: StateFlow<String?> = _selectedGenre
@@ -111,13 +145,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         if (genreArtLoadJob?.isActive == true) return
         genreArtLoadJob = viewModelScope.launch {
             genreArtLoaded = true
-            for (genre in genres) {
+            val allCats = genres + moods
+            for (cat in allCats) {
                 if (!isActive) break
                 try {
-                    val result = ytMusicRepository.searchSongs(genre.query) {}
+                    val result = ytMusicRepository.searchSongs(cat.query, {}, gl = "US")
                     if (result is StreamSearchResult.Success && result.songs.isNotEmpty()) {
                         val song = result.songs.first()
-                        _genreFirstSong.value = _genreFirstSong.value + (genre.name to song)
+                        _genreFirstSong.value = _genreFirstSong.value + (cat.name to song)
                     }
                 } catch (_: Exception) {}
             }
@@ -126,28 +161,30 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val genreFetchJobs = mutableMapOf<String, Job>()
 
-    fun selectGenre(genreName: String) {
-        _selectedGenre.value = genreName
-        if (_genreSongs.value.containsKey(genreName)) return
-        val genre = genres.find { it.name == genreName } ?: return
+    fun selectGenre(categoryName: String, forceRefresh: Boolean = false) {
+        _selectedGenre.value = categoryName
+        if (!forceRefresh && _genreSongs.value.containsKey(categoryName) && _genreSongs.value[categoryName]?.isNotEmpty() == true) return
+
+        val cat = (genres + moods).find { it.name == categoryName } ?: return
         _isGenreLoading.value = true
-        genreFetchJobs[genreName]?.cancel()
-        genreFetchJobs[genreName] = viewModelScope.launch {
+        genreFetchJobs[categoryName]?.cancel()
+        genreFetchJobs[categoryName] = viewModelScope.launch {
             try {
-                val result = ytMusicRepository.searchSongs(genre.query) { newSongs ->
+                val result = ytMusicRepository.searchSongs(cat.query, { newSongs ->
                     val current = _genreSongs.value.toMutableMap()
-                    val merged = (current[genreName] ?: emptyList()) + newSongs
-                    current[genreName] = merged.distinctBy { it.id }
+                    val merged = (current[categoryName] ?: emptyList()) + newSongs
+                    current[categoryName] = merged.distinctBy { it.id }
                     _genreSongs.value = current
-                }
+                }, gl = "US")
                 if (result is StreamSearchResult.Success) {
                     addToStreamSongsCache(result.songs)
                     val current = _genreSongs.value.toMutableMap()
-                    current[genreName] = result.songs
+                    current[categoryName] = result.songs
                     _genreSongs.value = current
+                    saveListToPrefs("cached_genre_$categoryName", result.songs)
                 }
             } catch (e: Exception) {
-                Timber.e(e, "MusicViewModel fetch genre ${genreName} failed")
+                Timber.e(e, "MusicViewModel fetch category ${categoryName} failed")
             } finally {
                 _isGenreLoading.value = false
             }
@@ -234,21 +271,31 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _isTrendingLoading.value = true
         viewModelScope.launch {
             try {
+                // Mix trending songs with contextual personalized songs
+                val contextualQuery = getContextualQuery()
+                
                 val result = ytMusicRepository.fetchHomeSongs { newSongs ->
                     addToStreamSongsCache(newSongs)
                     val merged = (_trendingSongs.value + newSongs).distinctBy { it.id }
                     _trendingSongs.value = merged
                 }
-                if (result is StreamSearchResult.Success) addToStreamSongsCache(result.songs)
-                if (result !is StreamSearchResult.Success) {
-                    Timber.w("MusicViewModel Trending fetch: $result")
+
+                // Add contextual personalization songs (time-based, region US for chart consistency)
+                ytMusicRepository.searchSongs(contextualQuery, { contextualSongs ->
+                    addToStreamSongsCache(contextualSongs)
+                    val merged = (_trendingSongs.value + contextualSongs).distinctBy { it.id }
+                    _trendingSongs.value = merged
+                }, gl = "US")
+
+                if (result is StreamSearchResult.Success) {
+                    addToStreamSongsCache(result.songs)
+                    saveListToPrefs("cached_trending", _trendingSongs.value)
                 }
             } catch (e: Exception) {
                 Timber.e(e, "MusicViewModel fetchTrending failed")
             } finally {
                 _isTrendingLoading.value = false
             }
-            // Start pre-resolve after trending loaded
             preResolveTrending()
         }
     }
@@ -256,6 +303,125 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshTrending() {
         trendingLoadAttempted = false
         fetchTrending(force = true)
+    }
+
+    // ---- For You: personalization from social-media feed signals ----
+    // Signals collected on-device by SocialSignalListener (system notification access:
+    // no mic, no camera, no screen recording, no foreground service). Stored only in
+    // SharedPreferences on this device, pruned after 72h. Opt-in, default off.
+    private val _socialSignalsEnabled = MutableStateFlow(
+        application.getSharedPreferences("ian_player_prefs", 0).getBoolean("social_signals_enabled", false)
+    )
+    val socialSignalsEnabled: StateFlow<Boolean> = _socialSignalsEnabled
+
+    private val _socialAccessGranted = MutableStateFlow(false)
+    val socialAccessGranted: StateFlow<Boolean> = _socialAccessGranted
+
+    private val _forYouSignals = MutableStateFlow<List<Pair<String, Long>>>(emptyList())
+    val forYouSignals: StateFlow<List<Pair<String, Long>>> = _forYouSignals
+
+    private val _forYouSongs = MutableStateFlow<List<Song>>(emptyList())
+    val forYouSongs: StateFlow<List<Song>> = _forYouSongs
+
+    private val _isForYouLoading = MutableStateFlow(false)
+    val isForYouLoading: StateFlow<Boolean> = _isForYouLoading
+
+    private var forYouJob: Job? = null
+    private var forYouLoadAttempted = false
+
+    fun setSocialSignalsEnabled(enabled: Boolean) {
+        _socialSignalsEnabled.value = enabled
+        prefs.edit().putBoolean("social_signals_enabled", enabled).apply()
+        if (enabled) {
+            refreshSocialAccess()
+            refreshForYou(force = true)
+        } else {
+            forYouJob?.cancel()
+            _forYouSongs.value = emptyList()
+            _forYouSignals.value = emptyList()
+        }
+    }
+
+    fun refreshSocialAccess() {
+        _socialAccessGranted.value = SocialSignalListener.isAccessGranted(appContext)
+    }
+
+    fun clearSocialSignals() {
+        prefs.edit().remove("social_signals").apply()
+        _forYouSignals.value = emptyList()
+        _forYouSongs.value = emptyList()
+        saveListToPrefs("cached_foryou", emptyList())
+    }
+
+    private fun loadSocialSignals(): List<Pair<String, Long>> {
+        val raw = prefs.getString("social_signals", null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            val list = mutableListOf<Pair<String, Long>>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                list.add(Pair(obj.getString("s"), obj.getLong("t")))
+            }
+            list.sortedByDescending { it.second }
+        } catch (_: Exception) { emptyList() }
+    }
+
+    fun refreshForYou(force: Boolean = false) {
+        if (!_socialSignalsEnabled.value) return
+        if (!force && forYouLoadAttempted) return
+        forYouLoadAttempted = true
+
+        forYouJob?.cancel()
+        _isForYouLoading.value = true
+        val stored = loadSocialSignals()
+        _forYouSignals.value = stored
+        
+        forYouJob = viewModelScope.launch {
+            // Wait for local songs to load if we're falling back to play counts
+            if (stored.isEmpty() && _songs.value.isEmpty()) {
+                withTimeoutOrNull(2000) {
+                    while (_songs.value.isEmpty() && isActive) delay(100)
+                }
+            }
+
+            val signals = if (stored.isNotEmpty()) stored.take(8) else {
+                _playCounts.value.entries
+                    .sortedByDescending { it.value }
+                    .take(5)
+                    .mapNotNull { (id, _) -> _songs.value.find { it.id == id }?.artist }
+                    .filter { it.isNotBlank() && it != "Unknown Artist" }
+                    .distinct()
+                    .map { it to System.currentTimeMillis() }
+            }
+            
+            if (signals.isEmpty() && _forYouSongs.value.isNotEmpty()) {
+                // Don't overwrite existing cache with empty results if we have no signals
+                _isForYouLoading.value = false
+                return@launch
+            }
+
+            val results = mutableListOf<Song>()
+            val seen = mutableSetOf<Long>()
+            for ((signal, _) in signals) {
+                if (!isActive) break
+                try {
+                    val res = ytMusicRepository.searchSongs(signal, {}, gl = "US")
+                    if (res is StreamSearchResult.Success) {
+                        for (s in res.songs) {
+                            if (seen.add(s.id)) results.add(s)
+                            if (results.size >= 24) break
+                        }
+                    }
+                } catch (_: Exception) {}
+                if (results.size >= 24) break
+            }
+            
+            if (results.isNotEmpty() || !force) {
+                _forYouSongs.value = results
+                saveListToPrefs("cached_foryou", results)
+            }
+            _isForYouLoading.value = false
+        }
     }
 
     private var preResolveJob: Job? = null
@@ -580,14 +746,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 // Search both YT Music and Tidal
                 val tidalResult = async { tidalRepository.searchSongs(query) }
                 
-                val ytResult = ytMusicRepository.searchSongs(query) { newSongs ->
+                val ytResult = ytMusicRepository.searchSongs(query, onPartial = { newSongs ->
                     addToStreamSongsCache(newSongs)
                     val merged = (_allStreamSongs.value + newSongs).distinctBy { s -> s.id }
                     _allStreamSongs.value = merged
                     _streamSongs.value = merged.take(
                         maxOf(_streamSongs.value.size + newSongs.size, streamPageSize)
                     )
-                }
+                })
 
                 val tidalSongs = tidalResult.await()
                 if (tidalSongs.isNotEmpty()) {
@@ -996,12 +1162,48 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val isBuffering: StateFlow<Boolean> get() = playbackController.isBuffering
     val audioSessionId: StateFlow<Int> get() = playbackController.audioSessionId
 
+    private fun saveListToPrefs(key: String, songs: List<Song>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val arr = JSONArray()
+            songs.forEach { arr.put(it.id) }
+            prefs.edit().putString(key, arr.toString()).apply()
+            addToStreamSongsCache(songs)
+        }
+    }
+
+    private fun loadListFromPrefs(key: String): List<Song> {
+        val raw = prefs.getString(key, null) ?: return emptyList()
+        val cache = _streamSongsCache.value
+        return try {
+            val arr = JSONArray(raw)
+            val list = mutableListOf<Song>()
+            for (i in 0 until arr.length()) {
+                cache[arr.getLong(i)]?.let { list.add(it) }
+            }
+            list
+        } catch (_: Exception) { emptyList() }
+    }
+
     init {
         loadPlaylistsFromPrefs()
         _playCounts.value = loadPlayCounts()
         _sortMode.value = prefs.getInt("sort_mode", 0)
         loadFavoriteIds()
         _streamSongsCache.value = loadStreamSongsCache()
+        
+        // Load cached stream content
+        _trendingSongs.value = loadListFromPrefs("cached_trending")
+        _forYouSongs.value = loadListFromPrefs("cached_foryou")
+        val cachedGenres = mutableMapOf<String, List<Song>>()
+        (genres + moods).forEach { cat ->
+            val songs = loadListFromPrefs("cached_genre_${cat.name}")
+            if (songs.isNotEmpty()) {
+                cachedGenres[cat.name] = songs
+                _genreFirstSong.value = _genreFirstSong.value + (cat.name to songs.first())
+            }
+        }
+        _genreSongs.value = cachedGenres
+
         checkForUpdate()
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1011,6 +1213,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         fetchTrending()
+        refreshSocialAccess()
 
         playbackController = PlaybackController(
             playerManager = playerManager,

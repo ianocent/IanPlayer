@@ -48,6 +48,16 @@ class YTMusicRepository(context: Context) {
     }
 
     companion object {
+        // Hard chart/playlist phrases: killed even when the uploader channel repeats them
+        // (e.g. artist = "Billboard Top 100 Hits").
+        // Hard chart/playlist phrases: killed even when the uploader channel repeats them
+        // (e.g. artist = "Billboard Top 100 Hits").
+        private val COMPILATION_PHRASE = Regex("\\b(Billboard|Top \\d+ (Hits|Songs|Tracks)?|Top 40|Greatest Hits|Best Of|Nonstop|Compilation|Masters|Hit Maker|Hit Co|Originally Performed By|Exitos|Internacionales|Del Momento|Le Meilleur|Music To|Music For|Relaxing Music|Background Music|Sleep Music|Workout Music|Study Music)\\b", RegexOption.IGNORE_CASE)
+        // Non-official versions and regional content we want to avoid (e.g. Indian/Bollywood leaks)
+        private val VERSION_MARKER = Regex("\\b(karaoke|instrumental|cover|remix|mashup|slowed|sped up|sped-up|reverb|acoustic|piano version|guitar version|live version|live at|live from|with lyrics|lyric video|official lyric video|tribute|tribute to|originally performed by|hit maker|the karaoke|various artists|hindi|bollywood|punjabi|tamil|telugu|t-series|zee music|arijit singh|jubin nautiyal|neha kakkar|badshah|shreya ghoshal|udit narayan|kumar sanu|alka yagnik|armaan malik|tony kakkar|bhakti|bhajan|ghazal|qawwali|tseries|zeemusic|sonu nigam|kanika kapoor|mika singh|sunidhi chauhan|himesh reshammiya|amal mallik|yo yo honey singh|raftaar|emiway|divine|sidhu moose wala|diljit dosanjh|guru randhawa|jassi gill|hardy sandhu|amrit maan|karan aujla|ap dhillon|shubh|ikka)\\b", RegexOption.IGNORE_CASE)
+        
+        // Devanagari script (Hindi, Marathi, etc.)
+        private val REGIONAL_SCRIPT = Regex("[\\u0900-\\u097F]")
         private val WEB_KEY = "AIzaSy" + "AO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
         private val ANDROID_KEY = "AIzaSy" + "A8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w"
         private const val BASE = "https://www.youtube.com/youtubei/v1"
@@ -74,12 +84,21 @@ class YTMusicRepository(context: Context) {
         if (!vd.isNullOrBlank()) visitorData = vd
     }
 
-    private fun clientContext(): JSONObject = JSONObject().apply {
+    // gl/hl override: ensures results come from requested region or fallback to US/ID.
+    // Explicitly avoids 'IN' (India) to prevent Bollywood leaks in global feeds.
+    private fun clientContext(gl: String? = null, hl: String? = null): JSONObject = JSONObject().apply {
+        val locale = java.util.Locale.getDefault()
+        val country = gl ?: locale.country.ifBlank { "US" }
+        // Guard: If detected country is India (IN), force it to US or ID based on language
+        val safeGl = if (country.equals("IN", true)) {
+            if (locale.language.equals("in", true) || locale.language.equals("id", true)) "ID" else "US"
+        } else country
+
         put("client", JSONObject().apply {
             put("clientName", "WEB_REMIX")
             put("clientVersion", "1.20260701.01.00")
-            put("hl", "en")
-            put("gl", "ID")
+            put("hl", hl ?: locale.language)
+            put("gl", safeGl)
             visitorData?.let { put("visitorData", it) }
         })
     }
@@ -527,12 +546,17 @@ class YTMusicRepository(context: Context) {
         return null
     }
 
-    suspend fun searchSongs(query: String, onPartial: (List<Song>) -> Unit): StreamSearchResult =
+    suspend fun searchSongs(
+        query: String,
+        onPartial: (List<Song>) -> Unit,
+        gl: String? = null,
+        hl: String? = null
+    ): StreamSearchResult =
         withContext(Dispatchers.IO) {
-            val musicResult = searchMusicSongsSafe(query, onPartial)
+            val musicResult = searchMusicSongsSafe(query, onPartial, gl, hl)
             if (musicResult is StreamSearchResult.Success) return@withContext musicResult
 
-            val regularResult = searchRegularSongsSafe(query, onPartial)
+            val regularResult = searchRegularSongsSafe(query, onPartial, gl)
             if (regularResult is StreamSearchResult.Success) return@withContext regularResult
 
             // Kedua jalur gagal. Kalau SALAH SATU dari keduanya nunjukin ParsingFailed (bukan
@@ -549,11 +573,13 @@ class YTMusicRepository(context: Context) {
 // cukup diperiksa exception & sinyal "0 item ditemukan padahal request sukses" dari sini.
     private suspend fun searchMusicSongsSafe(
         query: String,
-        onPartial: (List<Song>) -> Unit
+        onPartial: (List<Song>) -> Unit,
+        gl: String? = null,
+        hl: String? = null
     ): StreamSearchResult = withContext(Dispatchers.IO) {
         try {
             val body = JSONObject().apply {
-                put("context", clientContext())
+                put("context", clientContext(gl, hl))
                 put("query", query)
                 put("params", "EgWKAQIIAWoKEAMQBBAFEAoQCQ==")
             }
@@ -588,12 +614,20 @@ class YTMusicRepository(context: Context) {
                 try {
                     val item = items.getJSONObject(i)
                     val videoId = parseVideoId(item) ?: continue
+                    val title = parseTitle(item)
+                    val artist = parseArtist(item)
+                    val duration = parseDuration(item)
+                    
+                    // Strict filter to exclude compilations, playlists masquerading as songs, and long mixes
+                    if (duration > 15 * 60 * 1000L || isCompilation(title, artist) ||
+                        title.contains("full album", ignoreCase = true)) continue
+
                     val song = Song(
                         id = videoId.hashCode().toLong(),
-                        title = parseTitle(item),
+                        title = title,
                         artist = parseArtist(item),
                         album = parseAlbum(item),
-                        duration = parseDuration(item),
+                        duration = duration,
                         uri = Uri.parse("ytmusic://placeholder/$videoId"),
                         isStream = true,
                         remoteArtUrl = parseThumbnail(item),
@@ -617,7 +651,8 @@ class YTMusicRepository(context: Context) {
 
     private suspend fun searchRegularSongsSafe(
         query: String,
-        onPartial: (List<Song>) -> Unit
+        onPartial: (List<Song>) -> Unit,
+        gl: String? = null
     ): StreamSearchResult = withContext(Dispatchers.IO) {
         try {
             val webSearchContext = JSONObject().apply {
@@ -625,7 +660,7 @@ class YTMusicRepository(context: Context) {
                     put("clientName", "WEB")
                     put("clientVersion", "2.20250610.01.00")
                     put("hl", "en")
-                    put("gl", "ID")
+                    put("gl", gl ?: "US")
                 })
             }
             val body = JSONObject().apply {
@@ -648,12 +683,21 @@ class YTMusicRepository(context: Context) {
                 try {
                     val item = items.getJSONObject(i)
                     val videoId = item.optString("videoId", null) ?: continue
+                    val title = parseVideoTitle(item)
+                    val duration = parseVideoDuration(item)
+                    
+                    // Filter out non-song content
+                    val artist = parseVideoArtist(item)
+                    if (duration > 20 * 60 * 1000L || isCompilation(title, artist) ||
+                        title.contains("nonstop", ignoreCase = true) ||
+                        title.contains("full album", ignoreCase = true)) continue
+
                     val song = Song(
                         id = videoId.hashCode().toLong(),
-                        title = parseVideoTitle(item),
-                        artist = parseVideoArtist(item),
+                        title = title,
+                        artist = artist,
                         album = "YouTube",
-                        duration = parseVideoDuration(item),
+                        duration = duration,
                         uri = Uri.parse("ytmusic://placeholder/$videoId"),
                         isStream = true,
                         remoteArtUrl = parseVideoThumbnail(item),
@@ -693,6 +737,31 @@ class YTMusicRepository(context: Context) {
             }
         }
         return result
+    }
+
+    private fun isCompilation(title: String, artist: String): Boolean {
+        if (title.startsWith("Unknown")) return true // unparsed playlist cards (no flexColumns)
+        
+        val combined = "$title $artist".lowercase()
+
+        // 0. Regional script detection (e.g. Devanagari)
+        if (REGIONAL_SCRIPT.containsMatchIn(title) || REGIONAL_SCRIPT.containsMatchIn(artist)) return true
+
+        // 1. Version/Cover/Tribute markers (Hard Kill)
+        if (VERSION_MARKER.containsMatchIn(title) || VERSION_MARKER.containsMatchIn(artist)) return true
+        
+        // 2. Compilation phrases (Hard Kill)
+        if (COMPILATION_PHRASE.containsMatchIn(title) || COMPILATION_PHRASE.containsMatchIn(artist)) return true
+        
+        // 3. Generic "Music" titles/artists (Hard Kill)
+        // Kills: "Music To Make You Happy", "Upbeat Morning Music", "Relaxing Piano Music", etc.
+        if (combined.contains("music to") || combined.contains("music for") || 
+            (combined.contains("music") && (combined.contains("uplifting") || combined.contains("happy") || combined.contains("morning")))) return true
+
+        // 4. Year markers in artist name usually indicate a yearly compilation (e.g. "Hits 2023")
+        if (Regex("\\b(19|20)\\d{2}\\b").containsMatchIn(artist)) return true
+
+        return false
     }
 
     private fun parseVideoTitle(item: JSONObject): String {
@@ -879,7 +948,7 @@ class YTMusicRepository(context: Context) {
      * Fetch actual stream URL for a song with placeholder URI.
      * Called on-demand when song is about to be played.
      */
-    suspend fun resolveStreamUrl(song: Song): String? = withContext(Dispatchers.IO) {
+    suspend fun resolveStreamUrl(song: Song, highPriority: Boolean = false): String? = withContext(Dispatchers.IO) {
         val videoId = song.remoteId ?: return@withContext null
 
         if (!song.uri.toString().startsWith("ytmusic://placeholder/")) {
@@ -907,7 +976,9 @@ class YTMusicRepository(context: Context) {
 
         Timber.d("YTMusicRepo Resolving stream URL for: ${song.title}")
         try {
-            playerSemaphore.acquire()
+            if (!highPriority) {
+                playerSemaphore.acquire()
+            }
             
             // Coba InnerTube dulu karena lebih stabil dengan PoToken
             var audioUrl = fetchViaInnerTube(videoId)
@@ -939,24 +1010,34 @@ class YTMusicRepository(context: Context) {
             }
             return@withContext audioUrl
         } finally {
-            playerSemaphore.release()
+            if (!highPriority) {
+                playerSemaphore.release()
+            }
         }
     }
     /**
      * Fetch trending/popular songs using search API (reliable since browse
-     * endpoint often requires auth). Searches for trending music queries and
+     * endpoint often requires auth). Searches US/UK chart queries (region-forced
+     * en-US so hits come from the Western charts, not device-locale content) and
      * merges results.
      */
     suspend fun fetchHomeSongs(onPartial: (List<Song>) -> Unit): StreamSearchResult =
         withContext(Dispatchers.IO) {
-            val queries = listOf("trending music", "viral hits", "top songs")
+            // Chart-anchored queries: return official chart songs rather than local/random
+            // content, unlike the old "official music video trending" style queries.
+            val queries = listOf(
+                "Billboard Hot 100",
+                "UK Official Singles Chart Top 40",
+                "US Top 40 Songs",
+                "Global Top 50"
+            )
             val seenIds = mutableSetOf<Long>()
             val allResults = mutableListOf<Song>()
 
             for (query in queries) {
                 try {
                     val body = JSONObject().apply {
-                        put("context", clientContext())
+                        put("context", clientContext("US", "en"))
                         put("query", query)
                         put("params", "EgWKAQIIAWoKEAMQBBAFEAoQCQ==")
                     }
@@ -973,13 +1054,22 @@ class YTMusicRepository(context: Context) {
                             val videoId = parseVideoId(item) ?: continue
                             val id = videoId.hashCode().toLong()
                             if (id in seenIds) continue
+                            
+                            val title = parseTitle(item)
+                            val artist = parseArtist(item)
+                            val duration = parseDuration(item)
+
+                            if (duration > 20 * 60 * 1000L || isCompilation(title, artist) ||
+                                title.contains("nonstop", ignoreCase = true) ||
+                                title.contains("full album", ignoreCase = true)) continue
+
                             seenIds.add(id)
                             val song = Song(
                                 id = id,
-                                title = parseTitle(item),
+                                title = title,
                                 artist = parseArtist(item),
                                 album = parseAlbum(item),
-                                duration = parseDuration(item),
+                                duration = duration,
                                 uri = Uri.parse("ytmusic://placeholder/$videoId"),
                                 isStream = true,
                                 remoteArtUrl = parseThumbnail(item),

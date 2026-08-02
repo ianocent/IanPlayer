@@ -355,7 +355,7 @@ class PlaybackController(
                 // Fallback ke search biasa kalau endpoint 'next' gagal
                 val query = "${current.artist} ${current.title} radio"
                 val result = withContext(Dispatchers.IO) {
-                    try { ytMusicRepository.searchSongs(query) {} } catch (e: Exception) { null }
+                    try { ytMusicRepository.searchSongs(query, onPartial = {}) } catch (e: Exception) { null }
                 }
                 if (result is StreamSearchResult.Success) {
                     processAutoFillResults(result.songs)

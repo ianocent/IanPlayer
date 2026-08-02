@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -561,7 +562,7 @@ fun NowPlayingScreen(
                         .fillMaxWidth()
                         .fillMaxHeight()
                         .background(
-                            adaptiveColor.copy(alpha = if (isDarkMode) 0.15f else 0.12f)
+                            adaptiveColor.copy(alpha = if (isDarkMode) 0.08f else 0.05f)
                                 .compositeOver(if (isDarkMode) Color(0xFF121212) else Color.White),
                             RoundedCornerShape(24.dp)
                         )
@@ -580,43 +581,48 @@ fun NowPlayingScreen(
                                 if (isDragging) 8.dp else 0.dp,
                                 label = "upnext_drag_elevation"
                             )
-                            // Warna solid biar item yang lagi di-drag beneran nutupin item di bawahnya,
-                            // bukan cuma numpuk transparan (itu penyebab visual "tembus-tembusan" pas drag).
-                            val rowBg = if (isDarkMode) Color(0xFF1E1E1E) else Color.White
-
-                            Row(
+                            Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .zIndex(if (isDragging) 1f else 0f)
                                     .shadow(elevation, RoundedCornerShape(12.dp))
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(rowBg),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .padding(start = 8.dp)
-                                        .size(24.dp)
-                                        .clip(RoundedCornerShape(50))
-                                        .background(adaptiveColor.copy(alpha = 0.2f))
-                                        .draggableHandle(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        Icons.Rounded.DragHandle,
-                                        contentDescription = "Drag",
-                                        tint = adaptiveColor,
-                                        modifier = Modifier.size(16.dp)
+                                    .padding(vertical = 4.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
+                                        alpha = 0.3f
                                     )
-                                }
-                                Spacer(Modifier.width(8.dp))
-                                UpnextSongRow(
-                                    upSong = upSong,
-                                    viewModel = viewModel,
-                                    isDarkMode = isDarkMode,
-                                    modifier = Modifier.weight(1f)
+                                ),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    viewModel.playSong(upSong)
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(start = 8.dp)
+                                            .size(24.dp)
+                                            .clip(CircleShape)
+                                            .background(adaptiveColor.copy(alpha = 0.2f))
+                                            .draggableHandle(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.DragHandle,
+                                            contentDescription = "Drag",
+                                            tint = adaptiveColor,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                    UpnextSongRow(
+                                        upSong = upSong,
+                                        viewModel = viewModel,
+                                        isDarkMode = isDarkMode,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        viewModel.playSong(upSong)
+                                    }
                                 }
                             }
                         }
@@ -750,14 +756,14 @@ fun UpnextSongRow(
                 color = if (isDarkMode) Color.White else Color.Black,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 upSong.artist,
-                color = Color.Gray,
+                color = if (isDarkMode) Color.Gray else Color.Gray,
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis
             )
         }
         val mins = remember(upSong.duration) { TimeUnit.MILLISECONDS.toMinutes(upSong.duration).toString().padStart(2, '0') }

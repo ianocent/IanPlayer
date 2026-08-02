@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -31,6 +32,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -77,6 +79,10 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.ianocent.musicplayer.data.Song
@@ -186,7 +192,8 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(isDarkMode) {
                 systemUiController.setSystemBarsColor(
                     color = Color.Transparent,
-                    darkIcons = !isDarkMode
+                    darkIcons = !isDarkMode,
+                    isNavigationBarContrastEnforced = false
                 )
             }
 
@@ -589,11 +596,14 @@ fun ListingScreen(
         label = "containerAnim"
     )
 
-    Column(
-        modifier = modifier
+    Box(
+        modifier = Modifier
             .fillMaxSize()
             .background(animatedBgColor)
     ) {
+        Column(
+            modifier = modifier.fillMaxSize()
+        ) {
         // ---------- 1. HEADER ----------
         Row(
             modifier = Modifier
@@ -1374,6 +1384,11 @@ fun ListingScreen(
                     2 -> { // STREAM
                         var streamFilterArtist by remember { mutableStateOf<String?>(null) }
                         var streamFilterAlbum by remember { mutableStateOf<String?>(null) }
+                        val streamGridScrollState = rememberScrollState()
+                        // Keep these states outside of conditional blocks but within tab scope,
+                        // or better yet, use rememberSaveable to survive tab switching.
+                        val forYouLazyListState = rememberLazyListState()
+                        val moodsLazyListState = rememberLazyListState()
 
                         val filterActive = streamFilterArtist != null || streamFilterAlbum != null
                         val filterLabel = streamFilterArtist ?: streamFilterAlbum ?: ""
@@ -1512,19 +1527,189 @@ fun ListingScreen(
                                         }
                                     }
                                 } else {
-                                    // Genre grid
+                                    // Genre & Mood grid
                                     val trendingSongs by viewModel.trendingSongs.collectAsState()
                                     val isTrendingLoading by viewModel.isTrendingLoading.collectAsState()
 
                                     LaunchedEffect(Unit) { viewModel.fetchTrending() }
 
-                                    val scrollState = rememberScrollState()
                                     Column(
                                         modifier = Modifier
                                             .fillMaxSize()
-                                            .verticalScroll(scrollState)
+                                            .verticalScroll(streamGridScrollState)
                                     ) {
                                         Spacer(Modifier.height(12.dp))
+
+                                        // For You — personalization from social feed signals
+                                        val forYouSongs by viewModel.forYouSongs.collectAsState()
+                                        val isForYouLoading by viewModel.isForYouLoading.collectAsState()
+                                        val socialSignalsEnabled by viewModel.socialSignalsEnabled.collectAsState()
+                                        val socialAccessGranted by viewModel.socialAccessGranted.collectAsState()
+                                        val forYouSignals by viewModel.forYouSignals.collectAsState()
+
+                                        val lifecycleOwner = LocalLifecycleOwner.current
+                                        val appContext = LocalContext.current
+
+                                        LaunchedEffect(Unit) {
+                                            viewModel.refreshSocialAccess()
+                                            viewModel.refreshForYou()
+                                        }
+
+                                        DisposableEffect(lifecycleOwner) {
+                                            val observer = LifecycleEventObserver { _, event ->
+                                                if (event == Lifecycle.Event.ON_RESUME) {
+                                                    viewModel.refreshSocialAccess()
+                                                    viewModel.refreshForYou(force = true)
+                                                }
+                                            }
+                                            lifecycleOwner.lifecycle.addObserver(observer)
+                                            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                                        }
+
+                                        Card(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp)
+                                                .clip(RoundedCornerShape(20.dp)),
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                                            ),
+                                            shape = RoundedCornerShape(20.dp)
+                                        ) {
+                                            Column(Modifier.padding(14.dp)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(Icons.Rounded.AutoAwesome, null, tint = adaptiveColor, modifier = Modifier.size(18.dp))
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Text(
+                                                        "For You",
+                                                        style = MaterialTheme.typography.titleMedium,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = adaptiveColor
+                                                    )
+                                                    Spacer(Modifier.weight(1f))
+                                                    if (socialSignalsEnabled && socialAccessGranted && forYouSignals.isNotEmpty()) {
+                                                        TextButton(onClick = { viewModel.clearSocialSignals() }) {
+                                                            Text("Clear", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                                        }
+                                                    }
+                                                }
+//                                                Spacer(Modifier.height(2.dp))
+//                                                Text(
+//                                                    "Music from what you scroll past on social media. Stays on your phone. No mic.",
+//                                                    style = MaterialTheme.typography.bodySmall,
+//                                                    color = Color.Gray
+//                                                )
+                                                Spacer(Modifier.height(10.dp))
+
+                                                if (!socialSignalsEnabled) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Text(
+                                                            "Match songs to artists you see on your feed",
+                                                            modifier = Modifier.weight(1f),
+                                                            style = MaterialTheme.typography.bodyMedium,
+                                                            color = adaptiveColor.copy(alpha = 0.85f)
+                                                        )
+                                                        Button(
+                                                            onClick = { viewModel.setSocialSignalsEnabled(true) },
+                                                            colors = ButtonDefaults.buttonColors(containerColor = adaptiveColor.copy(alpha = 0.2f), contentColor = adaptiveColor)
+                                                        ) { Text("Enable") }
+                                                    }
+                                                } else if (!socialAccessGranted) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Text(
+                                                            "One-time system grant needed to read your feed",
+                                                            modifier = Modifier.weight(1f),
+                                                            style = MaterialTheme.typography.bodyMedium,
+                                                            color = adaptiveColor.copy(alpha = 0.85f)
+                                                        )
+                                                        Button(
+                                                            onClick = { appContext.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
+                                                            colors = ButtonDefaults.buttonColors(containerColor = adaptiveColor.copy(alpha = 0.2f), contentColor = adaptiveColor)
+                                                        ) { Text("Connect") }
+                                                    }
+                                                } else if (isForYouLoading && forYouSongs.isEmpty()) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = adaptiveColor)
+                                                        Spacer(Modifier.width(10.dp))
+                                                        Text("Reading your feed…", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                                                    }
+                                                } else if (forYouSongs.isEmpty()) {
+                                                    Text(
+                                                        "Nothing yet. Songs you see on social media will show up here.",
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        color = Color.Gray
+                                                    )
+                                                } else {
+                                                    if (forYouSignals.isNotEmpty()) {
+                                                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                            items(forYouSignals.take(6)) { (signal, _) ->
+                                                                Box(
+                                                                    Modifier
+                                                                        .clip(RoundedCornerShape(50))
+                                                                        .background(adaptiveColor.copy(alpha = 0.12f))
+                                                                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                                                                ) {
+                                                                    Text(
+                                                                        signal,
+                                                                        style = MaterialTheme.typography.labelSmall,
+                                                                        color = adaptiveColor.copy(alpha = 0.9f),
+                                                                        maxLines = 1,
+                                                                        overflow = TextOverflow.Ellipsis
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                        Spacer(Modifier.height(8.dp))
+                                                    }
+                                                    LazyRow(
+                                                        state = forYouLazyListState,
+                                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                                    ) {
+                                                        items(forYouSongs) { song ->
+                                                            ForYouSongCard(
+                                                                song = song,
+                                                                queueSongs = forYouSongs,
+                                                                viewModel = viewModel,
+                                                                adaptiveColor = adaptiveColor
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Spacer(Modifier.height(12.dp))
+
+                                        // Mood Section - NEW
+                                        Text(
+                                            "How are you feeling?",
+                                            modifier = Modifier.padding(horizontal = 16.dp),
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = adaptiveColor
+                                        )
+                                        Spacer(Modifier.height(8.dp))
+                                        val moods = viewModel.moods
+                                        androidx.compose.foundation.lazy.LazyRow(
+                                            state = moodsLazyListState,
+                                            contentPadding = PaddingValues(horizontal = 12.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            items(moods) { mood ->
+                                                CategoryCard(
+                                                    category = mood,
+                                                    isLoading = isGenreLoading && genreSongsMap[mood.name] == null,
+                                                    accentColor = adaptiveColor,
+                                                    onClick = { viewModel.selectGenre(mood.name) },
+                                                    modifier = Modifier.width(130.dp),
+                                                    viewModel = viewModel,
+                                                    artSong = genreFirstSong[mood.name]
+                                                )
+                                            }
+                                        }
+
+                                        Spacer(Modifier.height(20.dp))
+
                                         Text(
                                             "Browse Genre",
                                             modifier = Modifier.padding(horizontal = 16.dp),
@@ -1535,6 +1720,7 @@ fun ListingScreen(
                                         Spacer(Modifier.height(8.dp))
 
                                         // Genre grid - 2 columns
+                                        val genres = viewModel.genres
                                         val genreChunks = genres.chunked(2)
                                         Column(
                                             modifier = Modifier.padding(horizontal = 12.dp),
@@ -1546,8 +1732,8 @@ fun ListingScreen(
                                                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                                                 ) {
                                                     rowGenres.forEach { genre ->
-                                                        GenreCard(
-                                                            genre = genre,
+                                                        CategoryCard(
+                                                            category = genre,
                                                             isLoading = isGenreLoading && genreSongsMap[genre.name] == null,
                                                             accentColor = adaptiveColor,
                                                             onClick = { viewModel.selectGenre(genre.name) },
@@ -1577,11 +1763,27 @@ fun ListingScreen(
                                             }
                                         } else if (trendingSongs.isNotEmpty()) {
                                             Text(
-                                                "Trending Now",
+                                                "Popular Right Now",
                                                 modifier = Modifier.padding(horizontal = 16.dp),
                                                 style = MaterialTheme.typography.titleMedium,
                                                 fontWeight = FontWeight.Bold,
                                                 color = adaptiveColor
+                                            )
+                                            Spacer(Modifier.height(8.dp))
+
+                                            // Contextual Title - NEW
+                                            Text(
+                                                viewModel.getContextualTitle(),
+                                                modifier = Modifier.padding(horizontal = 16.dp),
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = adaptiveColor.copy(alpha = 0.7f)
+                                            )
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(
+                                                "No account needed — top US/UK chart hits, refreshed daily. For You mixes in songs from your social feed.",
+                                                modifier = Modifier.padding(horizontal = 16.dp),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color.Gray
                                             )
                                             Spacer(Modifier.height(8.dp))
 
@@ -1946,6 +2148,7 @@ fun ListingScreen(
                                         isPlaying = isPlaying,
                                         btnTint = btnTint,
                                         adaptiveColor = adaptiveColor,
+                                        minibarTextColor = minibarTextColor,
                                         isBuffering = isBuffering,
                                         currentSong = currentSong,
                                         onNowPlayingClick = onNowPlayingClick,
@@ -1961,6 +2164,7 @@ fun ListingScreen(
                                         repeatMode = repeatMode,
                                         btnTint = btnTint,
                                         adaptiveColor = adaptiveColor,
+                                        minibarTextColor = minibarTextColor,
                                         currentSong = currentSong,
                                         onNowPlayingClick = onNowPlayingClick,
                                         isPillAtBottom = isPillAtBottom,
@@ -1976,6 +2180,7 @@ fun ListingScreen(
             }
         }
     }
+}
 
     if (showCreateDialog) {
         CreatePlaylistDialog(
@@ -3061,7 +3266,7 @@ fun MiniLayoutDefault(
             horizontalArrangement = Arrangement.SpaceEvenly,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 6.dp)
+                .padding(vertical = 10.dp)
                 .pointerInput(Unit) {
                     var accDx = 0f
                     var accDy = 0f
@@ -3094,22 +3299,22 @@ fun MiniLayoutDefault(
             MiniControlButton(
                 icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                 onClick = { viewModel.togglePlayPause() },
-                bg = adaptiveColor.copy(alpha = 0.2f), tint = adaptiveColor, size = 40.dp
+                bg = adaptiveColor.copy(alpha = 0.2f), tint = adaptiveColor, size = 44.dp
             )
             MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() },
-                adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 40.dp)
+                adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 44.dp)
             MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() },
-                adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 40.dp)
+                adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 44.dp)
             MiniControlButton(
                 Icons.Rounded.Shuffle, { viewModel.toggleShuffle() },
                 if (isShuffleOn) activeBg else inactBg,
-                if (isShuffleOn) adaptiveColor else inactTint, 40.dp
+                if (isShuffleOn) adaptiveColor else inactTint, 44.dp
             )
             MiniControlButton(
                 if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
                 { viewModel.toggleRepeat() },
                 if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else inactBg,
-                if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, 40.dp
+                if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, 44.dp
             )
         }
     }
@@ -3121,6 +3326,7 @@ fun MiniLayoutFloating(
     isPlaying: Boolean,
     btnTint: Color,
     adaptiveColor: Color,
+    minibarTextColor: Color,
     isBuffering: Boolean,
     currentSong: Song? = null,
     onNowPlayingClick: () -> Unit = {},
@@ -3131,7 +3337,7 @@ fun MiniLayoutFloating(
 ) {
     val shuffleOn by viewModel.isShuffleOn.collectAsState()
     val repeat by viewModel.repeatMode.collectAsState()
-    val inactTint = btnTint.copy(alpha = 0.75f)
+    val inactTint = minibarTextColor.copy(alpha = 0.75f)
     val inactBg = adaptiveColor.copy(alpha = 0.18f)
     val activeBg = adaptiveColor.copy(alpha = 0.35f)
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -3186,9 +3392,9 @@ fun MiniLayoutFloating(
         ) {
             MiniControlButton(Icons.Rounded.Shuffle, { viewModel.toggleShuffle() },
                 bg = if (shuffleOn) activeBg else inactBg,
-                tint = if (shuffleOn) adaptiveColor else inactTint, size = 36.dp)
+                tint = if (shuffleOn) adaptiveColor else inactTint, size = 44.dp)
             MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() },
-                inactBg, btnTint, 36.dp)
+                adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 44.dp)
             Box(
                 modifier = Modifier
                     .size(48.dp)
@@ -3207,12 +3413,12 @@ fun MiniLayoutFloating(
                 }
             }
             MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() },
-                inactBg, btnTint, 36.dp)
+                adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 44.dp)
             MiniControlButton(
                 if (repeat == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
                 { viewModel.toggleRepeat() },
                 bg = if (repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else inactBg,
-                tint = if (repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, size = 36.dp)
+                tint = if (repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, size = 44.dp)
         }
     }
 }
@@ -3225,6 +3431,7 @@ fun MiniLayoutQueue(
     repeatMode: Int,
     btnTint: Color,
     adaptiveColor: Color,
+    minibarTextColor: Color,
     currentSong: Song? = null,
     onNowPlayingClick: () -> Unit = {},
     isPillAtBottom: Boolean = false,
@@ -3232,9 +3439,9 @@ fun MiniLayoutQueue(
     duration: Long = 0,
     onToggleVolume: () -> Unit = {}
 ) {
-    val inactTint = btnTint.copy(alpha = 0.75f)
-    val inactBg = adaptiveColor.copy(alpha = 0.18f)
+    val inactTint = minibarTextColor.copy(alpha = 0.75f)
     val activeBg = adaptiveColor.copy(alpha = 0.35f)
+    
     Column(modifier = Modifier.fillMaxWidth()) {
         if (currentSong != null && isPillAtBottom) {
             MiniSongInfo(
@@ -3250,10 +3457,11 @@ fun MiniLayoutQueue(
                 onToggleVolume = onToggleVolume
             )
         }
+        
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .padding(horizontal = 24.dp, vertical = 12.dp)
                 .pointerInput(Unit) {
                     var accDx = 0f
                     var accDy = 0f
@@ -3264,16 +3472,10 @@ fun MiniLayoutQueue(
                             val threshold = 40f
 
                             if (absDy > absDx && absDy > threshold) {
-                                if (accDy < 0) {
-                                    // SWIPE UP → NowPlayingScreen
-                                    onNowPlayingClick()
-                                } else {
-                                    // SWIPE DOWN → cycle layout
-                                    viewModel.setMiniLayoutIndex((viewModel.miniLayoutIndex.value + 1) % 3)
-                                }
+                                if (accDy < 0) onNowPlayingClick()
+                                else viewModel.setMiniLayoutIndex((viewModel.miniLayoutIndex.value + 1) % 3)
                             }
-                            accDx = 0f
-                            accDy = 0f
+                            accDx = 0f; accDy = 0f
                         },
                         onDragCancel = { accDx = 0f; accDy = 0f }
                     ) { change, dragAmount ->
@@ -3282,15 +3484,30 @@ fun MiniLayoutQueue(
                         accDy += dragAmount.y
                     }
                 },
-            horizontalArrangement = Arrangement.SpaceEvenly,
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() },
-                    inactBg, btnTint, 36.dp)
+            // Left Mode
+            IconButton(
+                onClick = { viewModel.toggleShuffle() },
+                modifier = Modifier.size(36.dp).clip(CircleShape).background(if (isShuffleOn) activeBg else Color.Transparent)
+            ) {
+                Icon(Icons.Rounded.Shuffle, null, tint = if (isShuffleOn) adaptiveColor else inactTint, modifier = Modifier.size(22.dp))
+            }
+
+            // Center Group
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Icon(
+                    Icons.Rounded.SkipPrevious, null, tint = adaptiveColor,
+                    modifier = Modifier.size(32.dp).clickable { viewModel.playPrevious() }
+                )
+                
                 Box(
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(48.dp)
                         .clip(CircleShape)
                         .background(adaptiveColor.copy(alpha = 0.2f))
                         .clickable { viewModel.togglePlayPause() },
@@ -3298,21 +3515,25 @@ fun MiniLayoutQueue(
                 ) {
                     Icon(
                         if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                        null, tint = adaptiveColor, modifier = Modifier.size(24.dp)
+                        null, tint = adaptiveColor, modifier = Modifier.size(32.dp)
                     )
                 }
-                MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() },
-                    inactBg, btnTint, 36.dp)
+
+                Icon(
+                    Icons.Rounded.SkipNext, null, tint = adaptiveColor,
+                    modifier = Modifier.size(32.dp).clickable { viewModel.playNext() }
+                )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                MiniControlButton(Icons.Rounded.Shuffle, { viewModel.toggleShuffle() },
-                    if (isShuffleOn) activeBg else inactBg,
-                    if (isShuffleOn) adaptiveColor else inactTint, 36.dp)
-                MiniControlButton(
+
+            // Right Mode
+            IconButton(
+                onClick = { viewModel.toggleRepeat() },
+                modifier = Modifier.size(36.dp).clip(CircleShape).background(if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else Color.Transparent)
+            ) {
+                Icon(
                     if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-                    { viewModel.toggleRepeat() },
-                    if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else inactBg,
-                    if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, 36.dp)
+                    null, tint = if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, modifier = Modifier.size(22.dp)
+                )
             }
         }
     }
@@ -3339,7 +3560,7 @@ fun TrendingCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(24.dp))
             .clickable {
                 if (isPlaceholder) {
                     viewModel.getAudioFormats(song) { f ->
@@ -3352,99 +3573,82 @@ fun TrendingCard(
                 }
             },
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
         ),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(24.dp)
     ) {
         Column {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
-                    .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center
+                    .clip(RoundedCornerShape(24.dp))
             ) {
-                Crossfade(
-                    targetState = isLoaded && highResArt != null,
-                    animationSpec = tween(400),
-                    label = "art_crossfade"
-                ) { loaded ->
-                    if (loaded) {
-                        Image(
-                            bitmap = highResArt!!.asImageBitmap(),
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(adaptiveColor.copy(alpha = 0.08f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                Icons.Rounded.MusicNote,
-                                null,
-                                tint = adaptiveColor.copy(alpha = 0.3f),
-                                modifier = Modifier.size(36.dp)
-                            )
-                        }
-                    }
-                }
-
-                if (isPlaceholder) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(6.dp)
-                            .size(24.dp)
-                            .clip(CircleShape)
-                            .background(adaptiveColor.copy(alpha = 0.85f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(14.dp),
-                            strokeWidth = 2.dp,
-                            color = if (adaptiveColor.luminance() > 0.5f) Color.Black else Color.White
-                        )
-                    }
+                if (isLoaded && highResArt != null) {
+                    Image(
+                        bitmap = highResArt!!.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
                 } else {
                     Box(
                         modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(6.dp)
-                            .size(24.dp)
-                            .clip(CircleShape)
-                            .background(adaptiveColor),
+                            .fillMaxSize()
+                            .background(adaptiveColor.copy(alpha = 0.1f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
+                            Icons.Rounded.MusicNote,
+                            null,
+                            tint = adaptiveColor.copy(alpha = 0.4f),
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                }
+
+                // Play icon overlay
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(10.dp)
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.5f))
+                        .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isPlaceholder) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = Color.White
+                        )
+                    } else {
+                        Icon(
                             Icons.Rounded.PlayArrow,
                             null,
-                            tint = if (adaptiveColor.luminance() > 0.5f) Color.Black else Color.White,
-                            modifier = Modifier.size(16.dp)
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
             }
-            Column(modifier = Modifier.padding(8.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
                 Text(
                     song.title,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                Spacer(Modifier.height(2.dp))
                 Text(
                     song.artist,
                     style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    color = Color.Gray
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
             }
         }
@@ -3483,8 +3687,82 @@ fun TrendingCard(
 }
 
 @Composable
-fun GenreCard(
-    genre: MusicViewModel.Genre,
+fun ForYouSongCard(
+    song: com.ianocent.musicplayer.data.Song,
+    queueSongs: List<com.ianocent.musicplayer.data.Song>,
+    viewModel: MusicViewModel,
+    adaptiveColor: Color,
+    modifier: Modifier = Modifier
+) {
+    var art by remember(song.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(song.id) {
+        viewModel.getCachedArt(song) { b -> art = b }
+    }
+
+    Card(
+        modifier = modifier
+            .width(135.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .clickable { viewModel.setQueue(queueSongs, startSong = song) },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+        ),
+        shape = RoundedCornerShape(24.dp)
+    ) {
+        Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(24.dp))
+            ) {
+                if (art != null) {
+                    Image(
+                        bitmap = art!!.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(adaptiveColor.copy(alpha = 0.1f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Rounded.MusicNote,
+                            null,
+                            tint = adaptiveColor.copy(alpha = 0.4f),
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                }
+            }
+            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                Text(
+                    song.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    song.artist,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CategoryCard(
+    category: MusicViewModel.Category,
     isLoading: Boolean,
     accentColor: Color,
     onClick: () -> Unit,
@@ -3504,20 +3782,19 @@ fun GenreCard(
 
     Card(
         modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(28.dp))
             .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
-            containerColor = accentColor.copy(alpha = 0.15f)
+            containerColor = Color.Transparent
         ),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(28.dp)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(1f),
-            contentAlignment = Alignment.Center
+                .aspectRatio(1f)
         ) {
+            // Background Image with Gradient
             if (artBitmap != null) {
                 Image(
                     bitmap = artBitmap!!,
@@ -3525,34 +3802,87 @@ fun GenreCard(
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
                 )
+            } else {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.4f))
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(accentColor.copy(alpha = 0.3f), accentColor.copy(alpha = 0.1f))
+                            )
+                        )
                 )
             }
 
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            // Glassmorphism-style overlay
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.2f),
+                                Color.Black.copy(alpha = 0.7f)
+                            )
+                        )
+                    )
+            )
+
+            // Content
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.Bottom,
+                horizontalAlignment = Alignment.Start
+            ) {
                 if (isLoading) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.5.dp,
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
                         color = Color.White
                     )
-                } else if (artBitmap == null) {
-                    Icon(
-                        Icons.Rounded.MusicNote,
-                        contentDescription = null,
-                        tint = accentColor,
-                        modifier = Modifier.size(32.dp)
+                    Spacer(Modifier.height(4.dp))
+                }
+                
+                Text(
+                    category.name,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White,
+                    style = if (category.isMood) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                
+                if (!category.isMood) {
+                    Text(
+                        "Collection",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White.copy(alpha = 0.7f)
                     )
                 }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    genre.name,
-                    fontWeight = FontWeight.Bold,
-                    color = if (artBitmap != null) Color.White else accentColor,
-                    style = MaterialTheme.typography.bodyLarge
+            }
+
+            // Decorative top-right icon
+            if (category.isMood) {
+                val moodIcon = when(category.name) {
+                    "Sad" -> Icons.Rounded.SentimentDissatisfied
+                    "Energetic" -> Icons.Rounded.Bolt
+                    "Chill" -> Icons.Rounded.SelfImprovement
+                    "Happy" -> Icons.Rounded.SentimentVerySatisfied
+                    "Romantic" -> Icons.Rounded.Favorite
+                    "Dark" -> Icons.Rounded.NightsStay
+                    else -> Icons.Rounded.MusicNote
+                }
+                Icon(
+                    moodIcon,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.4f),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(12.dp)
+                        .size(24.dp)
                 )
             }
         }
@@ -3634,6 +3964,7 @@ fun PreviewMiniPlayerFloating() {
                 isPlaying = false,
                 btnTint = Color.White,
                 adaptiveColor = Color(0xFFE91E63),
+                minibarTextColor = Color.White,
                 isBuffering = false,
                 currentSong = Song(2, "Gerimis Mengundang", "Slam", 280000, android.net.Uri.EMPTY),
                 isPillAtBottom = true

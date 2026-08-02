@@ -67,7 +67,7 @@ class TidalRepository {
     suspend fun resolveTidalStream(song: Song, ytRepo: YTMusicRepository): String? {
         val query = "${song.artist} - ${song.title}"
         Timber.d("Tidal resolve: falling back to YT Music for $query")
-        val ytResult = ytRepo.searchSongs(query) { }
+        val ytResult = ytRepo.searchSongs(query, onPartial = {})
         if (ytResult is StreamSearchResult.Success && ytResult.songs.isNotEmpty()) {
             val bestMatch = ytResult.songs.first()
             return ytRepo.resolveStreamUrl(bestMatch)
