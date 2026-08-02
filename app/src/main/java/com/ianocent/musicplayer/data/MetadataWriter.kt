@@ -234,11 +234,26 @@ object MetadataWriter {
                 return@withContext false
             }
 
-            // Write back via ContentResolver
+            // Write back: prefer direct file write (keeps inode → MediaStore row keeps same id,
+            // scanner sees modify, not add → no duplicate rows).
+            // Fallback: ContentResolver stream (some OEM MediaProviders swap inode → duplicate rows,
+            // cleaned up by MusicViewModel post-write dedupe).
             val tempBytes = tempFile.readBytes()
-            context.contentResolver.openOutputStream(uri, "wt")?.use { outputStream ->
-                outputStream.write(tempBytes)
-                outputStream.flush()
+            var wroteDirect = false
+            try {
+                java.io.FileOutputStream(file).use { outputStream ->
+                    outputStream.write(tempBytes)
+                    outputStream.flush()
+                }
+                wroteDirect = true
+            } catch (e: Exception) {
+                Timber.w(e, "Direct file write failed, falling back to ContentResolver")
+            }
+            if (!wroteDirect) {
+                context.contentResolver.openOutputStream(uri, "wt")?.use { outputStream ->
+                    outputStream.write(tempBytes)
+                    outputStream.flush()
+                }
             }
 
             tempFile.delete()

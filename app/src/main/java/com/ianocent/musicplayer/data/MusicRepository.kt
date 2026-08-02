@@ -156,4 +156,105 @@ class MusicRepository(private val context: Context) {
             e.printStackTrace()
         }
     }
+
+    // MediaStore can duplicate rows for one physical file after metadata rewrites
+    // (OEM MediaProvider inode swap + scanner race). Delete extras, keep original id.
+    fun dedupeMediaRows(songId: Long, filePath: String?) {
+        if (filePath == null) return
+        try {
+            val ids = mutableListOf<Long>()
+            context.contentResolver.query(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Audio.Media._ID),
+                "${MediaStore.Audio.Media.DATA} = ?",
+                arrayOf(filePath),
+                null
+            )?.use { cursor ->
+                while (cursor.moveToNext()) ids.add(cursor.getLong(0))
+            }
+            ids.filter { it != songId }.forEach { extraId ->
+                try {
+                    context.contentResolver.delete(
+                        ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, extraId),
+                        null, null
+                    )
+                } catch (e: Exception) {
+                    Timber.e(e, "Dedupe delete failed for row $extraId")
+                }
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Dedupe failed for $filePath")
+        }
+    }
+
+    // ==========================================
+    // M3U PLAYLIST IMPORT/EXPORT
+    // ==========================================
+    data class M3uEntry(val path: String?, val title: String?, val artist: String?)
+
+    fun buildM3u(playlistName: String, songs: List<Song>): String {
+        val sb = StringBuilder()
+        sb.append("#EXTM3U\n")
+        sb.append("#PLAYLIST:$playlistName\n")
+        songs.forEach { song ->
+            sb.append("#EXTINF:${song.duration / 1000},${song.artist} - ${song.title}\n")
+            if (song.isStream) {
+                // Stream songs can't be resolved on another device; keep reference comment
+                sb.append("#IanStream:").append(song.remoteId ?: song.title).append('\n')
+            } else {
+                sb.append(getRealPath(song.uri) ?: song.uri.toString()).append('\n')
+            }
+        }
+        return sb.toString()
+    }
+
+    fun parseM3u(text: String): List<M3uEntry> {
+        val entries = mutableListOf<M3uEntry>()
+        var pendingInfo: String? = null
+        text.lines().forEach { raw ->
+            val line = raw.trim()
+            if (line.isEmpty() || line.startsWith("#EXTM3U") || line.startsWith("#PLAYLIST")) return@forEach
+            when {
+                line.startsWith("#EXTINF:") -> pendingInfo = line.removePrefix("#EXTINF:")
+                line.startsWith("#IanStream:") -> pendingInfo = null
+                line.startsWith("#") -> { /* other comments ignored */ }
+                else -> {
+                    var artist: String? = null
+                    var title: String? = null
+                    pendingInfo?.let { info ->
+                        val idx = info.indexOf(", ")
+                        if (idx > 0) {
+                            artist = info.substring(0, idx).trim().takeIf { it.isNotBlank() }
+                            title = info.substring(idx + 2).trim().takeIf { it.isNotBlank() }
+                        }
+                    }
+                    entries.add(M3uEntry(line, title, artist))
+                    pendingInfo = null
+                }
+            }
+        }
+        return entries
+    }
+
+    fun matchM3uEntries(entries: List<M3uEntry>, library: List<Song>): List<Song> {
+        val matched = mutableListOf<Song>()
+        val usedIds = mutableSetOf<Long>()
+        entries.forEach { entry ->
+            val fileName = entry.path?.substringAfterLast('/')?.trim()?.takeIf { it.isNotEmpty() }
+            val song = library.firstOrNull { s ->
+                s.id !in usedIds && (
+                    (!s.isStream && fileName != null &&
+                        getRealPath(s.uri)?.substringAfterLast('/')?.equals(fileName, ignoreCase = true) == true) ||
+                    (entry.title != null && entry.artist != null &&
+                        s.title.equals(entry.title, ignoreCase = true) &&
+                        s.artist.equals(entry.artist, ignoreCase = true))
+                    )
+            }
+            if (song != null) {
+                matched.add(song)
+                usedIds.add(song.id)
+            }
+        }
+        return matched
+    }
 }

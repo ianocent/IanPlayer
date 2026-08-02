@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -32,12 +33,16 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -157,6 +162,7 @@ fun LyricCardSheet(
     val graphicsLayer = rememberGraphicsLayer()
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
+    val density = LocalDensity.current
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -165,19 +171,32 @@ fun LyricCardSheet(
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(
-                modifier = Modifier.drawWithContent {
-                    graphicsLayer.record {
-                        drawRect(Color.Transparent, size = this.size, blendMode = BlendMode.Src)
-                        this@drawWithContent.drawContent()
-                    }
-                    drawLayer(graphicsLayer)
-                }
+            androidx.compose.material3.Surface(
+                shape = RoundedCornerShape(20.dp),
+                shadowElevation = 12.dp,
+                color = Color.Transparent,
+                modifier = Modifier.wrapContentSize()
             ) {
-                LyricCardContent(song, lyricText, albumArt, accentColor)
+                Box(
+                    modifier = Modifier.drawWithContent {
+                        graphicsLayer.record {
+                            drawRect(Color.Transparent, size = this.size, blendMode = BlendMode.Src)
+                            val radiusPx = with(density) { 20.dp.toPx() }
+                            // Mask blurred background bleed → rounded corners in saved image
+                            clipPath(Path().apply {
+                                addRoundRect(RoundRect(0f, 0f, size.width, size.height, radiusPx, radiusPx))
+                            }) {
+                                this@drawWithContent.drawContent()
+                            }
+                        }
+                        drawContent()
+                    }
+                ) {
+                    LyricCardContent(song, lyricText, albumArt, accentColor)
+                }
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(24.dp))
 
             Button(
                 onClick = {

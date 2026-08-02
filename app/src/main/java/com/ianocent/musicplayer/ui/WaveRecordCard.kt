@@ -40,11 +40,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.layout.ContentScale
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -506,16 +509,29 @@ fun WaveRecordSheet(
         onDismiss()
     }) {
         Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.drawWithContent {
-                graphicsLayer.record {
-                    drawRect(Color.Transparent, size = this.size, blendMode = BlendMode.Src)
-                    this@drawWithContent.drawContent()
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                shadowElevation = 12.dp,
+                color = Color.Transparent,
+                modifier = Modifier.wrapContentSize()
+            ) {
+                Box(Modifier.drawWithContent {
+                    graphicsLayer.record {
+                        drawRect(Color.Transparent, size = this.size, blendMode = BlendMode.Src)
+                        val radiusPx = with(density) { 20.dp.toPx() }
+                        // Mask blurred background bleed → rounded corners in saved video frames
+                        clipPath(Path().apply {
+                            addRoundRect(RoundRect(0f, 0f, size.width, size.height, radiusPx, radiusPx))
+                        }) {
+                            this@drawWithContent.drawContent()
+                        }
+                    }
+                    drawContent()
+                }) {
+                    WaveRecordContent(song, syncedLyric, plainLyric, displayPosition, albumArt, accentColor)
                 }
-                drawLayer(graphicsLayer)
-            }) {
-                WaveRecordContent(song, syncedLyric, plainLyric, displayPosition, albumArt, accentColor)
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(24.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (!isRecording) {
                     Button(

@@ -2,6 +2,7 @@ package com.ianocent.musicplayer.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -72,6 +73,7 @@ fun SortAndSmartPlaylistRow(
                                 Text(label)
                             }
                         },
+                        modifier = Modifier.padding(vertical = 4.dp),
                         onClick = {
                             onSortModeChange(index)
                             showSortMenu = false
@@ -100,6 +102,7 @@ fun SortAndSmartPlaylistRow(
             ) {
                 DropdownMenuItem(
                     text = { Text("Most Played ($mostPlayedCount)") },
+                    modifier = Modifier.padding(vertical = 4.dp),
                     onClick = {
                         onSmartPlaylistChange(if (selectedSmartPlaylist == 0) -1 else 0)
                         showSmartPlaylistMenu = false
@@ -113,6 +116,7 @@ fun SortAndSmartPlaylistRow(
                 )
                 DropdownMenuItem(
                     text = { Text("Recent ($recentlyAddedCount)") },
+                    modifier = Modifier.padding(vertical = 4.dp),
                     onClick = {
                         onSmartPlaylistChange(if (selectedSmartPlaylist == 1) -1 else 1)
                         showSmartPlaylistMenu = false
@@ -126,6 +130,7 @@ fun SortAndSmartPlaylistRow(
                 )
                 DropdownMenuItem(
                     text = { Text("Never Played ($neverPlayedCount)") },
+                    modifier = Modifier.padding(vertical = 4.dp),
                     onClick = {
                         onSmartPlaylistChange(if (selectedSmartPlaylist == 2) -1 else 2)
                         showSmartPlaylistMenu = false

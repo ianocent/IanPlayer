@@ -10,6 +10,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Player
 import com.ianocent.musicplayer.data.AlbumArtLoader
+import com.ianocent.musicplayer.data.AppDatabase
 import com.ianocent.musicplayer.data.AudioFormat
 import com.ianocent.musicplayer.data.LyricLine
 import com.ianocent.musicplayer.data.LyricRepository
@@ -661,6 +662,51 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         savePlaylistsToPrefs()
     }
 
+    fun exportPlaylistM3u(playlist: Playlist, targetUri: Uri, onDone: (Int) -> Unit) {
+        val songs = getSongsInPlaylist(playlist)
+        viewModelScope.launch(Dispatchers.IO) {
+            val m3u = repository.buildM3u(playlist.name, songs)
+            val wrote = try {
+                appContext.contentResolver.openOutputStream(targetUri)?.use { out ->
+                    out.write(m3u.toByteArray(Charsets.UTF_8))
+                } != null
+            } catch (e: Exception) {
+                false
+            }
+            withContext(Dispatchers.Main) { onDone(if (wrote) songs.size else -1) }
+        }
+    }
+
+    fun importPlaylistFromM3u(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val text = try {
+                appContext.contentResolver.openInputStream(uri)
+                    ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+            } catch (e: Exception) {
+                ""
+            }
+            val matched = repository.matchM3uEntries(repository.parseM3u(text), _songs.value)
+            withContext(Dispatchers.Main) {
+                if (matched.isEmpty()) {
+                    android.widget.Toast.makeText(
+                        appContext, "No songs matched in M3U file", android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                    return@withContext
+                }
+                val baseName = uri.lastPathSegment
+                    ?.substringAfterLast(':')
+                    ?.substringAfterLast('/')
+                    ?.substringBeforeLast('.')
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "Imported Playlist"
+                createPlaylist("$baseName (${matched.size})", matched.map { it.id })
+                android.widget.Toast.makeText(
+                    appContext, "Imported ${matched.size} songs to \"$baseName\"", android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
     private fun savePlaylistsToPrefs() {
         val snapshot = _playlists.value
         viewModelScope.launch(Dispatchers.IO) {
@@ -787,7 +833,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _albumArt = MutableStateFlow<android.graphics.Bitmap?>(null)
     val albumArt: StateFlow<android.graphics.Bitmap?> = _albumArt
 
-    private val lyricRepository = LyricRepository()
+    private val lyricRepository = LyricRepository(
+        AppDatabase.getInstance(application.applicationContext).lyricCacheDao()
+    )
 
     private val _lyric = MutableStateFlow<String?>(null)
     val lyric: StateFlow<String?> = _lyric
@@ -1087,13 +1135,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _isLyricLoading.value = true
         viewModelScope.launch {
             val synced = withContext(Dispatchers.IO) {
-                lyricRepository.fetchSyncedLyric(song.title, song.artist)
+                lyricRepository.fetchSyncedLyric(song)
             }
             if (synced != null) {
                 _syncedLyric.value = synced
             } else {
                 _plainLyric.value = withContext(Dispatchers.IO) {
-                    lyricRepository.fetchPlainLyric(song.title, song.artist)
+                    lyricRepository.fetchPlainLyric(song)
                 }
             }
             _isLyricLoading.value = false
@@ -1355,6 +1403,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 artCache.remove(songId)
                 highResArtCache.remove(-songId)
                 pendingUpdateInfo = null
+
+                // 4. Scanner-settled dedupe: OEM MediaProvider may duplicate rows on rewrite
+                val filePath = getFilePathFromUri(song.uri)
+                viewModelScope.launch {
+                    delay(2500)
+                    withContext(Dispatchers.IO) { repository.dedupeMediaRows(songId, filePath) }
+                }
             } catch (e: Exception) {
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q && e is RecoverableSecurityException) {
                     _editIntentSender.tryEmit(e.userAction.actionIntent.intentSender)

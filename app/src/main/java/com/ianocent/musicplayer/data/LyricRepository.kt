@@ -1,5 +1,11 @@
 package com.ianocent.musicplayer.data
 
+import androidx.room.Dao
+import androidx.room.Entity
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.PrimaryKey
+import androidx.room.Query
 import timber.log.Timber
 import org.json.JSONArray
 import org.json.JSONObject
@@ -9,35 +15,158 @@ import java.net.URLEncoder
 
 data class LyricLine(val timeMs: Long, val text: String)
 
-class LyricRepository {
+@Entity(tableName = "lyric_cache")
+data class LyricCacheEntry(
+    @PrimaryKey val key: String,
+    val syncedJson: String?,
+    val plainText: String?,
+    val cachedAtMs: Long
+)
 
-    fun fetchSyncedLyric(title: String, artist: String): List<LyricLine>? {
-        val lrcLibResult = fetchFromLrcLibSynced(title, artist)
-        if (!lrcLibResult.isNullOrEmpty()) return lrcLibResult
+@Dao
+interface LyricCacheDao {
+    @Query("SELECT * FROM lyric_cache WHERE key = :key LIMIT 1")
+    suspend fun getByKey(key: String): LyricCacheEntry?
 
-        val lrcMuxResult = fetchFromLrcMuxSynced(title, artist)
-        if (!lrcMuxResult.isNullOrEmpty()) return lrcMuxResult
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entry: LyricCacheEntry)
+}
 
+class LyricRepository(
+    private val lyricCache: LyricCacheDao? = null
+) {
+
+    suspend fun fetchSyncedLyric(song: Song): List<LyricLine>? {
+        val title = song.title
+        val artist = song.artist
+        val key = cacheKey(title, artist)
+        
+        val cached = lyricCache?.getByKey(key)
+        cached?.syncedJson?.let { json ->
+            val isExpired = System.currentTimeMillis() - cached.cachedAtMs > 7L * 24 * 60 * 60 * 1000
+            if (json == "NONE") {
+                if (!isExpired) return null
+            } else {
+                parseSyncedJson(json)?.let { return it }
+            }
+        }
+
+        val primary = getPrimaryArtist(artist)
+
+        // 1. Precise GET from LRCLIB (Precise)
+        fetchFromLrcLibGet(song)?.let {
+            saveSynced(key, it)
+            return it
+        }
+
+        // 2. Fallback to Search LRCLIB (Full & Primary)
+        val lrcLibResult = fetchFromLrcLibSynced(title, artist) ?: if (primary != artist) fetchFromLrcLibSynced(title, primary) else null
+        if (!lrcLibResult.isNullOrEmpty()) {
+            saveSynced(key, lrcLibResult)
+            return lrcLibResult
+        }
+
+        // 3. Fallback to LrcMux (Full & Primary)
+        val lrcMuxResult = fetchFromLrcMuxSynced(title, artist) ?: if (primary != artist) fetchFromLrcMuxSynced(title, primary) else null
+        if (!lrcMuxResult.isNullOrEmpty()) {
+            saveSynced(key, lrcMuxResult)
+            return lrcMuxResult
+        }
+
+        // 4. Check if plain sources actually have LRC tags
+        val plainFallback = fetchFromLrcLibPlain(title, artist) ?: fetchFromSomeRandomApi(title, artist)
+        if (!plainFallback.isNullOrBlank() && isLrcFormat(plainFallback)) {
+            val lines = parseLrc(plainFallback)
+            if (lines.isNotEmpty()) {
+                saveSynced(key, lines)
+                return lines
+            }
+        }
+
+        saveSynced(key, null) // Mark as NONE in cache
         return null
     }
 
-    fun fetchPlainLyric(title: String, artist: String): String? {
-        val lrcLibResult = fetchFromLrcLibPlain(title, artist)
-        if (!lrcLibResult.isNullOrBlank()) return lrcLibResult
+    suspend fun fetchPlainLyric(song: Song): String? {
+        val title = song.title
+        val artist = song.artist
+        val key = cacheKey(title, artist)
+        
+        val cached = lyricCache?.getByKey(key)
+        cached?.plainText?.let { 
+            val isExpired = System.currentTimeMillis() - cached.cachedAtMs > 7L * 24 * 60 * 60 * 1000
+            if (it == "NONE") {
+                if (!isExpired) return null
+            } else if (it.isNotBlank()) {
+                return it 
+            }
+        }
 
-        val lrcMuxResult = fetchFromLrcMuxPlain(title, artist)
-        if (!lrcMuxResult.isNullOrBlank()) return lrcMuxResult
+        val primary = getPrimaryArtist(artist)
+        val sources = listOf(
+            { fetchFromLrcLibPlain(title, artist) },
+            { if (primary != artist) fetchFromLrcLibPlain(title, primary) else null },
+            { fetchFromLrcMuxPlain(title, artist) },
+            { fetchFromSomeRandomApi(title, artist) },
+            { fetchFromLyricsOvh(title, artist) }
+        )
 
-        val sraResult = fetchFromSomeRandomApi(title, artist)
-        if (!sraResult.isNullOrBlank()) return sraResult
+        for (source in sources) {
+            val res = try { source() } catch (_: Exception) { null }
+            if (!res.isNullOrBlank()) {
+                // If it's LRC, clean it for plain view
+                val cleanText = if (isLrcFormat(res)) stripLrcTags(res) else res
+                savePlain(key, cleanText)
+                return cleanText
+            }
+        }
 
-        val ovhResult = fetchFromLyricsOvh(title, artist)
-        if (!ovhResult.isNullOrBlank()) return ovhResult
-
-        val geniusResult = fetchFromGenius(title, artist)
-        if (!geniusResult.isNullOrBlank()) return geniusResult
-
+        savePlain(key, null)
         return null
+    }
+
+    private fun isLrcFormat(text: String): Boolean = 
+        text.contains(Regex("""\[\d{2}:\d{2}"""))
+
+    private fun stripLrcTags(lrc: String): String =
+        lrc.replace(Regex("""\[\d{2}:\d{2}(?:\.\d{2,3})?]"""), "").trim()
+
+    private fun getPrimaryArtist(artist: String): String =
+        artist.split(',', ';', '&', '/').first().trim()
+
+    private fun cacheKey(title: String, artist: String) =
+        "${title.lowercase().trim()}|${artist.lowercase().trim()}"
+
+    private suspend fun saveSynced(key: String, lines: List<LyricLine>?) {
+        lyricCache ?: return
+        val existing = lyricCache.getByKey(key)
+        val json = if (lines == null) "NONE" else {
+            JSONArray().apply {
+                lines.forEach { line -> put(JSONObject().put("t", line.timeMs).put("s", line.text)) }
+            }.toString()
+        }
+        lyricCache.upsert(LyricCacheEntry(key, json, existing?.plainText, System.currentTimeMillis()))
+    }
+
+    private suspend fun savePlain(key: String, text: String?) {
+        lyricCache ?: return
+        val existing = lyricCache.getByKey(key)
+        val plain = text ?: "NONE"
+        lyricCache.upsert(LyricCacheEntry(key, existing?.syncedJson, plain, System.currentTimeMillis()))
+    }
+
+    private fun parseSyncedJson(json: String): List<LyricLine>? {
+        if (json == "NONE") return null
+        return try {
+            val array = JSONArray(json)
+            (0 until array.length()).mapNotNull { i ->
+                val obj = array.getJSONObject(i)
+                LyricLine(obj.optLong("t"), obj.optString("s"))
+            }.ifEmpty { null }
+        } catch (e: Exception) {
+            Timber.e(e, "Error parsing cached synced lyric")
+            null
+        }
     }
 
     // ==========================================
@@ -77,6 +206,42 @@ class LyricRepository {
     // ==========================================
     // SOURCE 1: LRCLIB
     // ==========================================
+    private fun fetchFromLrcLibGet(song: Song): List<LyricLine>? {
+        return try {
+            val title = URLEncoder.encode(song.title, "UTF-8")
+            val artist = URLEncoder.encode(song.artist, "UTF-8")
+            val duration = (song.duration / 1000).toInt()
+            
+            // 1. Full artist + title
+            var url = URL("https://lrclib.net/api/get?artist=$artist&track_name=$title&duration=$duration")
+            var res = fetchLrcFromUrl(url)
+            if (res != null) return res
+
+            // 2. Primary artist + title
+            val primary = URLEncoder.encode(getPrimaryArtist(song.artist), "UTF-8")
+            if (primary != artist) {
+                url = URL("https://lrclib.net/api/get?artist=$primary&track_name=$title&duration=$duration")
+                res = fetchLrcFromUrl(url)
+                if (res != null) return res
+            }
+            null
+        } catch (_: Exception) { null }
+    }
+
+    private fun fetchLrcFromUrl(url: URL): List<LyricLine>? {
+        return try {
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("User-Agent", "IanPlayer/1.0")
+            conn.connectTimeout = 2000
+            conn.readTimeout = 2000
+            if (conn.responseCode != 200) return null
+            val resp = conn.inputStream.bufferedReader().readText()
+            val synced = JSONObject(resp).optString("syncedLyrics")
+            if (synced.isNotBlank()) parseLrc(synced) else null
+        } catch (_: Exception) { null }
+    }
+
     private fun fetchFromLrcLibSynced(title: String, artist: String): List<LyricLine>? {
         return try {
             val query = URLEncoder.encode("$artist $title", "UTF-8")

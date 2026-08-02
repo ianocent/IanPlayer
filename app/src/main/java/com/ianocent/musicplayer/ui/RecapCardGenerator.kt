@@ -22,13 +22,17 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -258,6 +262,7 @@ fun RecapCardSheet(
     val graphicsLayer = rememberGraphicsLayer()
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
+    val density = LocalDensity.current
     val topArts = remember { mutableStateListOf<ImageBitmap>() }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -283,16 +288,29 @@ fun RecapCardSheet(
                 .padding(bottom = 32.dp, start = 16.dp, end = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(
-                modifier = Modifier.drawWithContent {
-                    graphicsLayer.record {
-                        drawRect(Color.Transparent, size = this.size, blendMode = BlendMode.Src)
-                        this@drawWithContent.drawContent()
-                    }
-                    drawLayer(graphicsLayer)
-                }
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                shadowElevation = 12.dp,
+                color = Color.Transparent,
+                modifier = Modifier.wrapContentSize()
             ) {
-                RecapCardContent(recap, accentColor, topArts)
+                Box(
+                    modifier = Modifier.drawWithContent {
+                        graphicsLayer.record {
+                            drawRect(Color.Transparent, size = this.size, blendMode = BlendMode.Src)
+                            val radiusPx = with(density) { 24.dp.toPx() }
+                            // Mask blurred background bleed → rounded corners in saved image
+                            clipPath(Path().apply {
+                                addRoundRect(RoundRect(0f, 0f, size.width, size.height, radiusPx, radiusPx))
+                            }) {
+                                this@drawWithContent.drawContent()
+                            }
+                        }
+                        drawContent()
+                    }
+                ) {
+                    RecapCardContent(recap, accentColor, topArts)
+                }
             }
 
             Spacer(Modifier.height(24.dp))

@@ -530,6 +530,12 @@ fun ListingScreen(
     val maxVolume = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
     var currentVolume by remember { mutableStateOf(audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)) }
 
+    val importPlaylistLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { viewModel.importPlaylistFromM3u(it) }
+    }
+
     val isBuffering by viewModel.isBuffering.collectAsState()
 
     val rawAdaptiveColor = remember(ambientColor, isDarkMode) {
@@ -1723,6 +1729,20 @@ fun ListingScreen(
                                             fontWeight = FontWeight.Bold,
                                             modifier = Modifier.weight(1f)
                                         )
+                                        IconButton(onClick = {
+                                            importPlaylistLauncher.launch(
+                                                arrayOf(
+                                                    "audio/x-mpegurl",
+                                                    "audio/mpegurl",
+                                                    "text/x-mpegurl",
+                                                    "text/plain",
+                                                    "application/octet-stream",
+                                                    "*/*"
+                                                )
+                                            )
+                                        }) {
+                                            Icon(Icons.Rounded.FileOpen, contentDescription = "Import M3U")
+                                        }
                                         IconButton(onClick = { showCreateDialog = true }) {
                                             Icon(Icons.Rounded.Add, contentDescription = "Create Playlist")
                                         }
@@ -2327,6 +2347,7 @@ fun ArtistDetailView(
                     ) {
                         DropdownMenuItem(
                             text = { Text("Play All") },
+                            modifier = Modifier.padding(vertical = 4.dp),
                             onClick = {
                                 menuExpanded = false
                                 if (songs.isNotEmpty()) viewModel.setQueue(songs)
@@ -2335,6 +2356,7 @@ fun ArtistDetailView(
                         )
                         DropdownMenuItem(
                             text = { Text("Shuffle") },
+                            modifier = Modifier.padding(vertical = 4.dp),
                             onClick = { menuExpanded = false; onShuffle() },
                             leadingIcon = { Icon(Icons.Rounded.Shuffle, null) }
                         )
@@ -2401,6 +2423,21 @@ fun PlaylistDetailView(
     var showAddDialog by remember { mutableStateOf(false) }
     var showCardSheet by remember { mutableStateOf(false) }
 
+    val exportContext = androidx.compose.ui.platform.LocalContext.current
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("audio/x-mpegurl")
+    ) { uri ->
+        uri?.let {
+            viewModel.exportPlaylistM3u(playlist, it) { count ->
+                android.widget.Toast.makeText(
+                    exportContext,
+                    if (count > 0) "Exported $count songs to M3U" else "Export failed",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
     // Gunakan mutableStateList agar UI tahu kapan harus update saat item digeser
     val playlistSongs = remember(playlist.songIds) {
         viewModel.getSongsInPlaylist(playlist).toMutableStateList()
@@ -2450,16 +2487,28 @@ fun PlaylistDetailView(
                     ) {
                         DropdownMenuItem(
                             text = { Text("Add Songs") },
+                            modifier = Modifier.padding(vertical = 4.dp),
                             onClick = { menuExpanded = false; showAddDialog = true },
                             leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, null) }
                         )
                         DropdownMenuItem(
                             text = { Text("Share") },
+                            modifier = Modifier.padding(vertical = 4.dp),
                             onClick = { menuExpanded = false; showCardSheet = true },
                             leadingIcon = { Icon(Icons.Rounded.Share, null) }
                         )
                         DropdownMenuItem(
+                            text = { Text("Export M3U") },
+                            modifier = Modifier.padding(vertical = 4.dp),
+                            onClick = {
+                                menuExpanded = false
+                                exportLauncher.launch("${playlist.name}.m3u")
+                            },
+                            leadingIcon = { Icon(Icons.Rounded.FileUpload, null) }
+                        )
+                        DropdownMenuItem(
                             text = { Text("Shuffle") },
+                            modifier = Modifier.padding(vertical = 4.dp),
                             onClick = { menuExpanded = false; onShuffle() },
                             leadingIcon = { Icon(Icons.Rounded.Shuffle, null) }
                         )
