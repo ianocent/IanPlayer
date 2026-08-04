@@ -47,34 +47,16 @@ import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.graphics.ColorUtils
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.SkipPrevious
-import androidx.compose.material.icons.rounded.SkipNext
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Shuffle
-import androidx.compose.material.icons.rounded.Repeat
-import androidx.compose.material.icons.rounded.RepeatOne
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.compositeOver
 import com.ianocent.musicplayer.data.Song
 import com.ianocent.musicplayer.data.ElementRect
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.material.icons.rounded.ExpandLess
-import androidx.compose.material.icons.rounded.ExpandMore
-import androidx.compose.material.icons.rounded.ReceiptLong
-import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.material.icons.rounded.DragHandle
-import androidx.compose.material.icons.rounded.Favorite
-import androidx.compose.material.icons.rounded.FavoriteBorder
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.ui.draw.shadow
@@ -155,18 +137,49 @@ fun NowPlayingScreen(
     var selectedLyricLines by remember { mutableStateOf(setOf<Int>()) }
     var showLyricCardSheet by remember { mutableStateOf(false) }
     var showWaveRecordSheet by remember { mutableStateOf(false) }
+    
     var isLyricExpanded by remember { mutableStateOf(true) }
     var isUpnextExpanded by remember { mutableStateOf(true) }
+    
     val lyricWeight by animateFloatAsState(
-        targetValue = if (isLyricExpanded) (if (isUpnextExpanded) 0.4f else 1f) else 0f,
-        animationSpec = spring(dampingRatio = 0.6f, stiffness = 300f),
+        targetValue = when {
+            isLyricExpanded && isUpnextExpanded -> 0.4f
+            isLyricExpanded -> 1f
+            else -> 0f
+        },
+        animationSpec = tween(500, easing = FastOutSlowInEasing),
         label = "lyricWeight"
     )
     val upnextWeight by animateFloatAsState(
-        targetValue = if (isUpnextExpanded) (if (isLyricExpanded) 0.6f else 1f) else 0f,
-        animationSpec = spring(dampingRatio = 0.6f, stiffness = 300f),
+        targetValue = when {
+            isUpnextExpanded && isLyricExpanded -> 0.6f
+            isUpnextExpanded -> 1f
+            else -> 0f
+        },
+        animationSpec = tween(500, easing = FastOutSlowInEasing),
         label = "upnextWeight"
     )
+    val fillerWeight by animateFloatAsState(
+        targetValue = if (!isLyricExpanded && !isUpnextExpanded) 1f else 0f,
+        animationSpec = tween(500, easing = FastOutSlowInEasing),
+        label = "fillerWeight"
+    )
+    val lyricAlpha by animateFloatAsState(
+        targetValue = if (isLyricExpanded) 1f else 0f,
+        animationSpec = tween(400),
+        label = "lyricAlpha"
+    )
+    val upnextAlpha by animateFloatAsState(
+        targetValue = if (isUpnextExpanded) 1f else 0f,
+        animationSpec = tween(400),
+        label = "upnextAlpha"
+    )
+    val sectionSpacerHeight by animateDpAsState(
+        targetValue = if (isLyricExpanded && isUpnextExpanded) 12.dp else 0.dp,
+        animationSpec = tween(500),
+        label = "sectionSpacerHeight"
+    )
+
     val syncedLyric by viewModel.syncedLyric.collectAsState()
     val plainLyric by viewModel.plainLyric.collectAsState()
     val isLyricLoading by viewModel.isLyricLoading.collectAsState()
@@ -259,8 +272,6 @@ fun NowPlayingScreen(
                 detectVerticalDragGestures(
                     onDragEnd = {
                         if (offsetY.value > dismissThreshold) {
-                            // KUNCI FIX GLITCH: nol-in paksa offset drag detik itu juga,
-                            // biarin heroAnimProgress murni ngurusin animasi keluar tanpa ditimpa offsetY
                             coroutineScope.launch { offsetY.snapTo(0f) }
                             handleBack()
                         } else {
@@ -291,7 +302,7 @@ fun NowPlayingScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Album art + song info (sesuai Figma: art kecil kiri, info + progress bar kanan)
+        // Album art + song info
         Row(verticalAlignment = Alignment.Top) {
             Box(
                 modifier = Modifier
@@ -305,18 +316,13 @@ fun NowPlayingScreen(
                         )
                     }
                     .graphicsLayer {
-                        rotationZ = 0f // HARUS DIEM
+                        rotationZ = 0f
                         val p = heroAnimProgress.value
                         if (initialAlbumArtRect != null) {
                             scaleX = heroInitScale + (1f - heroInitScale) * p
                             scaleY = heroInitScale + (1f - heroInitScale) * p
                             translationX = heroInitOffsetX * (1f - p)
                             translationY = heroInitOffsetY * (1f - p)
-                        } else {
-                            scaleX = 1f
-                            scaleY = 1f
-                            translationX = 0f
-                            translationY = 0f
                         }
                         clip = true
                         shape = RoundedCornerShape(heroCornerRadius)
@@ -336,7 +342,6 @@ fun NowPlayingScreen(
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     )
-                    // Scrim gelap biar timer selalu kebaca di atas album art terang
                     Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
                     val timerMins = remember(currentPosition) {
                         TimeUnit.MILLISECONDS.toMinutes(currentPosition).toString().padStart(2, '0')
@@ -444,10 +449,7 @@ fun NowPlayingScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Lyric & Upnext dibungkus scrollable + weight(fill=true) biar section ini SELALU
-        // ngisi semua sisa ruang yang ada -> Controls jadi ke-anchor konsisten di posisi yang sama
-        // (ga "ngambang"/naik-turun tiap Lyric-Upnext di-collapse/expand), dan tetep aman dari
-        // kepotong karena discroll sendiri kalau kontennya kepanjangan.
+        // Lyric & Upnext
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -458,9 +460,7 @@ fun NowPlayingScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable {
-                        isLyricExpanded = !isLyricExpanded
-                    }
+                    .clickable { isLyricExpanded = !isLyricExpanded }
                     .padding(horizontal = 8.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -483,46 +483,49 @@ fun NowPlayingScreen(
             }
             Spacer(modifier = Modifier.height(6.dp))
 
-            AnimatedVisibility(
-                visible = isLyricExpanded,
-                modifier = Modifier.weight(lyricWeight.coerceAtLeast(0.001f)),
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically()
+            Box(
+                modifier = Modifier
+                    .weight(lyricWeight.coerceAtLeast(0.001f))
+                    .fillMaxWidth()
+                    .graphicsLayer {
+                        alpha = lyricAlpha
+                        clip = true
+                    }
             ) {
-                Box(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
-                    when {
-                        isLyricLoading -> SkeletonLyricLoader(adaptiveColor = adaptiveColor)
-                        !syncedLyric.isNullOrEmpty() -> SyncedLyricView(
-                            lines = syncedLyric!!,
-                            currentPosition = currentPosition,
-                            highlightColor = adaptiveColor,
-                            selectedIndices = selectedLyricLines,
-                            onLineClick = { index ->
-                                selectedLyricLines = if (selectedLyricLines.contains(index))
-                                    selectedLyricLines - index else selectedLyricLines + index
+                if (lyricWeight > 0.02f) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        when {
+                            isLyricLoading -> SkeletonLyricLoader(adaptiveColor = adaptiveColor)
+                            !syncedLyric.isNullOrEmpty() -> SyncedLyricView(
+                                lines = syncedLyric!!,
+                                currentPosition = currentPosition,
+                                highlightColor = adaptiveColor,
+                                selectedIndices = selectedLyricLines,
+                                onLineClick = { index ->
+                                    selectedLyricLines = if (selectedLyricLines.contains(index))
+                                        selectedLyricLines - index else selectedLyricLines + index
+                                }
+                            )
+                            !plainLyric.isNullOrBlank() -> {
+                                val lyricScrollState = rememberScrollState()
+                                Text(plainLyric!!, textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth().verticalScroll(lyricScrollState)
+                                        .padding(horizontal = 16.dp).padding(bottom = 24.dp))
                             }
-                        )
-                        !plainLyric.isNullOrBlank() -> {
-                            val lyricScrollState = rememberScrollState()
-                            Text(plainLyric!!, textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth().verticalScroll(lyricScrollState)
-                                    .padding(horizontal = 16.dp).padding(bottom = 24.dp))
+                            else -> Text("Lirik belum tersedia", modifier = Modifier.align(Alignment.Center), color = Color.Gray)
                         }
-                        else -> Text("Lirik belum tersedia", modifier = Modifier.align(Alignment.Center), color = Color.Gray)
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(sectionSpacerHeight))
 
             // Upnext toggle
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable {
-                        isUpnextExpanded = !isUpnextExpanded
-                    }
+                    .clickable { isUpnextExpanded = !isUpnextExpanded }
                     .padding(horizontal = 8.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -544,84 +547,86 @@ fun NowPlayingScreen(
             val upnextReorderableState = rememberReorderableLazyListState(
                 lazyListState = upnextListState,
                 onMove = { from, to ->
-                    // 1. Update UI instan
                     upNextSongs.add(to.index, upNextSongs.removeAt(from.index))
-                    // 2. Sync ke ViewModel (queue + ExoPlayer timeline)
                     viewModel.reorderUpNext(from.index, to.index)
                 }
             )
 
-            AnimatedVisibility(
-                visible = isUpnextExpanded,
-                modifier = Modifier.weight(upnextWeight.coerceAtLeast(0.001f)),
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically()
+            Box(
+                modifier = Modifier
+                    .weight(upnextWeight.coerceAtLeast(0.001f))
+                    .fillMaxWidth()
+                    .graphicsLayer {
+                        alpha = upnextAlpha
+                        clip = true
+                    }
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight()
-                        .background(
-                            adaptiveColor.copy(alpha = if (isDarkMode) 0.08f else 0.05f)
-                                .compositeOver(if (isDarkMode) Color(0xFF121212) else Color.White),
-                            RoundedCornerShape(24.dp)
-                        )
-                ) {
-                    ResponsiveSnapList(
-                        items = upNextSongs,
-                        key = { it.id },
-                        scrollbarColor = adaptiveColor,
-                        modifier = Modifier.padding(12.dp),
-                        listState = upnextListState,
-                        minItemHeight = 64.dp,
-                        bottomPadding = 4.dp
-                    ) { upSong, _ ->
-                        ReorderableItem(upnextReorderableState, key = upSong.id) { isDragging ->
-                            val elevation by animateDpAsState(
-                                if (isDragging) 8.dp else 0.dp,
-                                label = "upnext_drag_elevation"
+                if (upnextWeight > 0.02f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                adaptiveColor.copy(alpha = if (isDarkMode) 0.08f else 0.05f)
+                                    .compositeOver(if (isDarkMode) Color(0xFF121212) else Color.White),
+                                RoundedCornerShape(24.dp)
                             )
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .zIndex(if (isDragging) 1f else 0f)
-                                    .shadow(elevation, RoundedCornerShape(12.dp))
-                                    .padding(vertical = 4.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
-                                        alpha = 0.3f
-                                    )
-                                ),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .padding(start = 8.dp)
-                                            .size(24.dp)
-                                            .clip(CircleShape)
-                                            .background(adaptiveColor.copy(alpha = 0.2f))
-                                            .draggableHandle(),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            Icons.Rounded.DragHandle,
-                                            contentDescription = "Drag",
-                                            tint = adaptiveColor,
-                                            modifier = Modifier.size(16.dp)
+                    ) {
+                        ResponsiveSnapList(
+                            items = upNextSongs,
+                            key = { it.id },
+                            scrollbarColor = adaptiveColor,
+                            modifier = Modifier.padding(12.dp),
+                            listState = upnextListState,
+                            minItemHeight = 64.dp,
+                            bottomPadding = 4.dp
+                        ) { upSong, _ ->
+                            ReorderableItem(upnextReorderableState, key = upSong.id) { isDragging ->
+                                val elevation by animateDpAsState(
+                                    if (isDragging) 8.dp else 0.dp,
+                                    label = "upnext_drag_elevation"
+                                )
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .zIndex(if (isDragging) 1f else 0f)
+                                        .shadow(elevation, RoundedCornerShape(12.dp))
+                                        .padding(vertical = 4.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
+                                            alpha = 0.3f
                                         )
-                                    }
-                                    Spacer(Modifier.width(8.dp))
-                                    UpnextSongRow(
-                                        upSong = upSong,
-                                        viewModel = viewModel,
-                                        isDarkMode = isDarkMode,
-                                        modifier = Modifier.weight(1f)
+                                    ),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        viewModel.playSong(upSong)
+                                        Box(
+                                            modifier = Modifier
+                                                .padding(start = 8.dp)
+                                                .size(24.dp)
+                                                .clip(CircleShape)
+                                                .background(adaptiveColor.copy(alpha = 0.2f))
+                                                .draggableHandle(),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                Icons.Rounded.DragHandle,
+                                                contentDescription = "Drag",
+                                                tint = adaptiveColor,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                        Spacer(Modifier.width(8.dp))
+                                        UpnextSongRow(
+                                            upSong = upSong,
+                                            viewModel = viewModel,
+                                            isDarkMode = isDarkMode,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            viewModel.playSong(upSong)
+                                        }
                                     }
                                 }
                             }
@@ -629,11 +634,15 @@ fun NowPlayingScreen(
                     }
                 }
             }
+
+            if (fillerWeight > 0.01f) {
+                Spacer(modifier = Modifier.weight(fillerWeight))
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Controls - SELALU tampil
+        // Controls
         Text(
             text = "Controls :",
             modifier = Modifier
@@ -675,7 +684,6 @@ fun NowPlayingScreen(
                     icon = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
                     onClick = { viewModel.toggleRepeat() },
                     active = repeatMode != Player.REPEAT_MODE_OFF,
-                    badge = null,
                     bgColor = buttonBg, iconTint = iconColor
                 )
             }
@@ -716,6 +724,7 @@ fun NowPlayingScreen(
         }
     }
 }
+
 @Composable
 fun UpnextSongRow(
     upSong: Song,
@@ -729,13 +738,12 @@ fun UpnextSongRow(
         viewModel.getCachedArt(upSong) { bitmap -> art = bitmap?.asImageBitmap() }
     }
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(vertical = 8.dp, horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Album art kecil ala Figma
         Box(
             modifier = Modifier
                 .size(44.dp)
@@ -820,20 +828,16 @@ fun SyncedLyricView(
 
     LaunchedEffect(activeIndex) {
         if (selectedIndices.isEmpty()) {
-            // Scroll agar baris aktif berada di paling atas area yang terlihat,
-            // sehingga baris-baris lirik selanjutnya (upcoming) terlihat lebih banyak di bawahnya.
             listState.animateScrollToItem(activeIndex)
         }
     }
 
-    // Menggunakan ResponsiveSnapList agar tinggi lirik dibagi rata sesuai sisa ruang
-    // dan tidak ada baris yang "kepotong" setengah di bagian bawah/atas.
     ResponsiveSnapList(
         items = lines,
         key = { it.timeMs },
         scrollbarColor = highlightColor,
         listState = listState,
-        minItemHeight = 52.dp, // Balikin ke jarak aman biar ga kepotong ("...") pas 2 baris
+        minItemHeight = 52.dp,
         bottomPadding = 8.dp
     ) { line, itemHeight ->
         val index = lines.indexOf(line)
@@ -900,7 +904,6 @@ fun SkeletonLyricLoader(adaptiveColor: Color) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Pola lebar fake lyric biar keliatan natural (60%, 80%, 90%, 70%, 50%)
         val widths = listOf(0.6f, 0.8f, 0.9f, 0.7f, 0.5f)
         widths.forEach { fraction ->
             Box(

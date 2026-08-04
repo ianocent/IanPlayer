@@ -851,7 +851,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 ""
             }
-            val matched = repository.matchM3uEntries(repository.parseM3u(text), _songs.value)
+            val (suggestedName, entries) = repository.parseM3u(text)
+            val allLibrarySongs = _songs.value + _streamSongsCache.value.values
+            val matched = repository.matchM3uEntries(entries, allLibrarySongs)
             withContext(Dispatchers.Main) {
                 if (matched.isEmpty()) {
                     android.widget.Toast.makeText(
@@ -859,12 +861,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     ).show()
                     return@withContext
                 }
-                val baseName = uri.lastPathSegment
+                val baseName = suggestedName ?: uri.lastPathSegment
                     ?.substringAfterLast(':')
                     ?.substringAfterLast('/')
                     ?.substringBeforeLast('.')
                     ?.takeIf { it.isNotBlank() }
                     ?: "Imported Playlist"
+
                 createPlaylist("$baseName (${matched.size})", matched.map { it.id })
                 android.widget.Toast.makeText(
                     appContext, "Imported ${matched.size} songs to \"$baseName\"", android.widget.Toast.LENGTH_SHORT

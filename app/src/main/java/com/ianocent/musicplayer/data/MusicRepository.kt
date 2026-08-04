@@ -208,51 +208,95 @@ class MusicRepository(private val context: Context) {
         return sb.toString()
     }
 
-    fun parseM3u(text: String): List<M3uEntry> {
+    fun parseM3u(text: String): Pair<String?, List<M3uEntry>> {
         val entries = mutableListOf<M3uEntry>()
+        var playlistName: String? = null
         var pendingInfo: String? = null
+        
+        fun parseInfo(info: String?): Pair<String?, String?> {
+            if (info == null) return null to null
+            val commaIdx = info.indexOf(',')
+            if (commaIdx < 0) return null to null
+            val data = info.substring(commaIdx + 1).trim()
+            val dashIdx = data.indexOf(" - ")
+            return if (dashIdx >= 0) {
+                data.substring(0, dashIdx).trim() to data.substring(dashIdx + 3).trim()
+            } else {
+                null to data
+            }
+        }
+
         text.lines().forEach { raw ->
             val line = raw.trim()
-            if (line.isEmpty() || line.startsWith("#EXTM3U") || line.startsWith("#PLAYLIST")) return@forEach
+            if (line.isEmpty() || line.startsWith("#EXTM3U")) return@forEach
+            
+            if (line.startsWith("#PLAYLIST:")) {
+                playlistName = line.removePrefix("#PLAYLIST:").trim().takeIf { it.isNotEmpty() }
+                return@forEach
+            }
+
             when {
                 line.startsWith("#EXTINF:") -> pendingInfo = line.removePrefix("#EXTINF:")
-                line.startsWith("#IanStream:") -> pendingInfo = null
+                line.startsWith("#IanStream:") -> {
+                    val remoteId = line.removePrefix("#IanStream:").trim()
+                    val (artist, title) = parseInfo(pendingInfo)
+                    entries.add(M3uEntry("ianstream://$remoteId", title, artist))
+                    pendingInfo = null
+                }
                 line.startsWith("#") -> { /* other comments ignored */ }
                 else -> {
-                    var artist: String? = null
-                    var title: String? = null
-                    pendingInfo?.let { info ->
-                        val idx = info.indexOf(", ")
-                        if (idx > 0) {
-                            artist = info.substring(0, idx).trim().takeIf { it.isNotBlank() }
-                            title = info.substring(idx + 2).trim().takeIf { it.isNotBlank() }
-                        }
-                    }
+                    val (artist, title) = parseInfo(pendingInfo)
                     entries.add(M3uEntry(line, title, artist))
                     pendingInfo = null
                 }
             }
         }
-        return entries
+        return playlistName to entries
     }
 
     fun matchM3uEntries(entries: List<M3uEntry>, library: List<Song>): List<Song> {
         val matched = mutableListOf<Song>()
         val usedIds = mutableSetOf<Long>()
+        
+        // Cache library mappings for faster lookup
+        val libraryByMeta = library.groupBy { "${it.artist.trim().lowercase()} - ${it.title.trim().lowercase()}" }
+        val libraryByFilename = library.filter { !it.isStream }.groupBy { 
+            (getRealPath(it.uri) ?: it.uri.toString()).substringAfterLast('/').lowercase() 
+        }
+        val libraryByRemoteId = library.filter { it.isStream && it.remoteId != null }.associateBy { it.remoteId }
+
         entries.forEach { entry ->
-            val fileName = entry.path?.substringAfterLast('/')?.trim()?.takeIf { it.isNotEmpty() }
-            val song = library.firstOrNull { s ->
-                s.id !in usedIds && (
-                    (!s.isStream && fileName != null &&
-                        getRealPath(s.uri)?.substringAfterLast('/')?.equals(fileName, ignoreCase = true) == true) ||
-                    (entry.title != null && entry.artist != null &&
-                        s.title.equals(entry.title, ignoreCase = true) &&
-                        s.artist.equals(entry.artist, ignoreCase = true))
-                    )
+            // 1. Try match by Remote ID (for stream songs)
+            if (entry.path?.startsWith("ianstream://") == true) {
+                val rid = entry.path.removePrefix("ianstream://")
+                val song = libraryByRemoteId[rid]
+                if (song != null && song.id !in usedIds) {
+                    matched.add(song)
+                    usedIds.add(song.id)
+                    return@forEach
+                }
             }
-            if (song != null) {
-                matched.add(song)
-                usedIds.add(song.id)
+
+            // 2. Try match by Artist + Title (most reliable across devices)
+            if (entry.artist != null && entry.title != null) {
+                val key = "${entry.artist.trim().lowercase()} - ${entry.title.trim().lowercase()}"
+                val song = libraryByMeta[key]?.firstOrNull { it.id !in usedIds }
+                if (song != null) {
+                    matched.add(song)
+                    usedIds.add(song.id)
+                    return@forEach
+                }
+            }
+            
+            // 3. Try match by Filename
+            val entryFileName = entry.path?.substringAfterLast('/')?.lowercase()
+            if (entryFileName != null) {
+                val song = libraryByFilename[entryFileName]?.firstOrNull { it.id !in usedIds }
+                if (song != null) {
+                    matched.add(song)
+                    usedIds.add(song.id)
+                    return@forEach
+                }
             }
         }
         return matched
