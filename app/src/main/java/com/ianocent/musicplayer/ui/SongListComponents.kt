@@ -738,6 +738,18 @@ fun SwipeableSongRow(
                         Text("Add to Queue", fontWeight = FontWeight.SemiBold)
                     }
 
+                    RoundedClickableRow(
+                        onClick = {
+                            showActionDialog = false
+                            showPlaylistSelector = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Rounded.PlaylistPlay, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text("Add to Playlist", fontWeight = FontWeight.SemiBold)
+                    }
+
                     // Go to Artist
                     if (onGoToArtist != null) {
                         RoundedClickableRow(
@@ -763,18 +775,6 @@ fun SwipeableSongRow(
                     }
 
                     if (song.isStream) {
-                        RoundedClickableRow(
-                            onClick = {
-                                showActionDialog = false
-                                showPlaylistSelector = true
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Rounded.PlaylistPlay, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(12.dp))
-                            Text("Add to Playlists", fontWeight = FontWeight.SemiBold)
-                        }
-
                         RoundedClickableRow(
                             onClick = {
                                 isLoadingFormats = true
