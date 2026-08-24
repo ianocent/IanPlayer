@@ -58,8 +58,9 @@ class YTMusicRepository(context: Context) {
         
         // Devanagari script (Hindi, Marathi, etc.)
         private val REGIONAL_SCRIPT = Regex("[\\u0900-\\u097F]")
-        private val WEB_KEY = "AIzaSy" + "AO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
-        private val ANDROID_KEY = "AIzaSy" + "A8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w"
+        // Client identifiers from BuildConfig (keys.properties, gitignored).
+        private val WEB_KEY = com.ianocent.musicplayer.BuildConfig.YTMUSIC_WEB_KEY
+        private val ANDROID_KEY = com.ianocent.musicplayer.BuildConfig.YTMUSIC_ANDROID_KEY
         private const val BASE = "https://www.youtube.com/youtubei/v1"
         private const val UA_WEB = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
         private const val UA_ANDROID = "com.google.android.youtube/19.47.53 (Linux; U; Android 14; en_US) gzip"
@@ -629,6 +630,7 @@ class YTMusicRepository(context: Context) {
                         album = parseAlbum(item),
                         duration = duration,
                         uri = Uri.parse("ytmusic://placeholder/$videoId"),
+                    source = StreamSources.YOUTUBE,
                         isStream = true,
                         remoteArtUrl = parseThumbnail(item),
                         remoteId = videoId
@@ -699,6 +701,7 @@ class YTMusicRepository(context: Context) {
                         album = "YouTube",
                         duration = duration,
                         uri = Uri.parse("ytmusic://placeholder/$videoId"),
+                    source = StreamSources.YOUTUBE,
                         isStream = true,
                         remoteArtUrl = parseVideoThumbnail(item),
                         remoteId = videoId
@@ -865,6 +868,7 @@ class YTMusicRepository(context: Context) {
                     album = "Related",
                     duration = 0L,
                     uri = Uri.parse("ytmusic://placeholder/$vId"),
+                    source = StreamSources.YOUTUBE,
                     isStream = true,
                     remoteArtUrl = item.optJSONObject("thumbnail")?.optJSONArray("thumbnails")?.optJSONObject(0)?.optString("url"),
                     remoteId = vId
@@ -1071,6 +1075,7 @@ class YTMusicRepository(context: Context) {
                                 album = parseAlbum(item),
                                 duration = duration,
                                 uri = Uri.parse("ytmusic://placeholder/$videoId"),
+                    source = StreamSources.YOUTUBE,
                                 isStream = true,
                                 remoteArtUrl = parseThumbnail(item),
                                 remoteId = videoId

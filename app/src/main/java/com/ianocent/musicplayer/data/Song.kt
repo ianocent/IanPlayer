@@ -12,7 +12,9 @@ data class Song(
     val isStream: Boolean = false,
     val remoteArtUrl: String? = null,
     val dateAdded: Long = 0L,
-    val remoteId: String? = null
+    val remoteId: String? = null,
+    /** Provider tag ([StreamSources] constant); null for local files and legacy rows. */
+    val source: String? = null
 )
 
 data class AudioFormat(

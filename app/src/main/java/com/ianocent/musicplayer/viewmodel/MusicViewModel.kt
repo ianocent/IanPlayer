@@ -11,16 +11,19 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Player
 import com.ianocent.musicplayer.data.AlbumArtLoader
 import com.ianocent.musicplayer.data.AppDatabase
+import com.ianocent.musicplayer.data.ArtLoader
 import com.ianocent.musicplayer.data.AudioFormat
 import com.ianocent.musicplayer.data.LyricLine
 import com.ianocent.musicplayer.data.LyricRepository
+import com.ianocent.musicplayer.data.LyricResult
 import com.ianocent.musicplayer.data.MonthlyRecap
 import com.ianocent.musicplayer.data.MusicRepository
 import com.ianocent.musicplayer.data.Song
+import com.ianocent.musicplayer.data.SongStore
 import com.ianocent.musicplayer.data.SocialSignalListener
 import com.ianocent.musicplayer.player.IanVoiceAssistantService
 import com.ianocent.musicplayer.player.PlaybackService
-import com.ianocent.musicplayer.player.PlayerManager
+import com.ianocent.musicplayer.player.PlayerGateway
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -35,7 +38,12 @@ import androidx.compose.ui.graphics.Color
 import com.ianocent.musicplayer.data.Playlist
 import com.ianocent.musicplayer.data.UpdateInfo
 import com.ianocent.musicplayer.data.YTMusicRepository
+import com.ianocent.musicplayer.data.SongDownloader
 import com.ianocent.musicplayer.data.StreamSearchResult
+import com.ianocent.musicplayer.data.StreamResolvers
+import com.ianocent.musicplayer.data.StreamSources
+import com.ianocent.musicplayer.data.YouTubeStreamResolver
+import com.ianocent.musicplayer.data.TidalStreamResolver
 import com.ianocent.musicplayer.UpdateManager
 import org.json.JSONArray
 import org.json.JSONObject
@@ -57,8 +65,19 @@ import java.io.InputStream
 import java.io.File
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
+    private val appContext = application.applicationContext
+    private val prefs = application.getSharedPreferences(SongStore.PREFS_NAME, 0)
+    private val songStore = SongStore(prefs, viewModelScope)
+
     private val ytMusicRepository = YTMusicRepository(application.applicationContext)
     private val tidalRepository = TidalRepository()
+    private val songDownloader = SongDownloader(appContext)
+    private val streamResolvers = StreamResolvers(listOf(
+        YouTubeStreamResolver(ytMusicRepository),
+        TidalStreamResolver(tidalRepository, YouTubeStreamResolver(ytMusicRepository)) { query ->
+            (ytMusicRepository.searchSongs(query, onPartial = {}) as? StreamSearchResult.Success)?.songs ?: emptyList()
+        }
+    ))
     
     private val _deleteIntentSender = MutableSharedFlow<IntentSender>(extraBufferCapacity = 1)
     val deleteIntentSender: SharedFlow<IntentSender> = _deleteIntentSender
@@ -204,65 +223,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val preResolvedIds = ConcurrentHashMap.newKeySet<Long>()
 
     // == Stream songs cache (persist stream song metadata for playlists) ==
-    private val _streamSongsCache = MutableStateFlow<Map<Long, Song>>(emptyMap())
-    val streamSongsCache: StateFlow<Map<Long, Song>> = _streamSongsCache
+    // Owned by SongStore; loaded synchronously at its construction.
+    val streamSongsCache: StateFlow<Map<Long, Song>> = songStore.streamSongsCache
 
-    private fun saveStreamSongsCache() {
-        val snapshot = _streamSongsCache.value
-        viewModelScope.launch(Dispatchers.IO) {
-            val arr = JSONArray()
-            snapshot.forEach { (_, song) ->
-                val obj = JSONObject()
-                obj.put("id", song.id)
-                obj.put("title", song.title)
-                obj.put("artist", song.artist)
-                obj.put("album", song.album)
-                obj.put("duration", song.duration)
-                obj.put("uri", song.uri.toString())
-                obj.put("isStream", song.isStream)
-                song.remoteArtUrl?.let { obj.put("remoteArtUrl", it) }
-                song.remoteId?.let { obj.put("remoteId", it) }
-                obj.put("dateAdded", song.dateAdded)
-                arr.put(obj)
-            }
-            prefs.edit().putString("stream_songs_cache", arr.toString()).apply()
-        }
-    }
-
-    private fun loadStreamSongsCache(): Map<Long, Song> {
-        val raw = prefs.getString("stream_songs_cache", null) ?: return emptyMap()
-        return try {
-            val arr = JSONArray(raw)
-            val map = mutableMapOf<Long, Song>()
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                val song = Song(
-                    id = obj.getLong("id"),
-                    title = obj.getString("title"),
-                    artist = obj.getString("artist"),
-                    duration = obj.optLong("duration", 0L),
-                    uri = Uri.parse(obj.getString("uri")),
-                    album = obj.optString("album", "Unknown Album"),
-                    isStream = obj.optBoolean("isStream", true),
-                    remoteArtUrl = if (obj.has("remoteArtUrl")) obj.optString("remoteArtUrl", null) else null,
-                    remoteId = if (obj.has("remoteId")) obj.optString("remoteId", null) else null,
-                    dateAdded = obj.optLong("dateAdded", 0L)
-                )
-                map[song.id] = song
-            }
-            map
-        } catch (_: Exception) { emptyMap() }
-    }
+    private fun mergeById(current: List<Song>, incoming: List<Song>): List<Song> =
+        (current + incoming).distinctBy { it.id }
 
     private fun addToStreamSongsCache(songs: List<Song>) {
-        val updated = _streamSongsCache.value.toMutableMap()
-        for (s in songs) {
-            if (s.id !in updated) {
-                updated[s.id] = s
-            }
-        }
-        _streamSongsCache.value = updated
-        saveStreamSongsCache()
+        songStore.addToStreamSongsCache(songs)
     }
 
     fun fetchTrending(force: Boolean = false) {
@@ -276,14 +244,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 
                 val result = ytMusicRepository.fetchHomeSongs { newSongs ->
                     addToStreamSongsCache(newSongs)
-                    val merged = (_trendingSongs.value + newSongs).distinctBy { it.id }
+                    val merged = mergeById(_trendingSongs.value, newSongs)
                     _trendingSongs.value = merged
                 }
 
                 // Add contextual personalization songs (time-based, region US for chart consistency)
                 ytMusicRepository.searchSongs(contextualQuery, { contextualSongs ->
                     addToStreamSongsCache(contextualSongs)
-                    val merged = (_trendingSongs.value + contextualSongs).distinctBy { it.id }
+                    val merged = mergeById(_trendingSongs.value, contextualSongs)
                     _trendingSongs.value = merged
                 }, gl = "US")
 
@@ -310,7 +278,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     // no mic, no camera, no screen recording, no foreground service). Stored only in
     // SharedPreferences on this device, pruned after 72h. Opt-in, default off.
     private val _socialSignalsEnabled = MutableStateFlow(
-        application.getSharedPreferences("ian_player_prefs", 0).getBoolean("social_signals_enabled", false)
+        prefs.getBoolean("social_signals_enabled", false)
     )
     val socialSignalsEnabled: StateFlow<Boolean> = _socialSignalsEnabled
 
@@ -347,24 +315,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearSocialSignals() {
-        prefs.edit().remove("social_signals").apply()
+        songStore.clearSocialSignals()
         _forYouSignals.value = emptyList()
         _forYouSongs.value = emptyList()
         saveListToPrefs("cached_foryou", emptyList())
     }
 
-    private fun loadSocialSignals(): List<Pair<String, Long>> {
-        val raw = prefs.getString("social_signals", null) ?: return emptyList()
-        return try {
-            val arr = JSONArray(raw)
-            val list = mutableListOf<Pair<String, Long>>()
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                list.add(Pair(obj.getString("s"), obj.getLong("t")))
-            }
-            list.sortedByDescending { it.second }
-        } catch (_: Exception) { emptyList() }
-    }
+    private fun loadSocialSignals(): List<Pair<String, Long>> = songStore.loadSocialSignals()
 
     fun refreshForYou(force: Boolean = false) {
         if (!_socialSignalsEnabled.value) return
@@ -433,7 +390,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         preResolveJob = viewModelScope.launch {
             // Pre-resolve 20 item trending agar transisi mulus
             for (song in trending.take(20)) {
-                if (!song.isStream || !song.uri.toString().startsWith("ytmusic://placeholder/")) continue
+                if (!StreamSources.needsResolution(song)) continue
                 if (!preResolvedIds.add(song.id)) continue
                 
                 delay(200) // Jeda singkat agar tidak membebani semaphore
@@ -465,7 +422,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         preResolveJob = viewModelScope.launch {
             // Pre-resolve hingga 40 item hasil pencarian (Satu halaman penuh)
             for (song in searchResults.take(40)) {
-                if (!song.isStream || !song.uri.toString().startsWith("ytmusic://placeholder/")) continue
+                if (!StreamSources.needsResolution(song)) continue
                 if (!preResolvedIds.add(song.id)) continue
                 
                 delay(300) // Beri nafas untuk request utama (Play)
@@ -515,14 +472,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val updated = _favoriteIds.value.toMutableSet()
         if (updated.contains(songId)) updated.remove(songId) else updated.add(songId)
         _favoriteIds.value = updated
-        prefs.edit().putString("favorite_ids", updated.joinToString(",")).apply()
+        songStore.saveFavoriteIds(updated)
     }
 
     fun isFavorite(songId: Long): Boolean = _favoriteIds.value.contains(songId)
 
     private fun loadFavoriteIds() {
-        val raw = prefs.getString("favorite_ids", null) ?: return
-        _favoriteIds.value = raw.split(",").mapNotNull { it.toLongOrNull() }.toSet()
+        _favoriteIds.value = songStore.loadFavoriteIds()
     }
 
     fun setSortMode(mode: Int) {
@@ -530,22 +486,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putInt("sort_mode", mode).apply()
     }
 
-    private fun loadPlayCounts(): Map<Long, Int> {
-        val json = prefs.getString("play_counts", null) ?: return emptyMap()
-        return try {
-            val obj = JSONObject(json)
-            val map = mutableMapOf<Long, Int>()
-            obj.keys().forEach { key -> map[key.toLong()] = obj.getInt(key) }
-            map
-        } catch (_: Exception) { emptyMap() }
-    }
+    private fun loadPlayCounts(): Map<Long, Int> = songStore.loadPlayCounts()
 
     private fun savePlayCounts(counts: Map<Long, Int>) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val obj = JSONObject()
-            counts.forEach { (id, count) -> obj.put(id.toString(), count) }
-            prefs.edit().putString("play_counts", obj.toString()).apply()
-        }
+        songStore.savePlayCounts(counts)
     }
 
     fun incrementPlayCount(songId: Long) {
@@ -557,39 +501,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun recordPlayHistory(songId: Long) {
-        val now = System.currentTimeMillis()
-        val history = loadPlayHistory().toMutableList()
-        history.add(Pair(songId, now))
-        // Keep only last 90 days of history
-        val cutoff = now - 90L * 24 * 60 * 60 * 1000
-        val trimmed = history.filter { it.second > cutoff }
-        savePlayHistory(trimmed)
-    }
-
-    private fun loadPlayHistory(): List<Pair<Long, Long>> {
-        val json = prefs.getString("play_history", null) ?: return emptyList()
-        return try {
-            val arr = JSONArray(json)
-            val list = mutableListOf<Pair<Long, Long>>()
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                list.add(Pair(obj.getLong("id"), obj.getLong("ts")))
-            }
-            list
-        } catch (_: Exception) { emptyList() }
-    }
-
-    private fun savePlayHistory(history: List<Pair<Long, Long>>) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val arr = JSONArray()
-            history.forEach { (id, ts) ->
-                val obj = JSONObject()
-                obj.put("id", id)
-                obj.put("ts", ts)
-                arr.put(obj)
-            }
-            prefs.edit().putString("play_history", arr.toString()).apply()
-        }
+        songStore.recordPlayed(songId)
     }
 
     fun checkMonthlyRecap() {
@@ -608,7 +520,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     val now = System.currentTimeMillis()
                     val monthStart = now - 30L * 24 * 60 * 60 * 1000
-                    val history = loadPlayHistory().filter { it.second >= monthStart }
+                    val history = songStore.loadPlayHistory().filter { it.second >= monthStart }
 
                     if (history.isEmpty()) return@withContext null
 
@@ -666,7 +578,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun debugTriggerRecap() {
         val now = System.currentTimeMillis()
-        val history = loadPlayHistory().filter { it.second >= now - 30L * 24 * 60 * 60 * 1000 }
+        val history = songStore.loadPlayHistory().filter { it.second >= now - 30L * 24 * 60 * 60 * 1000 }
 
         if (history.isEmpty() || history.size < 5) {
             // Generate mock recap so the card is testable
@@ -748,7 +660,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 
                 val ytResult = ytMusicRepository.searchSongs(query, onPartial = { newSongs ->
                     addToStreamSongsCache(newSongs)
-                    val merged = (_allStreamSongs.value + newSongs).distinctBy { s -> s.id }
+                    val merged = mergeById(_allStreamSongs.value, newSongs)
                     _allStreamSongs.value = merged
                     _streamSongs.value = merged.take(
                         maxOf(_streamSongs.value.size + newSongs.size, streamPageSize)
@@ -759,7 +671,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 if (tidalSongs.isNotEmpty()) {
                     addToStreamSongsCache(tidalSongs)
                     val currentList = _allStreamSongs.value
-                    val mergedWithTidal = (currentList + tidalSongs).distinctBy { s -> s.id }
+                    val mergedWithTidal = mergeById(currentList, tidalSongs)
                     _allStreamSongs.value = mergedWithTidal
                     _streamSongs.value = mergedWithTidal.take(
                         maxOf(_streamSongs.value.size + tidalSongs.size, streamPageSize)
@@ -788,9 +700,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _streamSongs.value = all.take(current.size + streamPageSize)
     }
 
-    private val prefs = application.getSharedPreferences("ian_player_prefs", 0)
-
-    private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
+    private val _playlists = MutableStateFlow(songStore.loadPlaylists())
     val playlists: StateFlow<List<Playlist>> = _playlists
 
     fun createPlaylist(name: String, songIds: List<Long>) {
@@ -819,7 +729,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getSongsInPlaylist(playlist: Playlist): List<Song> {
         val localMap = _songs.value.associateBy { it.id }
-        val cacheMap = _streamSongsCache.value
+        val cacheMap = songStore.cachedSongs
         return playlist.songIds.mapNotNull { id -> localMap[id] ?: cacheMap[id] }
     }
 
@@ -852,7 +762,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 ""
             }
             val (suggestedName, entries) = repository.parseM3u(text)
-            val allLibrarySongs = _songs.value + _streamSongsCache.value.values
+            val allLibrarySongs = _songs.value + songStore.cachedSongs.values
             val matched = repository.matchM3uEntries(entries, allLibrarySongs)
             withContext(Dispatchers.Main) {
                 if (matched.isEmpty()) {
@@ -877,38 +787,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun savePlaylistsToPrefs() {
-        val snapshot = _playlists.value
-        viewModelScope.launch(Dispatchers.IO) {
-            val jsonArray = JSONArray()
-            snapshot.forEach { playlist ->
-                val obj = JSONObject()
-                obj.put("id", playlist.id)
-                obj.put("name", playlist.name)
-                obj.put("songIds", JSONArray(playlist.songIds))
-                playlist.imageUri?.let { obj.put("imageUri", it) }
-                jsonArray.put(obj)
-            }
-            prefs.edit().putString("playlists", jsonArray.toString()).apply()
-        }
-    }
-
-    private fun loadPlaylistsFromPrefs() {
-        val jsonString = prefs.getString("playlists", null) ?: return
-        try {
-            val jsonArray = JSONArray(jsonString)
-            val loaded = mutableListOf<Playlist>()
-            for (i in 0 until jsonArray.length()) {
-                val obj = jsonArray.getJSONObject(i)
-                val idsArray = obj.getJSONArray("songIds")
-                val ids = mutableListOf<Long>()
-                for (j in 0 until idsArray.length()) ids.add(idsArray.getLong(j))
-                val imageUri = if (obj.has("imageUri")) obj.getString("imageUri") else null
-                loaded.add(Playlist(id = obj.getLong("id"), name = obj.getString("name"), songIds = ids, imageUri = imageUri))
-            }
-            _playlists.value = loaded
-        } catch (e: Exception) {
-            // data corrupt, abaikan
-        }
+        songStore.savePlaylists(_playlists.value)
     }
     private val _isDarkMode = MutableStateFlow(prefs.getBoolean("is_dark_mode", true))
     val isDarkMode: StateFlow<Boolean> = _isDarkMode
@@ -958,7 +837,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         hidePillJob?.cancel()
         hidePillJob = viewModelScope.launch {
             delay(60_000) // 1 minute
-            if (!playbackController.isPlaying.value) {
+            if (!playbackGateway.isPlaying.value) {
                 _showListeningPill.value = false
             }
         }
@@ -974,10 +853,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun reorderUpNext(fromIndexInUpNext: Int, toIndexInUpNext: Int) =
-        playbackController.reorderUpNext(fromIndexInUpNext, toIndexInUpNext)
+        playbackGateway.reorderUpNext(fromIndexInUpNext, toIndexInUpNext)
 
     private val repository = MusicRepository(application)
-    val playerManager = PlayerManager(application)
 
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val songs: StateFlow<List<Song>> = _songs
@@ -1038,161 +916,47 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _showRecapCard.value = false
     }
 
-    // Bounded bitmap caches — LRU byte-based eviction prevents OOM on large libraries.
-    // Low-res thumbnails ~48dp: 4MB cap (~100 entries at ~40KB each).
-    // High-res album art (song card only): 8MB cap (~2 entries at ~4MB each).
-    private val artCache = object : LruCache<Long, Bitmap>(4 * 1024 * 1024) {
-        override fun sizeOf(key: Long, bitmap: Bitmap): Int = bitmap.byteCount
-    }
-    private val highResArtCache = object : LruCache<Long, Bitmap>(8 * 1024 * 1024) {
-        override fun sizeOf(key: Long, bitmap: Bitmap): Int = bitmap.byteCount
-    }
-
-    // Disk cache untuk remote album art — file-based di cacheDir, otomatis dibersihkan OS
-    private fun diskCacheDir(): java.io.File {
-        val dir = java.io.File(appContext.cacheDir, "album_art")
-        if (!dir.exists()) dir.mkdirs()
-        return dir
-    }
-
-    private fun diskCacheKey(url: String): String = url.hashCode().toLong().toString()
-
-    private fun saveToDiskCache(url: String, bitmap: Bitmap) {
-        try {
-            val file = java.io.File(diskCacheDir(), diskCacheKey(url))
-            if (file.exists()) return
-            file.outputStream().use { out ->
-                bitmap.compress(android.graphics.Bitmap.CompressFormat.WEBP, 85, out)
-            }
-        } catch (_: Exception) {}
-    }
-
-    private fun loadFromDiskCache(url: String): Bitmap? {
-        return try {
-            val file = java.io.File(diskCacheDir(), diskCacheKey(url))
-            if (file.exists()) {
-                file.inputStream().use { android.graphics.BitmapFactory.decodeStream(it) }
-            } else null
-        } catch (_: Exception) { null }
-    }
-
-    private fun downloadBitmap(urlStr: String): Bitmap? {
-        // Cek disk cache dulu
-        loadFromDiskCache(urlStr)?.let { return it }
-
-        var conn: java.net.HttpURLConnection? = null
-        var `is`: InputStream? = null
-        val bitmap = try {
-            val url = java.net.URL(urlStr)
-            conn = url.openConnection() as java.net.HttpURLConnection
-            conn.doInput = true
-            conn.connect()
-            `is` = conn.inputStream
-            android.graphics.BitmapFactory.decodeStream(`is`)
-        } catch (e: Exception) { null } finally {
-            try { `is`?.close() } catch (_: Exception) {}
-            try { conn?.disconnect() } catch (_: Exception) {}
-        }
-        // Simpan ke disk cache untuk下次
-        if (bitmap != null) saveToDiskCache(urlStr, bitmap)
-        return bitmap
-    }
+    // Art pipeline lives in ArtLoader (Coil-backed): memory + disk cache,
+    // request dedup and high-res URL rules are the module's implementation detail.
+    private val artLoader = ArtLoader(appContext)
 
     fun getCachedArt(song: Song, onLoaded: (Bitmap?) -> Unit) {
-        val cached = artCache.get(song.id)
-        if (cached != null) { onLoaded(cached); return }
-        if (song.isStream && !song.remoteArtUrl.isNullOrEmpty()) {
-            viewModelScope.launch {
-                val art = withContext(Dispatchers.IO) { downloadBitmap(song.remoteArtUrl) }
-                if (art != null) artCache.put(song.id, art)
-                onLoaded(art)
-            }
-        } else {
-            viewModelScope.launch {
-                val art = withContext(Dispatchers.IO) { AlbumArtLoader.getEmbeddedArt(appContext, song.uri) }
-                if (art != null) artCache.put(song.id, art)
-                onLoaded(art)
-            }
+        viewModelScope.launch {
+            onLoaded(artLoader.load(song, highRes = false))
         }
     }
 
     fun getHighResArt(song: Song, onLoaded: (Bitmap?) -> Unit) {
-        val cacheKey = -song.id
-        val cached = highResArtCache.get(cacheKey)
-        if (cached != null) { onLoaded(cached); return }
-        if (song.isStream && !song.remoteArtUrl.isNullOrEmpty()) {
-            viewModelScope.launch {
-                val art = withContext(Dispatchers.IO) {
-                    val highResUrl = when {
-                        song.remoteArtUrl.contains("=w") && song.remoteArtUrl.contains("-h") ->
-                            song.remoteArtUrl.replace(Regex("=w\\d+-h\\d+.*"), "=w1000-h1000-l90-rj")
-                        song.remoteArtUrl.contains("=s") ->
-                            song.remoteArtUrl.replace(Regex("=s\\d+.*"), "=s1000-c-rj")
-                        song.remoteArtUrl.contains("googleusercontent.com") && !song.remoteArtUrl.contains("=") ->
-                            "${song.remoteArtUrl}=w1000-h1000-l90-rj"
-                        song.remoteArtUrl.contains("ytimg.com") ->
-                            song.remoteArtUrl.replace("default.jpg", "maxresdefault.jpg")
-                                .replace("mqdefault.jpg", "maxresdefault.jpg")
-                                .replace("hqdefault.jpg", "maxresdefault.jpg")
-                        else -> song.remoteArtUrl
-                    }
-                    downloadBitmap(highResUrl)
-                }
-                if (art != null) highResArtCache.put(cacheKey, art)
-                onLoaded(art)
-            }
-        } else {
-            viewModelScope.launch {
-                val art = withContext(Dispatchers.IO) { AlbumArtLoader.getEmbeddedArt(appContext, song.uri, targetSize = 800) }
-                if (art != null) highResArtCache.put(cacheKey, art)
-                onLoaded(art)
-            }
+        viewModelScope.launch {
+            onLoaded(artLoader.load(song, highRes = true))
         }
     }
-
-    private val appContext = application.applicationContext
     private var downloadReceiver: BroadcastReceiver? = null
 
-    lateinit var playbackController: PlaybackController
+    lateinit var playbackGateway: PlayerGateway
 
-    val queue: StateFlow<List<Song>> get() = playbackController.queue
-    val currentSong: StateFlow<Song?> get() = playbackController.currentSong
-    val isPlaying: StateFlow<Boolean> get() = playbackController.isPlaying
-    val currentPosition: StateFlow<Long> get() = playbackController.currentPosition
-    val duration: StateFlow<Long> get() = playbackController.duration
-    val isShuffleOn: StateFlow<Boolean> get() = playbackController.isShuffleOn
-    val repeatMode: StateFlow<Int> get() = playbackController.repeatMode
-    val isBuffering: StateFlow<Boolean> get() = playbackController.isBuffering
-    val audioSessionId: StateFlow<Int> get() = playbackController.audioSessionId
+    val queue: StateFlow<List<Song>> get() = playbackGateway.queue
+    val currentSong: StateFlow<Song?> get() = playbackGateway.currentSong
+    val isPlaying: StateFlow<Boolean> get() = playbackGateway.isPlaying
+    val currentPosition: StateFlow<Long> get() = playbackGateway.currentPosition
+    val duration: StateFlow<Long> get() = playbackGateway.duration
+    val isShuffleOn: StateFlow<Boolean> get() = playbackGateway.isShuffleOn
+    val repeatMode: StateFlow<Int> get() = playbackGateway.repeatMode
+    val isBuffering: StateFlow<Boolean> get() = playbackGateway.isBuffering
+    val audioSessionId: StateFlow<Int> get() = playbackGateway.audioSessionId
 
     private fun saveListToPrefs(key: String, songs: List<Song>) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val arr = JSONArray()
-            songs.forEach { arr.put(it.id) }
-            prefs.edit().putString(key, arr.toString()).apply()
-            addToStreamSongsCache(songs)
-        }
+        songStore.saveCachedSongIds(key, songs)
     }
 
     private fun loadListFromPrefs(key: String): List<Song> {
-        val raw = prefs.getString(key, null) ?: return emptyList()
-        val cache = _streamSongsCache.value
-        return try {
-            val arr = JSONArray(raw)
-            val list = mutableListOf<Song>()
-            for (i in 0 until arr.length()) {
-                cache[arr.getLong(i)]?.let { list.add(it) }
-            }
-            list
-        } catch (_: Exception) { emptyList() }
+        return songStore.loadCachedSongs(key)
     }
 
     init {
-        loadPlaylistsFromPrefs()
         _playCounts.value = loadPlayCounts()
         _sortMode.value = prefs.getInt("sort_mode", 0)
         loadFavoriteIds()
-        _streamSongsCache.value = loadStreamSongsCache()
         
         // Load cached stream content
         _trendingSongs.value = loadListFromPrefs("cached_trending")
@@ -1218,16 +982,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         fetchTrending()
         refreshSocialAccess()
 
-        playbackController = PlaybackController(
-            playerManager = playerManager,
+        playbackGateway = PlayerGateway(
+            context = appContext,
             prefs = prefs,
-            viewModelScope = viewModelScope,
+            songStore = songStore,
+            scope = viewModelScope,
             ytMusicRepository = ytMusicRepository,
+            streamResolvers = streamResolvers,
             getSongs = { _songs.value },
             getAllStreamSongs = { _allStreamSongs.value },
             onSongPlayed = { song ->
                 if (song.isStream) addToStreamSongsCache(listOf(song))
-                playbackController.markAsPlayed(song.id)
+                playbackGateway.markAsPlayed(song.id)
                 incrementPlayCount(song.id)
                 loadArt(song)
                 loadLyric(song)
@@ -1243,33 +1009,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         )
 
-        playbackController.restorePlayerState()
+        playbackGateway.restorePlayerState()
 
-        playerManager.initialize {
-            playbackController.attachListener()
-
-            val player = playerManager.player
-            if (player?.currentMediaItem != null) {
-                val mediaId = player.currentMediaItem?.mediaId?.toLongOrNull()
-                if (mediaId != null) {
-                    playbackController.pendingMediaId = mediaId
-                    playbackController.tryRestoreCurrentSong()
-                    if (player.isPlaying) {
-                        _showListeningPill.value = true
-                    } else {
-                        startHidePillTimer()
-                    }
+        playbackGateway.initialize { hasRestoredSong, restoredIsPlaying ->
+            if (hasRestoredSong) {
+                if (restoredIsPlaying) {
+                    _showListeningPill.value = true
+                } else {
+                    startHidePillTimer()
                 }
             }
         }
 
         viewModelScope.launch {
             _songs.collect {
-                playbackController.tryRestoreCurrentSongOnSongsChanged()
+                playbackGateway.tryRestoreCurrentSongOnSongsChanged()
             }
         }
 
-        playbackController.startPositionPolling()
+        playbackGateway.startPositionPolling()
     }
 
 
@@ -1279,31 +1037,31 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val rawList = withContext(Dispatchers.IO) { repository.getAllSongs() }
             val list = rawList.filter { it.duration >= 60_000L }
             _songs.value = list
-            if (playbackController.queue.value.isEmpty()) {
-                playbackController.setDefaultQueueIfEmpty(list)
+            if (playbackGateway.queue.value.isEmpty()) {
+                playbackGateway.setDefaultQueueIfEmpty(list)
             }
             _isLoadingSongs.value = false
             checkMonthlyRecap()
         }
     }
-    fun toggleShuffle() = playbackController.toggleShuffle()
+    fun toggleShuffle() = playbackGateway.toggleShuffle()
 
     fun setQueue(newQueue: List<Song>, startSong: Song? = null) =
-        playbackController.setQueue(newQueue, startSong)
-    fun toggleRepeat() = playbackController.toggleRepeat()
+        playbackGateway.setQueue(newQueue, startSong)
+    fun toggleRepeat() = playbackGateway.toggleRepeat()
 
     fun playSong(song: Song) {
         preResolveJob?.cancel() // Prioritaskan jalur jaringan untuk lagu yang diklik
-        playbackController.playSong(song)
+        playbackGateway.playSong(song)
     }
 
-    fun playNext() = playbackController.playNext()
+    fun playNext() = playbackGateway.playNext()
 
-    fun playPrevious() = playbackController.playPrevious()
+    fun playPrevious() = playbackGateway.playPrevious()
 
-    fun playNext(song: Song) = playbackController.playNext(song)
+    fun playNext(song: Song) = playbackGateway.playNext(song)
 
-    fun addToQueue(song: Song) = playbackController.addToQueue(song)
+    fun addToQueue(song: Song) = playbackGateway.addToQueue(song)
 
     private val _ambientColor = MutableStateFlow(Color(0xFF333333))
     val ambientColor: StateFlow<Color> = _ambientColor
@@ -1313,13 +1071,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun loadArt(song: Song) {
         viewModelScope.launch {
-            val bitmap = withContext(Dispatchers.IO) {
-                if (song.isStream && !song.remoteArtUrl.isNullOrEmpty()) {
-                    downloadBitmap(song.remoteArtUrl)
-                } else {
-                    AlbumArtLoader.getEmbeddedArt(appContext, song.uri, targetSize = 400)
-                }
-            }
+            val bitmap = artLoader.load(song, highRes = false, embeddedSize = 400)
             _albumArt.value = bitmap
             _ambientColor.value = bitmap?.let {
                 AlbumArtLoader.extractDominantColor(it)
@@ -1340,25 +1092,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _plainLyric.value = null
         _isLyricLoading.value = true
         viewModelScope.launch {
-            val synced = withContext(Dispatchers.IO) {
-                lyricRepository.fetchSyncedLyric(song)
-            }
-            if (synced != null) {
-                _syncedLyric.value = synced
-            } else {
-                _plainLyric.value = withContext(Dispatchers.IO) {
-                    lyricRepository.fetchPlainLyric(song)
-                }
+            when (val result = withContext(Dispatchers.IO) { lyricRepository.fetchLyric(song) }) {
+                is LyricResult.Synced -> _syncedLyric.value = result.lines
+                is LyricResult.Plain -> _plainLyric.value = result.text
+                LyricResult.None -> {}
             }
             _isLyricLoading.value = false
         }
     }
 
-    fun togglePlayPause() = playbackController.togglePlayPause()
+    fun togglePlayPause() = playbackGateway.togglePlayPause()
 
-    fun seekTo(positionMs: Long) = playbackController.seekTo(positionMs)
+    fun seekTo(positionMs: Long) = playbackGateway.seekTo(positionMs)
 
-    fun getLivePosition(): Long = playbackController.getLivePosition()
+    fun getLivePosition(): Long = playbackGateway.getLivePosition()
 
     override fun onCleared() {
         super.onCleared()
@@ -1368,7 +1115,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         downloadReceiver?.let { receiver ->
             appContext.unregisterReceiver(receiver)
         }
-        playerManager.release()
+        playbackGateway.release()
     }
 
     fun reorderPlaylistSongs(playlist: Playlist, fromIndex: Int, toIndex: Int) {
@@ -1394,12 +1141,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _playlists.value = currentList
         savePlaylistsToPrefs()
         // Ensure stream songs in playlist stay cached
-        val cache = _streamSongsCache.value
+        val cache = songStore.cachedSongs
         songIds.forEach { id -> if (id in cache) addToStreamSongsCache(listOf(cache[id]!!)) }
     }
 
     fun getAllSongsForDialog(): List<Song> {
-        return _songs.value + _streamSongsCache.value.values.filter { it.id !in _songs.value.map { s -> s.id } }
+        return _songs.value + songStore.cachedSongs.values.filter { it.id !in _songs.value.map { s -> s.id } }
     }
 
     fun checkForUpdate() {
@@ -1412,7 +1159,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         .getPackageInfo(getApplication<android.app.Application>().packageName, 0)
                     val currentVersionName = pkgInfo.versionName ?: ""
 
-                    if (compareSemVer(info.versionName, currentVersionName) > 0) {
+                    if (UpdateManager.isNewer(info.versionName, currentVersionName)) {
                         _updateInfo.value = info
                         _isUpdateAvailable.value = true
                     }
@@ -1421,16 +1168,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-    }
-
-    private fun compareSemVer(v1: String, v2: String): Int {
-        val parts1 = v1.split(".").map { it.toIntOrNull() ?: 0 }
-        val parts2 = v2.split(".").map { it.toIntOrNull() ?: 0 }
-        for (i in 0 until maxOf(parts1.size, parts2.size)) {
-            val diff = (parts1.getOrElse(i) { 0 }) - (parts2.getOrElse(i) { 0 })
-            if (diff != 0) return diff
-        }
-        return 0
     }
 
     fun downloadUpdate() {
@@ -1446,22 +1183,22 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun getAudioFormats(song: Song, onResult: (List<AudioFormat>) -> Unit) =
-        playbackController.getAudioFormats(song, onResult)
+        playbackGateway.getAudioFormats(song, onResult)
 
     @android.annotation.SuppressLint("UnspecifiedRegisterReceiverFlag")
     fun downloadSong(song: Song, format: AudioFormat) {
         viewModelScope.launch {
-            // 1. Resolve URL
+            // 1. Resolve URL: unresolved stream songs go through the provider's resolver;
+            // already-resolved URLs pass through.
             val realUrl = withContext(Dispatchers.IO) {
-                if (song.uri.toString().startsWith("tidal://")) {
-                    tidalRepository.resolveTidalStream(song, ytMusicRepository)
-                } else if (format.url.startsWith("ytmusic://placeholder/")) {
-                    ytMusicRepository.resolveStreamUrl(song)
+                if (StreamSources.needsResolution(song)) {
+                    streamResolvers.resolve(song)
+                } else if (song.source == StreamSources.TIDAL || song.uri.toString().startsWith("tidal://")) {
+                    streamResolvers.resolve(song)
                 } else {
                     format.url
                 }
             }
-
             if (realUrl == null || !realUrl.startsWith("http")) {
                 Timber.e("MusicViewModel Could not resolve download URL for: ${song.title}")
                 withContext(Dispatchers.Main) {
@@ -1470,41 +1207,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            val context = getApplication<android.app.Application>()
-            val downloadManager = context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
-            
-            // Clean filename: remove illegal characters
             val cleanTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-            val cleanArtist = song.artist.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-            val fileName = "$cleanArtist - $cleanTitle.mp3"
-
-            // Show starting toast
             android.widget.Toast.makeText(appContext, "Starting download: $cleanTitle", android.widget.Toast.LENGTH_SHORT).show()
 
-            val request = android.app.DownloadManager.Request(android.net.Uri.parse(realUrl))
-                .setTitle(song.title)
-                .setDescription("$cleanArtist - IanPlayer")
-                .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_MUSIC, "IanPlayer/$fileName")
-                .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setAllowedOverMetered(true)
-                .setAllowedOverRoaming(true)
-
-            val downloadId = downloadManager.enqueue(request)
-            
-            // Register completion receiver to apply metadata
-            val receiver = com.ianocent.musicplayer.data.DownloadCompletionReceiver(
-                downloadId,
-                song
-            ) {
+            songDownloader.download(song, realUrl) {
                 refreshSongs()
                 android.widget.Toast.makeText(appContext, "Download complete: $cleanTitle", android.widget.Toast.LENGTH_SHORT).show()
-            }
-            
-            val filter = android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                context.registerReceiver(receiver, filter, android.content.Context.RECEIVER_EXPORTED)
-            } else {
-                context.registerReceiver(receiver, filter)
             }
         }
     }
@@ -1525,7 +1233,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val rawList = withContext(Dispatchers.IO) { repository.getAllSongs() }
             val list = rawList.filter { it.duration >= 60_000L }
             _songs.value = list
-            playbackController.setDefaultQueueIfEmpty(list)
+            playbackGateway.setDefaultQueueIfEmpty(list)
         }
     }
     fun dismissUpdate() {
@@ -1559,7 +1267,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun confirmDelete(song: Song) {
         _songs.value = _songs.value.filter { it.id != song.id }
-        playbackController.removeSongFromQueue(song.id)
+        playbackGateway.removeSongFromQueue(song.id)
         _playlists.value = _playlists.value.map { playlist ->
             playlist.copy(songIds = playlist.songIds.filter { it != song.id }.toMutableList())
         }
@@ -1571,7 +1279,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         deleteTimerJob?.cancel()
         _lastDeletedSong.value = null
         _songs.value = (_songs.value + song).sortedBy { it.title.lowercase() }
-        playbackController.addToQueue(song)
+        playbackGateway.addToQueue(song)
     }
 
     fun updateSongInfo(songId: Long, newTitle: String, newArtist: String, newImageUri: Uri? = null) {
@@ -1604,10 +1312,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 _songs.value = _songs.value.map {
                     if (it.id == songId) it.copy(title = newTitle, artist = newArtist) else it
                 }
-                playbackController.updateSongInQueue(songId) { it.copy(title = newTitle, artist = newArtist) }
-                
-                artCache.remove(songId)
-                highResArtCache.remove(-songId)
+                playbackGateway.updateSongInQueue(songId) { it.copy(title = newTitle, artist = newArtist) }
+
+                // Embedded-art is decoded fresh per request (no song-keyed cache to
+                // invalidate); remote URLs are unaffected by a title/artist edit.
                 pendingUpdateInfo = null
 
                 // 4. Scanner-settled dedupe: OEM MediaProvider may duplicate rows on rewrite

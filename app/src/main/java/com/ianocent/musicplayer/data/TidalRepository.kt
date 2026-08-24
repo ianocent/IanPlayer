@@ -52,7 +52,8 @@ class TidalRepository {
                     uri = Uri.parse("tidal://track/$id"),
                     isStream = true,
                     remoteArtUrl = artUrl,
-                    remoteId = id.toString()
+                    remoteId = id.toString(),
+                    source = StreamSources.TIDAL
                 ))
             }
             results
@@ -62,16 +63,7 @@ class TidalRepository {
         }
     }
 
-    // Tidal tracks usually require auth for actual stream URLs. 
-    // If no auth, we could fallback to searching the same song on YT Music.
-    suspend fun resolveTidalStream(song: Song, ytRepo: YTMusicRepository): String? {
-        val query = "${song.artist} - ${song.title}"
-        Timber.d("Tidal resolve: falling back to YT Music for $query")
-        val ytResult = ytRepo.searchSongs(query, onPartial = {})
-        if (ytResult is StreamSearchResult.Success && ytResult.songs.isNotEmpty()) {
-            val bestMatch = ytResult.songs.first()
-            return ytRepo.resolveStreamUrl(bestMatch)
-        }
-        return null
-    }
+    // Tidal tracks usually require auth for actual stream URLs.
+    // Without auth there is no direct URL to return; the TidalStreamResolver
+    // adapter falls back to searching the same song on YouTube.
 }

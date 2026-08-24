@@ -12,6 +12,17 @@ val ksProps = rootProject.file("keystore.properties").readLines()
         k.trim() to v.trim()
     }
 
+// InnerTube client identifiers live in gitignored keys.properties, not in source.
+val localProps: Map<String, String> = rootProject.file("keys.properties").let { f ->
+    if (f.exists()) f.readLines()
+        .filter { it.contains("=") && !it.trim().startsWith("#") }
+        .associate {
+            val (k, v) = it.split("=", limit = 2)
+            k.trim() to v.trim()
+        }
+    else emptyMap()
+}
+
 android {
     namespace = "com.ianocent.musicplayer"
     compileSdk = 36
@@ -33,6 +44,9 @@ android {
         versionName = "5.5.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "YTMUSIC_WEB_KEY", "\"${localProps["YTMUSIC_WEB_KEY"] ?: ""}\"")
+        buildConfigField("String", "YTMUSIC_ANDROID_KEY", "\"${localProps["YTMUSIC_ANDROID_KEY"] ?: ""}\"")
     }
 
     buildTypes {

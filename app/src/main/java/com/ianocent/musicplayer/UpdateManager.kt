@@ -21,6 +21,20 @@ object UpdateManager {
     private const val GITHUB_API =
         "https://api.github.com/repos/ianocent/IanPlayer/releases/latest"
 
+    /**
+     * True when [remote] is a strictly newer semver than [current].
+     * Pure function; lives here so version policy has one home.
+     */
+    fun isNewer(remote: String, current: String): Boolean {
+        val parts1 = remote.split(".").map { it.toIntOrNull() ?: 0 }
+        val parts2 = current.split(".").map { it.toIntOrNull() ?: 0 }
+        for (i in 0 until maxOf(parts1.size, parts2.size)) {
+            val diff = (parts1.getOrElse(i) { 0 }) - (parts2.getOrElse(i) { 0 })
+            if (diff != 0) return diff > 0
+        }
+        return false
+    }
+
     suspend fun checkForUpdate(): UpdateInfo? = withContext(Dispatchers.IO) {
         try {
             val url = URL(GITHUB_API)

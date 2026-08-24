@@ -7,8 +7,6 @@ import android.content.SharedPreferences
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
-import org.json.JSONArray
-import org.json.JSONObject
 import java.util.regex.Pattern
 
 /**
@@ -48,7 +46,7 @@ class SocialSignalListener : NotificationListenerService() {
     }
 
     private fun prefs(): SharedPreferences =
-        getSharedPreferences("ian_player_prefs", Context.MODE_PRIVATE)
+        getSharedPreferences(SongStore.PREFS_NAME, Context.MODE_PRIVATE)
 
     private fun buildText(notification: Notification): String? {
         val title = notification.extras.getString(Notification.EXTRA_TITLE) ?: return null
@@ -81,38 +79,16 @@ class SocialSignalListener : NotificationListenerService() {
     private fun storeSignal(signal: String) {
         val prefs = prefs()
         val now = System.currentTimeMillis()
-        val cutoff = now - KEEP_MS
-        val arr = readSignals(prefs).filter { it.second > cutoff }.toMutableList()
+        val cutoff = now - SongStore.SOCIAL_SIGNAL_WINDOW_MS
+        val arr = SongStore.readSocialSignals(prefs).filter { it.second > cutoff }.toMutableList()
         // Dedupe: skip if the same signal was seen within the last hour.
         if (arr.any { it.first == signal && now - it.second < 60 * 60 * 1000L }) return
         arr.add(0, Pair(signal, now))
         if (arr.size > MAX_SIGNALS) arr.subList(MAX_SIGNALS, arr.size).clear()
-        writeSignals(prefs, arr)
-    }
-
-    private fun readSignals(prefs: SharedPreferences): List<Pair<String, Long>> {
-        val raw = prefs.getString("social_signals", null) ?: return emptyList()
-        return try {
-            val arr = JSONArray(raw)
-            val list = mutableListOf<Pair<String, Long>>()
-            for (i in 0 until arr.length()) {
-                val obj = arr.optJSONObject(i) ?: continue
-                list.add(Pair(obj.optString("s", ""), obj.optLong("t", 0L)))
-            }
-            list.filter { it.first.isNotBlank() }
-        } catch (_: Exception) { emptyList() }
-    }
-
-    private fun writeSignals(prefs: SharedPreferences, signals: List<Pair<String, Long>>) {
-        val arr = JSONArray()
-        signals.forEach { (s, t) ->
-            arr.put(JSONObject().put("s", s).put("t", t))
-        }
-        prefs.edit().putString("social_signals", arr.toString()).apply()
+        SongStore.writeSocialSignals(prefs, arr)
     }
 
     companion object {
-        private const val KEEP_MS = 3L * 24 * 60 * 60 * 1000 // 72h window
         private const val MAX_SIGNALS = 60
 
         private val ALLOWED_PACKAGES = setOf(

@@ -3,11 +3,12 @@ package com.ianocent.musicplayer.player
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.ianocent.musicplayer.data.SongStore
 import timber.log.Timber
 
 class HeadsetReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val prefs = context.getSharedPreferences("ian_player_prefs", 0)
+        val prefs = context.getSharedPreferences(SongStore.PREFS_NAME, 0)
         val assistantEnabled = prefs.getBoolean("voice_assistant_enabled", false)
         
         if (!assistantEnabled) return
