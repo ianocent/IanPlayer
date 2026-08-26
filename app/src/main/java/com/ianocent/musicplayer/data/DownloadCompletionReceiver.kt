@@ -97,11 +97,12 @@ class DownloadCompletionReceiver(
                             Timber.d("Metadata writing success: $success for $filePath")
 
                             // 2. Scan the file agar MediaStore sadar ada file baru dengan tag baru
+                            val scanMime = SongTags.mimeForExtension(filePath!!.substringAfterLast('.', ""))
                             val mediaUri = kotlinx.coroutines.suspendCancellableCoroutine<Uri?> { cont ->
                                 MediaScannerConnection.scanFile(
                                     ctx,
                                     arrayOf(filePath),
-                                    arrayOf("audio/mpeg")
+                                    arrayOf(scanMime)
                                 ) { _, uri ->
                                     if (cont.isActive) cont.resume(uri) { }
                                 }
@@ -198,10 +199,14 @@ class DownloadCompletionReceiver(
         try {
             val file = File(filePath)
             if (!file.exists()) return
-            
+
+            // Mirror the normalised values that MetadataWriter embedded in the
+            // tags so MediaStore columns and ID3 never disagree.
+            val (title, artist) = SongTags.resolve(song.title, song.artist)
+
             val values = ContentValues().apply {
-                put(MediaStore.Audio.Media.TITLE, song.title)
-                put(MediaStore.Audio.Media.ARTIST, song.artist)
+                put(MediaStore.Audio.Media.TITLE, title)
+                put(MediaStore.Audio.Media.ARTIST, artist)
                 put(MediaStore.Audio.Media.ALBUM, song.album)
                 put(MediaStore.Audio.Media.IS_MUSIC, 1)
             }

@@ -16,7 +16,11 @@ class SongDownloader(private val context: Context) {
     fun download(song: Song, url: String, onComplete: () -> Unit) {
         val cleanTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
         val cleanArtist = song.artist.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-        val fileName = "$cleanArtist - $cleanTitle.mp3"
+        // Stream providers serve AAC-in-MP4 or WebM/Opus, not MP3 — name the
+        // file after the real container (from the mime= query param) so the
+        // scanner and MetadataWriter agree on what the bytes are.
+        val extension = SongTags.extensionForUrl(url)
+        val fileName = "$cleanArtist - $cleanTitle.$extension"
 
         val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val request = DownloadManager.Request(Uri.parse(url))

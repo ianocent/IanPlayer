@@ -22,3 +22,9 @@
 
 # Accompanist
 -keep class com.google.accompanist.** { *; }
+
+# jaudiotagger (MP4/M4A tag writing) — reflective tag field lookup
+-keep class org.jaudiotagger.** { *; }
+-dontwarn java.awt.**
+-dontwarn javax.imageio.**
+-dontwarn org.jaudiotagger.**

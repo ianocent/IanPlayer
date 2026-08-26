@@ -14,11 +14,21 @@ import kotlinx.coroutines.withContext
 import com.mpatric.mp3agic.Mp3File
 import com.mpatric.mp3agic.ID3v2
 import com.mpatric.mp3agic.ID3v24Tag
+import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.tag.FieldKey
+import org.jaudiotagger.tag.images.AndroidArtwork
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
+/**
+ * Single entry point for embedding ID3-style metadata into downloaded audio
+ * files. The container is sniffed from magic bytes (download filenames can
+ * lie), then dispatched to the matching tag writer: mp3agic for MP3,
+ * jaudiotagger for AAC-in-MP4 (.m4a). WebM/Opus has no writable standard tag,
+ * so those files rely on the caller updating MediaStore columns instead.
+ */
 object MetadataWriter {
     suspend fun writeMetadata(
         context: Context,
@@ -33,59 +43,141 @@ object MetadataWriter {
                 return@withContext false
             }
 
-            val mp3file = Mp3File(filePath)
+            // Provider titles/channels are messy ("Ed Sheeran - Topic",
+            // "(Official Music Video)") — normalise before they land in tags.
+            val (title, artist) = SongTags.resolve(song.title, song.artist)
 
-            // Get existing tags if possible, otherwise create new
-            val id3v2tag = if (mp3file.hasId3v2Tag()) {
-                mp3file.id3v2Tag
-            } else {
-                ID3v24Tag()
-            }
-
-            id3v2tag.artist = song.artist
-            id3v2tag.title = song.title
-            id3v2tag.album = song.album
-
-            if (newArt != null) {
-                embedAlbumArt(id3v2tag, newArt)
-            } else if (!song.remoteArtUrl.isNullOrEmpty()) {
-                try {
-                    Timber.d("Downloading album art from: ${song.remoteArtUrl}")
-                    val bitmap = downloadBitmap(song.remoteArtUrl)
-                    if (bitmap != null) {
-                        Timber.d("Album art downloaded successfully, size: ${bitmap.width}x${bitmap.height}")
-                        embedAlbumArt(id3v2tag, bitmap)
+            val header = ByteArray(16).let { buf ->
+                file.inputStream().use { input ->
+                    var off = 0
+                    while (off < buf.size) {
+                        val n = input.read(buf, off, buf.size - off)
+                        if (n < 0) break
+                        off += n
                     }
-                } catch (e: Exception) {
-                    Timber.e(e, "Failed to download/embed album art: ${e.message}")
                 }
+                buf
+            }
+            val container = SongTags.detectContainer(header)
+            Timber.d("Tagging $container file: title=\"$title\" artist=\"$artist\" album=\"${song.album}\"")
+
+            val artBytes = resolveAlbumArtBytes(song, newArt)
+
+            val success = when (container) {
+                SongTags.Container.MP3 -> writeMp3Tags(file, title, artist, song.album, artBytes)
+                SongTags.Container.MP4 -> writeMp4Tags(file, title, artist, song.album, artBytes)
+                SongTags.Container.WEBM, SongTags.Container.UNKNOWN -> {
+                    Timber.w("No embeddable tag standard for $container; relying on MediaStore columns")
+                    true
+                }
+            }
+            Timber.d("Metadata writing success: $success for $filePath")
+            success
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to write metadata: ${e.message}")
+            false
+        }
+    }
+
+    /** Returns JPEG bytes for the artwork to embed, downloading remote art if needed. */
+    private suspend fun resolveAlbumArtBytes(song: Song, newArt: Bitmap?): ByteArray? {
+        newArt?.let { return bitmapToJpeg(it) }
+        val url = song.remoteArtUrl?.takeIf { it.isNotBlank() } ?: return null
+        return try {
+            Timber.d("Downloading album art from: $url")
+            downloadBitmap(url)?.let { bitmap ->
+                Timber.d("Album art downloaded successfully, size: ${bitmap.width}x${bitmap.height}")
+                bitmapToJpeg(bitmap)
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to download album art: ${e.message}")
+            null
+        }
+    }
+
+    private fun bitmapToJpeg(bitmap: Bitmap): ByteArray =
+        ByteArrayOutputStream().use { stream ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, stream)
+            stream.toByteArray()
+        }
+
+    /** MP3 tagging via mp3agic: rewrite through a temp file (mp3agic cannot overwrite its input). */
+    private fun writeMp3Tags(
+        file: File,
+        title: String,
+        artist: String,
+        album: String,
+        artBytes: ByteArray?
+    ): Boolean {
+        return try {
+            val mp3file = Mp3File(file)
+            val id3v2tag: ID3v2 = if (mp3file.hasId3v2Tag()) mp3file.id3v2Tag else ID3v24Tag()
+
+            id3v2tag.artist = artist
+            id3v2tag.title = title
+            id3v2tag.album = album
+
+            if (artBytes != null) {
+                id3v2tag.setAlbumImage(artBytes, "image/jpeg")
+                Timber.d("Album art embedded into MP3")
             }
 
             mp3file.id3v2Tag = id3v2tag
 
-            // Save ke temp file dulu (mp3agic gak boleh overwrite file yang lagi dibaca)
             val tempFile = File(file.parentFile, "${file.nameWithoutExtension}_temp_${System.currentTimeMillis()}.mp3")
             mp3file.save(tempFile.absolutePath)
 
             if (!tempFile.exists() || tempFile.length() == 0L) {
                 Timber.e("Temp file invalid after save, aborting")
                 tempFile.delete()
-                return@withContext false
+                return false
             }
 
             if (file.exists()) file.delete()
             val renamed = tempFile.renameTo(file)
-
             if (!renamed) {
                 Timber.e("Failed to rename temp file to original path")
-                return@withContext false
+                return false
             }
-
-            Timber.d("Metadata written successfully for: ${song.title}")
             true
         } catch (e: Exception) {
-            Timber.e("Failed to write metadata: ${e.message}")
-            e.printStackTrace()
+            Timber.e(e, "MP3 tagging failed: ${e.message}")
+            false
+        }
+    }
+
+    /** MP4/M4A tagging via jaudiotagger: commits in place. */
+    private fun writeMp4Tags(
+        file: File,
+        title: String,
+        artist: String,
+        album: String,
+        artBytes: ByteArray?
+    ): Boolean {
+        return try {
+            val audioFile = AudioFileIO.read(file)
+            val tag = audioFile.tagOrCreateDefault
+
+            tag.setField(FieldKey.TITLE, title)
+            tag.setField(FieldKey.ARTIST, artist)
+            if (album.isNotBlank()) tag.setField(FieldKey.ALBUM, album)
+
+            if (artBytes != null) {
+                try {
+                    tag.deleteArtworkField()
+                } catch (_: Exception) {
+                }
+                val artwork = AndroidArtwork()
+                artwork.binaryData = artBytes
+                artwork.mimeType = "image/jpeg"
+                tag.setField(artwork)
+                Timber.d("Album art embedded into M4A")
+            }
+
+            audioFile.commit()
+            true
+        } catch (e: Exception) {
+            Timber.e(e, "M4A tagging failed: ${e.message}")
             false
         }
     }
@@ -93,23 +185,23 @@ object MetadataWriter {
     private suspend fun downloadBitmap(url: String): Bitmap? = withContext(Dispatchers.IO) {
         return@withContext try {
             var artUrl = url
-            
+
             // Try high quality first for YouTube thumbnails
             if (artUrl.contains("ytimg.com") || artUrl.contains("googleusercontent.com")) {
                 artUrl = artUrl.replace("default.jpg", "maxresdefault.jpg")
                     .replace("mqdefault.jpg", "maxresdefault.jpg")
                     .replace("hqdefault.jpg", "maxresdefault.jpg")
                     .replace("sddefault.jpg", "maxresdefault.jpg")
-                
+
                 // Try maxresdefault first
                 var bitmap = tryDownloadBitmap(artUrl)
                 if (bitmap != null) return@withContext bitmap
-                
+
                 // Fallback to hqdefault if maxres doesn't exist
                 artUrl = artUrl.replace("maxresdefault.jpg", "hqdefault.jpg")
                 bitmap = tryDownloadBitmap(artUrl)
                 if (bitmap != null) return@withContext bitmap
-                
+
                 // Last fallback to original URL
                 tryDownloadBitmap(url)
             } else {
@@ -120,7 +212,7 @@ object MetadataWriter {
             null
         }
     }
-    
+
     private fun tryDownloadBitmap(url: String): Bitmap? {
         return try {
             val urlObj = URL(url)
@@ -138,23 +230,6 @@ object MetadataWriter {
         } catch (e: Exception) {
             Timber.d("Failed to download from $url: ${e.message}")
             null
-        }
-    }
-
-    private fun embedAlbumArt(tag: ID3v2, bitmap: Bitmap) {
-        try {
-            // Convert bitmap to byte array (JPEG format)
-            val byteArray = ByteArrayOutputStream().use { stream ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 90, stream)
-                stream.toByteArray()
-            }
-
-            // Set the album art as APIC frame (attached picture)
-            tag.setAlbumImage(byteArray, "image/jpeg")
-            
-            Timber.d("Album art embedded successfully")
-        } catch (e: Exception) {
-            Timber.e("Failed to embed album art: ${e.message}")
         }
     }
 
@@ -285,4 +360,3 @@ object MetadataWriter {
         }
     }
 }
-

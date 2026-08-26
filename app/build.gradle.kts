@@ -118,6 +118,8 @@ dependencies {
     implementation("com.jakewharton.timber:timber:5.0.1")
     // For writing audio metadata tags (MP3)
     implementation("com.mpatric:mp3agic:0.9.1")
+    // Audio metadata tags for MP4/M4A containers (YouTube audio downloads are AAC-in-MP4)
+    implementation("net.jthink:jaudiotagger:3.0.1")
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
