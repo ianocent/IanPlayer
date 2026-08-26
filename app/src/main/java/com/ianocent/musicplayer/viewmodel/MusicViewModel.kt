@@ -36,6 +36,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.Color
 import com.ianocent.musicplayer.data.Playlist
+import com.ianocent.musicplayer.data.RecapBuilder
+import com.ianocent.musicplayer.data.SettingsStore
 import com.ianocent.musicplayer.data.UpdateInfo
 import com.ianocent.musicplayer.data.YTMusicRepository
 import com.ianocent.musicplayer.data.SongDownloader
@@ -68,16 +70,26 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
     private val prefs = application.getSharedPreferences(SongStore.PREFS_NAME, 0)
     private val songStore = SongStore(prefs, viewModelScope)
+    private val settingsStore = SettingsStore(prefs)
 
     private val ytMusicRepository = YTMusicRepository(application.applicationContext)
     private val tidalRepository = TidalRepository()
     private val songDownloader = SongDownloader(appContext)
     private val streamResolvers = StreamResolvers(listOf(
         YouTubeStreamResolver(ytMusicRepository),
-        TidalStreamResolver(tidalRepository, YouTubeStreamResolver(ytMusicRepository)) { query ->
+        TidalStreamResolver(YouTubeStreamResolver(ytMusicRepository)) { query ->
             (ytMusicRepository.searchSongs(query, onPartial = {}) as? StreamSearchResult.Success)?.songs ?: emptyList()
         }
     ))
+
+    // Stream search: debounce + dual-provider fan-out + paging live in the module.
+    val streamSearch = StreamSearchController(
+        scope = viewModelScope,
+        ytMusicRepository = ytMusicRepository,
+        tidalRepository = tidalRepository,
+        onSongsSeen = { songStore.addToStreamSongsCache(it) },
+        onResultsSettled = { preResolveSearchResults() }
+    )
     
     private val _deleteIntentSender = MutableSharedFlow<IntentSender>(extraBufferCapacity = 1)
     val deleteIntentSender: SharedFlow<IntentSender> = _deleteIntentSender
@@ -227,7 +239,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val streamSongsCache: StateFlow<Map<Long, Song>> = songStore.streamSongsCache
 
     private fun mergeById(current: List<Song>, incoming: List<Song>): List<Song> =
-        (current + incoming).distinctBy { it.id }
+        StreamSearchController.mergeById(current, incoming)
 
     private fun addToStreamSongsCache(songs: List<Song>) {
         songStore.addToStreamSongsCache(songs)
@@ -278,7 +290,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     // no mic, no camera, no screen recording, no foreground service). Stored only in
     // SharedPreferences on this device, pruned after 72h. Opt-in, default off.
     private val _socialSignalsEnabled = MutableStateFlow(
-        prefs.getBoolean("social_signals_enabled", false)
+        settingsStore.isSocialSignalsEnabled
     )
     val socialSignalsEnabled: StateFlow<Boolean> = _socialSignalsEnabled
 
@@ -299,7 +311,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSocialSignalsEnabled(enabled: Boolean) {
         _socialSignalsEnabled.value = enabled
-        prefs.edit().putBoolean("social_signals_enabled", enabled).apply()
+        settingsStore.isSocialSignalsEnabled = enabled
         if (enabled) {
             refreshSocialAccess()
             refreshForYou(force = true)
@@ -389,75 +401,42 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         preResolveJob?.cancel()
         preResolveJob = viewModelScope.launch {
             // Pre-resolve 20 item trending agar transisi mulus
-            for (song in trending.take(20)) {
-                if (!StreamSources.needsResolution(song)) continue
-                if (!preResolvedIds.add(song.id)) continue
-                
-                delay(200) // Jeda singkat agar tidak membebani semaphore
-                
-                launch {
-                    try {
-                        val url = withContext(Dispatchers.IO) {
-                            ytMusicRepository.resolveStreamUrl(song)
-                        }
-                        if (url != null) {
-                            val resolved = song.copy(uri = Uri.parse(url))
-                            _trendingSongs.value = _trendingSongs.value.map { 
-                                if (it.id == resolved.id) resolved else it 
-                            }
-                            _streamSongs.value = _streamSongs.value.map {
-                                if (it.id == resolved.id) resolved else it
-                            }
-                        }
-                    } catch (_: Exception) {}
+            streamResolvers.preResolve(
+                songs = trending,
+                limit = 20,
+                staggerMs = 200,
+                attempted = preResolvedIds
+            ) { resolved ->
+                _trendingSongs.value = _trendingSongs.value.map {
+                    if (it.id == resolved.id) resolved else it
                 }
+                streamSearch.replaceVisibleSong(resolved)
             }
         }
     }
 
     private fun preResolveSearchResults() {
-        val searchResults = _streamSongs.value
+        val searchResults = streamSearch.visibleResults.value
         if (searchResults.isEmpty()) return
         preResolveJob?.cancel()
         preResolveJob = viewModelScope.launch {
             // Pre-resolve hingga 40 item hasil pencarian (Satu halaman penuh)
-            for (song in searchResults.take(40)) {
-                if (!StreamSources.needsResolution(song)) continue
-                if (!preResolvedIds.add(song.id)) continue
-                
-                delay(300) // Beri nafas untuk request utama (Play)
-                
-                launch {
-                    try {
-                        val url = withContext(Dispatchers.IO) {
-                            ytMusicRepository.resolveStreamUrl(song)
-                        }
-                        if (url != null) {
-                            val resolved = song.copy(uri = Uri.parse(url))
-                            _streamSongs.value = _streamSongs.value.map {
-                                if (it.id == resolved.id) resolved else it
-                            }
-                        }
-                    } catch (_: Exception) {}
-                }
+            streamResolvers.preResolve(
+                songs = searchResults,
+                limit = 40,
+                staggerMs = 300,
+                attempted = preResolvedIds
+            ) { resolved ->
+                streamSearch.replaceVisibleSong(resolved)
             }
         }
     }
 
     // ---- Stream Search ----
-    private val _allStreamSongs = MutableStateFlow<List<Song>>(emptyList())
-    private val _streamSongs = MutableStateFlow<List<Song>>(emptyList())
-    val streamSongs: StateFlow<List<Song>> = _streamSongs
-
-    private val _isSearchingRemote = MutableStateFlow(false)
-    val isSearchingRemote: StateFlow<Boolean> = _isSearchingRemote
-
-    private val _streamParsingFailed = MutableStateFlow(false)
-    val streamParsingFailed: StateFlow<Boolean> = _streamParsingFailed
-
-    private var searchJob: Job? = null
-
-    private val streamPageSize = 50
+    // State and behaviour live in StreamSearchController; the VM only exposes it.
+    val streamSongs: StateFlow<List<Song>> get() = streamSearch.visibleResults
+    val isSearchingRemote: StateFlow<Boolean> get() = streamSearch.isSearching
+    val streamParsingFailed: StateFlow<Boolean> get() = streamSearch.parsingFailed
 
     private val _sortMode = MutableStateFlow(0)
     val sortMode: StateFlow<Int> = _sortMode
@@ -483,7 +462,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSortMode(mode: Int) {
         _sortMode.value = mode
-        prefs.edit().putInt("sort_mode", mode).apply()
+        settingsStore.sortMode = mode
     }
 
     private fun loadPlayCounts(): Map<Long, Int> = songStore.loadPlayCounts()
@@ -506,10 +485,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun checkMonthlyRecap() {
         val now = System.currentTimeMillis()
-        val lastCheck = prefs.getLong("last_recap_check_ts", 0L)
+        val lastCheck = settingsStore.lastRecapCheckTs
         val ONE_MONTH = 30L * 24 * 60 * 60 * 1000
         if (now - lastCheck < ONE_MONTH) return
-        prefs.edit().putLong("last_recap_check_ts", now).apply()
+        settingsStore.lastRecapCheckTs = now
         computeMonthlyRecap()
     }
 
@@ -518,47 +497,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val recap = withContext(Dispatchers.IO) {
                 try {
-                    val now = System.currentTimeMillis()
-                    val monthStart = now - 30L * 24 * 60 * 60 * 1000
-                    val history = songStore.loadPlayHistory().filter { it.second >= monthStart }
-
-                    if (history.isEmpty()) return@withContext null
-
-                    val songPlayCounts = history.groupBy { it.first }.mapValues { it.value.size }
-                    val totalPlays = history.size
-
-                    val allSongs = _songs.value
-                    val playedSongs = allSongs.filter { s -> songPlayCounts.containsKey(s.id) }
-                    val monthSongs = playedSongs.map { song ->
-                        song to (songPlayCounts[song.id] ?: 0)
-                    }.sortedByDescending { it.second }
-
-                    val topSongs = monthSongs.take(5).map { it.first }
-
-                    val artistCounts = mutableMapOf<String, Int>()
-                    monthSongs.forEach { (song, count) ->
-                        val artistKey = song.artist.ifBlank { "Unknown Artist" }
-                        artistCounts[artistKey] = (artistCounts[artistKey] ?: 0) + count
-                    }
-                    val topArtists = artistCounts.entries
-                        .sortedByDescending { it.value }
-                        .take(5)
-                        .map { it.key to it.value }
-
-                    val totalMinutes = (totalPlays * 3.5).toLong()
-
-                    val tasteComment = generateTasteComment(topArtists, monthSongs)
-
-                    val monthName = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(now))
-
-                    MonthlyRecap(
-                        monthLabel = monthName,
-                        totalPlays = totalPlays,
-                        totalMinutes = totalMinutes,
-                        topSongs = topSongs,
-                        topArtists = topArtists,
-                        topGenres = emptyList(),
-                        tasteComment = tasteComment
+                    RecapBuilder.build(
+                        history = songStore.loadPlayHistory(),
+                        library = _songs.value,
+                        nowMs = System.currentTimeMillis()
                     )
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -578,7 +520,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun debugTriggerRecap() {
         val now = System.currentTimeMillis()
-        val history = songStore.loadPlayHistory().filter { it.second >= now - 30L * 24 * 60 * 60 * 1000 }
+        val history = songStore.loadPlayHistory().filter { it.second >= RecapBuilder.historyWindowStart(now) }
 
         if (history.isEmpty() || history.size < 5) {
             // Generate mock recap so the card is testable
@@ -586,7 +528,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 listOf(Song(0, "Sample Song", "Sample Artist", 240000, Uri.EMPTY))
             }
             _monthlyRecap.value = MonthlyRecap(
-                monthLabel = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(now)),
+                monthLabel = RecapBuilder.monthLabel(now),
                 totalPlays = (history.size).coerceAtLeast(5),
                 totalMinutes = 30L,
                 topSongs = mockSongs,
@@ -598,30 +540,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             computeMonthlyRecap()
         }
-    }
-
-    private fun generateTasteComment(
-        topArtists: List<Pair<String, Int>>,
-        monthSongs: List<Pair<Song, Int>>
-    ): String {
-        if (topArtists.isEmpty()) return "Start listening to discover your music taste!"
-
-        val artistNames = topArtists.take(3).map { it.first }
-        val totalSongs = monthSongs.distinctBy { it.first.id }.size
-        val topArtistName = artistNames.firstOrNull() ?: "music"
-
-        val comments = listOf(
-            "You've been vibing with $topArtistName a lot this month. Your taste is getting refined!",
-            "$topArtistName is clearly your go-to artist right now. Solid choice!",
-            "Your playlist is showing great variety with ${artistNames.joinToString(", ")}. Keep exploring!",
-            "You discovered $totalSongs different songs this month. Your music journey is on fire!",
-            "The vibes are strong this month! $topArtistName + ${artistNames.drop(1).firstOrNull() ?: "others"} = perfect combo.",
-            "Your music taste is uniquely you. Love the energy from $topArtistName!",
-            "What a month! You've been on a musical adventure with $totalSongs tracks. Respect the grind.",
-            "$topArtistName has been your soundtrack this month. Iconic taste!"
-        )
-
-        return comments[topArtists.hashCode().rem(comments.size).let { if (it < 0) it + comments.size else it }]
     }
 
     fun applySort(songs: List<Song>): List<Song> {
@@ -637,68 +555,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Fungsi khusus buat search di Tab Stream dengan sistem Debounce (Anti-lag)
-    fun searchRemoteSongs(query: String) {
-        searchJob?.cancel()
-        _streamParsingFailed.value = false
+    fun searchRemoteSongs(query: String) = streamSearch.query(query)
 
-        if (query.isBlank()) {
-            _allStreamSongs.value = emptyList()
-            _streamSongs.value = emptyList()
-            _isSearchingRemote.value = false
-            return
-        }
-
-        _isSearchingRemote.value = true
-        _allStreamSongs.value = emptyList()
-        _streamSongs.value = emptyList()
-
-        searchJob = viewModelScope.launch {
-            delay(400)
-            try {
-                // Search both YT Music and Tidal
-                val tidalResult = async { tidalRepository.searchSongs(query) }
-                
-                val ytResult = ytMusicRepository.searchSongs(query, onPartial = { newSongs ->
-                    addToStreamSongsCache(newSongs)
-                    val merged = mergeById(_allStreamSongs.value, newSongs)
-                    _allStreamSongs.value = merged
-                    _streamSongs.value = merged.take(
-                        maxOf(_streamSongs.value.size + newSongs.size, streamPageSize)
-                    )
-                })
-
-                val tidalSongs = tidalResult.await()
-                if (tidalSongs.isNotEmpty()) {
-                    addToStreamSongsCache(tidalSongs)
-                    val currentList = _allStreamSongs.value
-                    val mergedWithTidal = mergeById(currentList, tidalSongs)
-                    _allStreamSongs.value = mergedWithTidal
-                    _streamSongs.value = mergedWithTidal.take(
-                        maxOf(_streamSongs.value.size + tidalSongs.size, streamPageSize)
-                    )
-                }
-
-                if (ytResult is StreamSearchResult.ParsingFailed && tidalSongs.isEmpty()) {
-                    _streamParsingFailed.value = true
-                } else {
-                    if (ytResult is StreamSearchResult.Success) addToStreamSongsCache(ytResult.songs)
-                    // Pre-resolve search results in background
-                    preResolveSearchResults()
-                }
-            } catch (_: CancellationException) {
-                return@launch
-            } finally {
-                _isSearchingRemote.value = false
-            }
-        }
-    }
-
-    fun loadMoreStreamSongs() {
-        val all = _allStreamSongs.value
-        val current = _streamSongs.value
-        if (current.size >= all.size) return
-        _streamSongs.value = all.take(current.size + streamPageSize)
-    }
+    fun loadMoreStreamSongs() = streamSearch.loadMore()
 
     private val _playlists = MutableStateFlow(songStore.loadPlaylists())
     val playlists: StateFlow<List<Playlist>> = _playlists
@@ -789,17 +648,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private fun savePlaylistsToPrefs() {
         songStore.savePlaylists(_playlists.value)
     }
-    private val _isDarkMode = MutableStateFlow(prefs.getBoolean("is_dark_mode", true))
+    private val _isDarkMode = MutableStateFlow(settingsStore.isDarkMode)
     val isDarkMode: StateFlow<Boolean> = _isDarkMode
 
-    private val _isVoiceAssistantEnabled = MutableStateFlow(prefs.getBoolean("voice_assistant_enabled", false))
+    private val _isVoiceAssistantEnabled = MutableStateFlow(settingsStore.isVoiceAssistantEnabled)
     val isVoiceAssistantEnabled: StateFlow<Boolean> = _isVoiceAssistantEnabled
 
     fun toggleVoiceAssistant() {
         val newValue = !_isVoiceAssistantEnabled.value
         _isVoiceAssistantEnabled.value = newValue
-        prefs.edit().putBoolean("voice_assistant_enabled", newValue).apply()
-        
+        settingsStore.isVoiceAssistantEnabled = newValue
+
         if (newValue) {
             IanVoiceAssistantService.start(appContext)
         } else {
@@ -809,23 +668,23 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleDarkMode() {
         _isDarkMode.value = !_isDarkMode.value
-        prefs.edit().putBoolean("is_dark_mode", _isDarkMode.value).apply()
+        settingsStore.isDarkMode = _isDarkMode.value
     }
 
-    private val _isPillAtBottom = MutableStateFlow(prefs.getBoolean("is_pill_at_bottom", false))
+    private val _isPillAtBottom = MutableStateFlow(settingsStore.isPillAtBottom)
     val isPillAtBottom: StateFlow<Boolean> = _isPillAtBottom
 
     fun setPillAtBottom(atBottom: Boolean) {
         _isPillAtBottom.value = atBottom
-        prefs.edit().putBoolean("is_pill_at_bottom", atBottom).apply()
+        settingsStore.isPillAtBottom = atBottom
     }
 
-    private val _miniLayoutIndex = MutableStateFlow(prefs.getInt("mini_layout_index", 0))
+    private val _miniLayoutIndex = MutableStateFlow(settingsStore.miniLayoutIndex)
     val miniLayoutIndex: StateFlow<Int> = _miniLayoutIndex
 
     fun setMiniLayoutIndex(index: Int) {
         _miniLayoutIndex.value = index
-        prefs.edit().putInt("mini_layout_index", index).apply()
+        settingsStore.miniLayoutIndex = index
     }
 
     private val _showListeningPill = MutableStateFlow(false)
@@ -955,7 +814,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         _playCounts.value = loadPlayCounts()
-        _sortMode.value = prefs.getInt("sort_mode", 0)
+        _sortMode.value = settingsStore.sortMode
         loadFavoriteIds()
         
         // Load cached stream content
@@ -990,7 +849,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             ytMusicRepository = ytMusicRepository,
             streamResolvers = streamResolvers,
             getSongs = { _songs.value },
-            getAllStreamSongs = { _allStreamSongs.value },
+            getAllStreamSongs = { streamSearch.allResults.value },
             onSongPlayed = { song ->
                 if (song.isStream) addToStreamSongsCache(listOf(song))
                 playbackGateway.markAsPlayed(song.id)
@@ -1191,9 +1050,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             // 1. Resolve URL: unresolved stream songs go through the provider's resolver;
             // already-resolved URLs pass through.
             val realUrl = withContext(Dispatchers.IO) {
-                if (StreamSources.needsResolution(song)) {
-                    streamResolvers.resolve(song)
-                } else if (song.source == StreamSources.TIDAL || song.uri.toString().startsWith("tidal://")) {
+                if (StreamSources.needsResolution(song) || StreamSources.isTidalSong(song)) {
                     streamResolvers.resolve(song)
                 } else {
                     format.url

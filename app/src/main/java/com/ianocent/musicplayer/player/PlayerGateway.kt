@@ -38,6 +38,12 @@ import timber.log.Timber
  * volume fades, repeat mode, restore, prefetch, and the audio session id.
  * Callers see StateFlows plus intent-level verbs; nobody outside this module
  * touches a raw Player instance.
+ *
+ * External controllers (voice assistant, Bluetooth/Wear) may send transport
+ * commands to the session directly. That is legitimate: they are adapters at
+ * the session seam, and this module stays the single source of truth by being
+ * purely reactive to session events — every transition re-syncs state from the
+ * live item and persists it.
  */
 class PlayerGateway(
     private val context: Context,
@@ -113,6 +119,10 @@ class PlayerGateway(
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             _duration.value = getDuration()
             syncStateFromPlayer()
+            // Persist on every auto-advance so prefs never go stale; otherwise a
+            // warm reconnect (activity recreated while the service kept playing)
+            // restores an outdated "current song".
+            savePlayerState()
 
             val currentItem = player?.currentMediaItem
             if (currentItem != null && isPlaceholderUri(currentItem.localConfiguration?.uri?.toString())) {
@@ -226,7 +236,12 @@ class PlayerGateway(
         val restored = SongStore.restoreQueueState(prefs) ?: return
         _queue.value = restored.queue
         currentIndex = restored.index
-        pendingMediaId = restored.currentSongId
+        // The live session outranks persisted state. Only queue a pending id
+        // when nothing is actually playing (a true cold start); otherwise the
+        // stale persisted id would race with (and possibly clobber) reality.
+        if (player?.currentMediaItem == null) {
+            pendingMediaId = restored.currentSongId
+        }
     }
 
     /** Re-resolves the current song once the local library or caches are available. */
@@ -271,9 +286,22 @@ class PlayerGateway(
     /**
      * Consumes [pendingMediaId], resolving the active song and publishing it.
      * Returns true when a current song was established.
+     *
+     * The live session is the single authority on what is playing: a pending id
+     * loaded from persisted state can be stale (tracks auto-advanced while the
+     * activity was away), so it must never clobber a live item.
      */
     private fun applyPendingMediaId(fireOnSongPlayed: Boolean): Boolean {
         val mediaId = pendingMediaId ?: return false
+
+        player?.currentMediaItem?.let { item ->
+            resolveSongFromItem(item)?.let { liveSong ->
+                publishCurrentSong(liveSong)
+                pendingMediaId = null
+                return true
+            }
+        }
+
         var activeSong = findSongByAnyId(mediaId)
         if (activeSong == null) {
             val item = player?.currentMediaItem ?: return false
@@ -285,33 +313,41 @@ class PlayerGateway(
         return true
     }
 
-    /** Live-session variant of restore: matches the playing item even without a pending id. */
+    /**
+     * Live-session variant of restore. Always consults the player first; an
+     * already-published song only short-circuits when it actually matches the
+     * live media id, never merely because one exists.
+     */
     private fun restoreCurrentFromPlayer(fireOnSongPlayed: Boolean): Boolean {
-        if (_currentSong.value != null) return true
         val item = player?.currentMediaItem ?: return false
         val mediaIdStr = item.mediaId
-        val song = _queue.value.find { it.id.toString() == mediaIdStr || it.remoteId == mediaIdStr }
-            ?: getSongs().find { it.id.toString() == mediaIdStr }
-            ?: getAllStreamSongs().find { it.remoteId == mediaIdStr }
-            ?: songFromMediaItem(item, mediaIdStr.hashCode().toLong())
-            ?: return false
+        val published = _currentSong.value
+        if (published != null &&
+            (published.id.toString() == mediaIdStr || published.remoteId == mediaIdStr)
+        ) {
+            return true // already in sync with the session
+        }
+        val song = resolveSongFromItem(item) ?: return false
         publishCurrentSong(song)
         if (fireOnSongPlayed) onSongPlayed(song)
         return true
+    }
+
+    /** Matches a live [MediaItem] against queue, library, and stream cache by id or remote id. */
+    private fun resolveSongFromItem(item: MediaItem): Song? {
+        val mediaIdStr = item.mediaId
+        return _queue.value.find { it.id.toString() == mediaIdStr || it.remoteId == mediaIdStr }
+            ?: getSongs().find { it.id.toString() == mediaIdStr }
+            ?: getAllStreamSongs().find { it.remoteId == mediaIdStr }
+            ?: songFromMediaItem(item, mediaIdStr.hashCode().toLong())
     }
 
     private fun syncStateFromPlayer() {
         try {
             val p = player ?: return
             val item = p.currentMediaItem ?: return
-            val mediaIdStr = item.mediaId
 
-            // Match by numeric id or remote id (YouTube video id).
-            val song = _queue.value.find { it.id.toString() == mediaIdStr || it.remoteId == mediaIdStr }
-                ?: getSongs().find { it.id.toString() == mediaIdStr }
-                ?: getAllStreamSongs().find { it.remoteId == mediaIdStr }
-                ?: songFromMediaItem(item, mediaIdStr.hashCode().toLong())
-
+            val song = resolveSongFromItem(item)
             if (song != null) {
                 publishCurrentSong(song)
                 onSongPlayed(song)

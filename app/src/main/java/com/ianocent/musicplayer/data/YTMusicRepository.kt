@@ -346,9 +346,13 @@ class YTMusicRepository(context: Context) {
         val last = runs.optJSONObject(runs.length() - 1)?.optString("text", "") ?: return 0L
         if (!Regex("^\\d+(:\\d{2})+$").matches(last)) return 0L
 
-        val parts = last.split(":")
+        return durationTextToMs(last)
+    }
+
+    /** Parses "h:mm:ss" / "m:ss" duration text into milliseconds. */
+    private fun durationTextToMs(text: String): Long {
         var total = 0L
-        for (part in parts) {
+        for (part in text.split(":")) {
             total = total * 60 + (part.toLongOrNull() ?: 0)
         }
         return total * 1000L
@@ -376,26 +380,6 @@ class YTMusicRepository(context: Context) {
             }
         }
         return "Unknown Album"
-    }
-
-    private fun parseThumbnail(item: JSONObject): String {
-        val thumbnails = item.optJSONObject("thumbnail")
-            ?.optJSONObject("musicThumbnailRenderer")
-            ?.optJSONObject("thumbnail")
-            ?.optJSONArray("thumbnails")
-            ?: return ""
-
-        var best = ""
-        var bestW = 0
-        for (i in 0 until thumbnails.length()) {
-            val t = thumbnails.optJSONObject(i) ?: continue
-            val w = t.optInt("width", 0)
-            if (w > bestW) {
-                bestW = w
-                best = t.optString("url", "")
-            }
-        }
-        return best
     }
 
     private suspend fun fetchViaInvidious(videoId: String): String? {
@@ -629,7 +613,7 @@ class YTMusicRepository(context: Context) {
                         artist = parseArtist(item),
                         album = parseAlbum(item),
                         duration = duration,
-                        uri = Uri.parse("ytmusic://placeholder/$videoId"),
+                        uri = StreamSources.placeholderUri(videoId),
                     source = StreamSources.YOUTUBE,
                         isStream = true,
                         remoteArtUrl = parseThumbnail(item),
@@ -700,7 +684,7 @@ class YTMusicRepository(context: Context) {
                         artist = artist,
                         album = "YouTube",
                         duration = duration,
-                        uri = Uri.parse("ytmusic://placeholder/$videoId"),
+                        uri = StreamSources.placeholderUri(videoId),
                     source = StreamSources.YOUTUBE,
                         isStream = true,
                         remoteArtUrl = parseVideoThumbnail(item),
@@ -783,22 +767,25 @@ class YTMusicRepository(context: Context) {
             ?: "Unknown Artist"
     }
 
-    private fun parseVideoDuration(item: JSONObject): Long {
-        val text = item.optJSONObject("lengthText")
-            ?.optString("simpleText", "0:00")
-            ?: "0:00"
-        val parts = text.split(":")
-        var total = 0L
-        for (part in parts) {
-            total = total * 60 + (part.toLongOrNull() ?: 0)
-        }
-        return total * 1000L
-    }
+    private fun parseVideoDuration(item: JSONObject): Long =
+        durationTextToMs(
+            item.optJSONObject("lengthText")?.optString("simpleText", "0:00") ?: "0:00"
+        )
 
-    private fun parseVideoThumbnail(item: JSONObject): String {
-        val thumbnails = item.optJSONObject("thumbnail")
-            ?.optJSONArray("thumbnails")
-            ?: return ""
+    private fun parseThumbnail(item: JSONObject): String =
+        bestThumbnailUrl(
+            item.optJSONObject("thumbnail")
+                ?.optJSONObject("musicThumbnailRenderer")
+                ?.optJSONObject("thumbnail")
+                ?.optJSONArray("thumbnails")
+        )
+
+    private fun parseVideoThumbnail(item: JSONObject): String =
+        bestThumbnailUrl(item.optJSONObject("thumbnail")?.optJSONArray("thumbnails"))
+
+    /** Picks the highest-width thumbnail URL from any thumbnails array shape. */
+    private fun bestThumbnailUrl(thumbnails: JSONArray?): String {
+        if (thumbnails == null) return ""
         var best = ""
         var bestW = 0
         for (i in 0 until thumbnails.length()) {
@@ -867,7 +854,7 @@ class YTMusicRepository(context: Context) {
                     artist = artist,
                     album = "Related",
                     duration = 0L,
-                    uri = Uri.parse("ytmusic://placeholder/$vId"),
+                    uri = StreamSources.placeholderUri(vId),
                     source = StreamSources.YOUTUBE,
                     isStream = true,
                     remoteArtUrl = item.optJSONObject("thumbnail")?.optJSONArray("thumbnails")?.optJSONObject(0)?.optString("url"),
@@ -955,7 +942,7 @@ class YTMusicRepository(context: Context) {
     suspend fun resolveStreamUrl(song: Song, highPriority: Boolean = false): String? = withContext(Dispatchers.IO) {
         val videoId = song.remoteId ?: return@withContext null
 
-        if (!song.uri.toString().startsWith("ytmusic://placeholder/")) {
+        if (!song.uri.toString().startsWith(StreamSources.PLACEHOLDER_PREFIX)) {
             // Already has real URL
             return@withContext song.uri.toString()
         }
@@ -1074,7 +1061,7 @@ class YTMusicRepository(context: Context) {
                                 artist = parseArtist(item),
                                 album = parseAlbum(item),
                                 duration = duration,
-                                uri = Uri.parse("ytmusic://placeholder/$videoId"),
+                                uri = StreamSources.placeholderUri(videoId),
                     source = StreamSources.YOUTUBE,
                                 isStream = true,
                                 remoteArtUrl = parseThumbnail(item),

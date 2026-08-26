@@ -11,8 +11,8 @@ import android.os.Build
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import timber.log.Timber
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -85,7 +85,9 @@ class DownloadCompletionReceiver(
                 cursor.close()
                 
                 if (status == DownloadManager.STATUS_SUCCESSFUL && !filePath.isNullOrEmpty()) {
-                    GlobalScope.launch(Dispatchers.IO) {
+                    // Scoped to this unit of work (bounded by pendingResult.finish()
+                    // in finally), not to the application lifetime.
+                    CoroutineScope(Dispatchers.IO).launch {
                         try {
                             // Beri delay sedikit agar DownloadManager selesai melepas file lock
                             delay(500)

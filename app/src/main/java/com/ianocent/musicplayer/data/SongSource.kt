@@ -1,6 +1,10 @@
 package com.ianocent.musicplayer.data
 
+import android.net.Uri
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -19,12 +23,25 @@ object StreamSources {
     const val PLACEHOLDER_PREFIX = "ytmusic://placeholder/"
 
     /**
+     * URI scheme emitted for Tidal search results before an authenticated
+     * stream URL exists. Interpretation stays here.
+     */
+    const val TIDAL_PLACEHOLDER_PREFIX = "tidal://"
+
+    /** Builds the canonical unresolved URI for a YouTube video id. */
+    fun placeholderUri(videoId: String): Uri = Uri.parse("$PLACEHOLDER_PREFIX$videoId")
+
+    /**
      * True when the song must go through stream resolution before playback or
      * download. Legacy persisted songs carry no [Song.source]; their placeholder
      * URI identifies them.
      */
     fun needsResolution(song: Song): Boolean =
         song.isStream && song.uri.toString().startsWith(PLACEHOLDER_PREFIX)
+
+    /** True when the song belongs to the Tidal provider by tag or placeholder scheme. */
+    fun isTidalSong(song: Song): Boolean =
+        song.source == TIDAL || song.uri.toString().startsWith(TIDAL_PLACEHOLDER_PREFIX)
 }
 
 /**
@@ -48,11 +65,11 @@ class YouTubeStreamResolver(
 }
 
 /**
- * Tidal tracks need auth for direct stream URLs; without it the adapter falls
- * back to searching and resolving the same track on YouTube.
+ * Tidal tracks require auth for direct stream URLs, which the app does not
+ * hold; the adapter therefore resolves the same track on YouTube. It keeps its
+ * own [sourceId] so Tidal-tagged songs route here instead of the default.
  */
 class TidalStreamResolver(
-    private val tidalRepository: TidalRepository,
     private val youtubeFallback: StreamResolver,
     private val youtubeSearch: suspend (String) -> List<Song>
 ) : StreamResolver {
@@ -79,5 +96,37 @@ class StreamResolvers(adapters: List<StreamResolver>) {
 
     suspend fun resolve(song: Song): String? = withContext(Dispatchers.IO) {
         resolverFor(song)?.resolveStreamUrl(song)
+    }
+
+    /**
+     * The one eager-resolution policy, shared by every caller (trending,
+     * search results, prefetch): filter to unresolved songs, dedupe against
+     * [attempted], stagger requests so the network isn't flooded, resolve each
+     * through the port, and hand the resolved [Song] back via [onResolved].
+     * Suspends until every launched resolution finishes.
+     */
+    suspend fun preResolve(
+        songs: List<Song>,
+        limit: Int,
+        staggerMs: Long,
+        attempted: MutableSet<Long>,
+        onResolved: suspend (Song) -> Unit
+    ) = coroutineScope {
+        for (song in songs.take(limit)) {
+            if (!StreamSources.needsResolution(song)) continue
+            if (!attempted.add(song.id)) continue
+
+            delay(staggerMs)
+
+            launch {
+                try {
+                    val url = resolve(song)
+                    if (url != null && !StreamSources.needsResolution(song.copy(uri = Uri.parse(url)))) {
+                        onResolved(song.copy(uri = Uri.parse(url)))
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        }
     }
 }

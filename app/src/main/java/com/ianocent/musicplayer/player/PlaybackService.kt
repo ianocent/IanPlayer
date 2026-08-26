@@ -151,6 +151,9 @@ class PlaybackService : MediaSessionService() {
 
     companion object {
         const val CHANNEL_ID = "ianplayer_playback"
+
+        /** Written by the session owner, read cross-module as a fallback — must be volatile. */
+        @Volatile
         var audioSessionId: Int = 0
     }
 }

@@ -49,7 +49,7 @@ class TidalRepository {
                     artist = artist,
                     album = album,
                     duration = duration,
-                    uri = Uri.parse("tidal://track/$id"),
+                    uri = Uri.parse(StreamSources.TIDAL_PLACEHOLDER_PREFIX + "track/$id"),
                     isStream = true,
                     remoteArtUrl = artUrl,
                     remoteId = id.toString(),

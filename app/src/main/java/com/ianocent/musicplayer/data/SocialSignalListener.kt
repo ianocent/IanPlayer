@@ -30,7 +30,7 @@ import java.util.regex.Pattern
 class SocialSignalListener : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        if (!prefs().getBoolean("social_signals_enabled", false)) return
+        if (!SettingsStore.from(this).isSocialSignalsEnabled) return
         val pkg = sbn.packageName
         if (pkg !in ALLOWED_PACKAGES) return
         val notification = sbn.notification ?: return
@@ -76,9 +76,13 @@ class SocialSignalListener : NotificationListenerService() {
         return null
     }
 
+    // Clock seam: the system instantiates this service itself, so tests subclass
+    // and override instead of injecting a constructor dependency.
+    protected open fun nowMs(): Long = System.currentTimeMillis()
+
     private fun storeSignal(signal: String) {
         val prefs = prefs()
-        val now = System.currentTimeMillis()
+        val now = nowMs()
         val cutoff = now - SongStore.SOCIAL_SIGNAL_WINDOW_MS
         val arr = SongStore.readSocialSignals(prefs).filter { it.second > cutoff }.toMutableList()
         // Dedupe: skip if the same signal was seen within the last hour.

@@ -49,6 +49,14 @@ android {
         buildConfigField("String", "YTMUSIC_ANDROID_KEY", "\"${localProps["YTMUSIC_ANDROID_KEY"] ?: ""}\"")
     }
 
+    testOptions {
+        unitTests {
+            // Domain objects carry android.net.Uri; Robolectric supplies real
+            // implementations for the modules under test.
+            isIncludeAndroidResources = true
+        }
+    }
+
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
@@ -86,6 +94,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)

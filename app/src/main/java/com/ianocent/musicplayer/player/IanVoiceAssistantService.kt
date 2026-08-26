@@ -138,6 +138,9 @@ class IanVoiceAssistantService : Service() {
     }
 
     private fun setupMediaController() {
+        // This controller is a second adapter at the session seam (the first is
+        // PlayerGateway's). Transport verbs sent here are observed by the
+        // gateway through session events, so playback state never diverges.
         val sessionToken = SessionToken(this, ComponentName(this, PlaybackService::class.java))
         controllerFuture = MediaController.Builder(this, sessionToken).buildAsync()
         controllerFuture?.addListener({

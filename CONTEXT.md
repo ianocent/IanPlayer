@@ -20,6 +20,9 @@ Domain language for the codebase. Use these terms in code, reviews, and architec
 - **StreamSource** — port for "turn this Song into something audible". Two adapters: YouTubeSource, TidalSource. The placeholder URI scheme is private to this seam.
 - **ArtLoader** — album art loading via Coil: caching, dedup, high-res URL rewriting. One call per call site.
 - **NavState** — navigation state machine for tabs, detail pages, and back ordering. The tab↔page encoding invariant is implementation detail.
+- **RecapBuilder** — pure recap computation: play history window in, MonthlyRecap out. No Android dependencies; the ViewModel only fetches history and publishes.
+- **SettingsStore** — single owner of user-facing settings keys and defaults (dark mode, voice assistant, social signals opt-in, pill position, mini layout, sort mode, recap check timestamp). Receivers and listener services read through `SettingsStore.from(context)`; no string literals elsewhere.
+- **StreamSearchController** — the stream-search module: owns debounce, dual-provider fan-out (YouTube partial stream + Tidal), result merging, and visible-page slicing. The ViewModel exposes its StateFlows; eager resolution is triggered via a settle callback.
 
 ## Decisions recorded elsewhere
 

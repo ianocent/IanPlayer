@@ -40,8 +40,12 @@ interface LyricCacheDao {
 }
 
 class LyricRepository(
-    private val lyricCache: LyricCacheDao? = null
+    private val lyricCache: LyricCacheDao? = null,
+    private val nowMs: () -> Long = System::currentTimeMillis
 ) {
+
+    /** Cache entries older than this are re-fetched. */
+    private val cacheTtlMs = 7L * 24 * 60 * 60 * 1000
 
     /**
      * Fetches the best available lyric for a song: synced lines when any source
@@ -61,7 +65,7 @@ class LyricRepository(
         
         val cached = lyricCache?.getByKey(key)
         cached?.syncedJson?.let { json ->
-            val isExpired = System.currentTimeMillis() - cached.cachedAtMs > 7L * 24 * 60 * 60 * 1000
+            val isExpired = nowMs() - cached.cachedAtMs > cacheTtlMs
             if (json == "NONE") {
                 if (!isExpired) return null
             } else {
@@ -111,8 +115,8 @@ class LyricRepository(
         val key = cacheKey(title, artist)
         
         val cached = lyricCache?.getByKey(key)
-        cached?.plainText?.let { 
-            val isExpired = System.currentTimeMillis() - cached.cachedAtMs > 7L * 24 * 60 * 60 * 1000
+        cached?.plainText?.let {
+            val isExpired = nowMs() - cached.cachedAtMs > cacheTtlMs
             if (it == "NONE") {
                 if (!isExpired) return null
             } else if (it.isNotBlank()) {
@@ -189,14 +193,14 @@ class LyricRepository(
                 lines.forEach { line -> put(JSONObject().put("t", line.timeMs).put("s", line.text)) }
             }.toString()
         }
-        lyricCache.upsert(LyricCacheEntry(key, json, existing?.plainText, System.currentTimeMillis()))
+        lyricCache.upsert(LyricCacheEntry(key, json, existing?.plainText, nowMs()))
     }
 
     private suspend fun savePlain(key: String, text: String?) {
         lyricCache ?: return
         val existing = lyricCache.getByKey(key)
         val plain = text ?: "NONE"
-        lyricCache.upsert(LyricCacheEntry(key, existing?.syncedJson, plain, System.currentTimeMillis()))
+        lyricCache.upsert(LyricCacheEntry(key, existing?.syncedJson, plain, nowMs()))
     }
 
     private fun parseSyncedJson(json: String): List<LyricLine>? {

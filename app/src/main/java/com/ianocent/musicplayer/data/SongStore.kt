@@ -1,6 +1,7 @@
 package com.ianocent.musicplayer.data
 
 import android.content.SharedPreferences
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,7 +21,8 @@ import org.json.JSONObject
  */
 class SongStore(
     private val prefs: SharedPreferences,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
 
     // == Stream songs cache ==
@@ -51,7 +53,7 @@ class SongStore(
 
     private fun persistStreamSongs() {
         val snapshot = _streamCache.value
-        scope.launch(Dispatchers.IO) {
+        scope.launch(ioDispatcher) {
             val arr = JSONArray()
             snapshot.forEach { (_, song) -> arr.put(songToJson(song)) }
             prefs.edit().putString(KEY_STREAM_SONGS_CACHE, arr.toString()).apply()
@@ -78,7 +80,7 @@ class SongStore(
 
     fun saveCachedSongIds(key: String, songs: List<Song>) {
         addToStreamSongsCache(songs)
-        scope.launch(Dispatchers.IO) {
+        scope.launch(ioDispatcher) {
             val arr = JSONArray()
             songs.forEach { arr.put(it.id) }
             prefs.edit().putString(key, arr.toString()).apply()
@@ -122,7 +124,7 @@ class SongStore(
     }
 
     fun savePlayCounts(counts: Map<Long, Int>) {
-        scope.launch(Dispatchers.IO) {
+        scope.launch(ioDispatcher) {
             val obj = JSONObject()
             counts.forEach { (id, count) -> obj.put(id.toString(), count) }
             prefs.edit().putString(KEY_PLAY_COUNTS, obj.toString()).apply()
@@ -153,7 +155,7 @@ class SongStore(
     }
 
     private fun savePlayHistoryInternal(history: List<Pair<Long, Long>>) {
-        scope.launch(Dispatchers.IO) {
+        scope.launch(ioDispatcher) {
             val arr = JSONArray()
             history.forEach { (id, ts) ->
                 arr.put(JSONObject().put("id", id).put("ts", ts))
@@ -182,7 +184,7 @@ class SongStore(
     }
 
     fun savePlaylists(playlists: List<Playlist>) {
-        scope.launch(Dispatchers.IO) {
+        scope.launch(ioDispatcher) {
             val jsonArray = JSONArray()
             playlists.forEach { playlist ->
                 val obj = JSONObject()
