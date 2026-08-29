@@ -64,11 +64,10 @@ class YTMusicRepository(context: Context) {
         private const val BASE = "https://www.youtube.com/youtubei/v1"
         private const val UA_WEB = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
         private const val UA_ANDROID = "com.google.android.youtube/19.47.53 (Linux; U; Android 14; en_US) gzip"
+        private const val UA_TV = "Mozilla/5.0 (SMART-TV; Linux; Tizen 2.4.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/2.4 Chrome/79.0.3945.130 TV Safari/538.1"
 
-        private val invidiousInstances = listOf(
-            "https://inv.nadeko.net",
-            "https://yewtu.be"
-        )
+        // TV_EMBEDDED often returns 256kbps opus without PoToken requirement
+        private val TV_KEY = WEB_KEY
 
         // Shared across the app: caches the WebView-based BotGuard session so we don't pay the
         // ~2-5s cold-start cost on every song, only when the session (visitorData) changes.
@@ -382,35 +381,6 @@ class YTMusicRepository(context: Context) {
         return "Unknown Album"
     }
 
-    private suspend fun fetchViaInvidious(videoId: String): String? {
-        for (instance in invidiousInstances) {
-            try {
-                val raw = kotlinx.coroutines.withTimeoutOrNull(3000L) {
-                    fastGet(URL("$instance/api/v1/videos/$videoId"))
-                } ?: continue
-                val json = JSONObject(raw)
-
-                val formats = json.optJSONArray("adaptiveFormats")
-                    ?: json.optJSONArray("formatStreams")
-                    ?: continue
-
-                for (j in 0 until formats.length()) {
-                    val fmt = formats.getJSONObject(j)
-                    val type = fmt.optString("type", fmt.optString("mimeType", ""))
-                    if (!type.startsWith("audio/")) continue
-                    val audioUrl = fmt.optString("url", null)
-                    if (!audioUrl.isNullOrBlank()) {
-                        Timber.d("YTMusicRepo Invidious $instance -> audio for $videoId")
-                        return audioUrl
-                    }
-                }
-            } catch (e: Exception) {
-                Timber.w("YTMusicRepo Invidious $instance failed: ${e.message}")
-            }
-        }
-        return null
-    }
-
     private suspend fun tryPlayerContext(
         videoId: String,
         ctx: JSONObject,
@@ -469,23 +439,71 @@ class YTMusicRepository(context: Context) {
             ?.optJSONArray("adaptiveFormats")
             ?: return null
 
-        for (j in 0 until formats.length()) {
-            val fmt = formats.getJSONObject(j)
-            val mime = fmt.optString("mimeType", "")
-            if (!mime.startsWith("audio/")) continue
-            val url = extractAudioUrl(fmt, videoId) ?: continue
-            return if (!streamingDataPoToken.isNullOrBlank()) "$url&pot=$streamingDataPoToken" else url
-        }
-        return null
+        // Score and pick best format: opus > mp4a, higher bitrate, audioQuality enum
+        val bestFormat = (0 until formats.length())
+            .mapNotNull { i ->
+                val fmt = formats.getJSONObject(i)
+                val mime = fmt.optString("mimeType", "")
+                if (!mime.startsWith("audio/")) return@mapNotNull null
+                val bitrate = fmt.optInt("bitrate", 0)
+                val audioQuality = fmt.optString("audioQuality", "AUDIO_QUALITY_LOW")
+                val isOpus = mime.contains("opus")
+                val qualityScore = when {
+                    isOpus && bitrate >= 250000 -> 4000 + bitrate
+                    isOpus -> 3000 + bitrate
+                    bitrate >= 250000 -> 2000 + bitrate
+                    else -> bitrate
+                }
+                // Boost for HIGH/MEDIUM quality labels
+                val qualityBoost = when (audioQuality) {
+                    "AUDIO_QUALITY_HIGH" -> 500
+                    "AUDIO_QUALITY_MEDIUM" -> 200
+                    else -> 0
+                }
+                fmt to (qualityScore + qualityBoost)
+            }
+            .maxByOrNull { it.second }
+            ?: return null
+
+        val url = extractAudioUrl(bestFormat.first, videoId) ?: return null
+        return if (!streamingDataPoToken.isNullOrBlank()) "$url&pot=$streamingDataPoToken" else url
     }
 
     private suspend fun fetchViaInnerTube(videoId: String): String? {
-        // WEB_REMIX + real PoToken is now the primary path: it's the only client whose
-        // attestation (BotGuard, via zemer-cipher's WebView) we can actually satisfy.
+        // 1. WEB_REMIX + PoToken (primary - highest quality with PoToken)
         tryPlayerContext(
             videoId, clientContext(), WEB_KEY, UA_WEB, "https://music.youtube.com", usePoToken = true
         )?.let { return it }
 
+        // 2. TV_EMBEDDED (often 256kbps opus, no PoToken needed)
+        val tvContext = JSONObject().apply {
+            put("client", JSONObject().apply {
+                put("clientName", "TV_EMBEDDED")
+                put("clientVersion", "2.0")
+                put("hl", "en")
+                put("gl", "US")
+                visitorData?.let { put("visitorData", it) }
+            })
+        }
+        tryPlayerContext(videoId, tvContext, TV_KEY, UA_TV, "https://www.youtube.com", usePoToken = false)?.let { return it }
+
+        // 3. ANDROID_MUSIC (music-optimized client, may need PoToken)
+        val androidMusicContext = JSONObject().apply {
+            put("client", JSONObject().apply {
+                put("clientName", "ANDROID_MUSIC")
+                put("clientVersion", "5.03.51")
+                put("androidSdkVersion", 34)
+                put("osName", "Android")
+                put("osVersion", "14")
+                put("platform", "MOBILE")
+                put("hl", "en")
+                put("gl", "US")
+                visitorData?.let { put("visitorData", it) }
+            })
+        }
+        tryPlayerContext(videoId, androidMusicContext, ANDROID_KEY, UA_ANDROID, "https://music.youtube.com", usePoToken = true)?.let { return it }
+
+        // 4. WEB + PoToken (fallback)
         val webContext = JSONObject().apply {
             put("client", JSONObject().apply {
                 put("clientName", "WEB")
@@ -495,12 +513,9 @@ class YTMusicRepository(context: Context) {
                 visitorData?.let { put("visitorData", it) }
             })
         }
-        tryPlayerContext(
-            videoId, webContext, WEB_KEY, UA_WEB, "https://www.youtube.com", usePoToken = true
-        )?.let { return it }
+        tryPlayerContext(videoId, webContext, WEB_KEY, UA_WEB, "https://www.youtube.com", usePoToken = true)?.let { return it }
 
-        // Legacy fallbacks kept for cases where BotGuard/WebView is unavailable on-device
-        // (e.g. WebView disabled) — these rarely succeed anymore without PoToken.
+        // 5. Legacy ANDROID/IOS (rarely work without PoToken)
         val androidContext = JSONObject().apply {
             put("client", JSONObject().apply {
                 put("clientName", "ANDROID")
@@ -971,14 +986,8 @@ class YTMusicRepository(context: Context) {
                 playerSemaphore.acquire()
             }
             
-            // Coba InnerTube dulu karena lebih stabil dengan PoToken
+            // Coba InnerTube dengan multiple clients (WEB_REMIX, TV_EMBEDDED, ANDROID_MUSIC, dll)
             var audioUrl = fetchViaInnerTube(videoId)
-            
-            // Kalau gagal, baru fallback ke Invidious
-            if (audioUrl == null) {
-                Timber.d("YTMusicRepo InnerTube failed, trying Invidious for: ${song.title}")
-                audioUrl = fetchViaInvidious(videoId)
-            }
 
             if (audioUrl != null) {
                 streamUrlCache[videoId] = audioUrl
