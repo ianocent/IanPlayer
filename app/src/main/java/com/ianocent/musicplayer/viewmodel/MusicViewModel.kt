@@ -16,6 +16,7 @@ import com.ianocent.musicplayer.data.AudioFormat
 import com.ianocent.musicplayer.data.LyricLine
 import com.ianocent.musicplayer.data.LyricRepository
 import com.ianocent.musicplayer.data.LyricResult
+import com.ianocent.musicplayer.data.LyricSource
 import com.ianocent.musicplayer.data.MonthlyRecap
 import com.ianocent.musicplayer.data.MusicRepository
 import com.ianocent.musicplayer.data.Song
@@ -758,6 +759,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _isDownloading = MutableStateFlow(false)
     val isDownloading: StateFlow<Boolean> = _isDownloading
 
+    private val _isDownloaded = MutableStateFlow(false)
+    val isDownloaded: StateFlow<Boolean> = _isDownloaded
+
     private val _monthlyRecap = MutableStateFlow<MonthlyRecap?>(null)
     val monthlyRecap: StateFlow<MonthlyRecap?> = _monthlyRecap
 
@@ -946,15 +950,54 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _plainLyric = MutableStateFlow<String?>(null)
     val plainLyric: StateFlow<String?> = _plainLyric
 
+    private val _lyricSource = MutableStateFlow<LyricSource>(LyricSource.UNKNOWN)
+    val lyricSource: StateFlow<LyricSource> = _lyricSource
+
     private fun loadLyric(song: Song) {
         _syncedLyric.value = null
         _plainLyric.value = null
+        _lyricSource.value = LyricSource.UNKNOWN
         _isLyricLoading.value = true
         viewModelScope.launch {
             when (val result = withContext(Dispatchers.IO) { lyricRepository.fetchLyric(song) }) {
-                is LyricResult.Synced -> _syncedLyric.value = result.lines
-                is LyricResult.Plain -> _plainLyric.value = result.text
+                is LyricResult.Synced -> {
+                    _syncedLyric.value = result.lines
+                    _lyricSource.value = result.source
+                }
+                is LyricResult.Plain -> {
+                    _plainLyric.value = result.text
+                    _lyricSource.value = result.source
+                }
                 LyricResult.None -> {}
+            }
+            _isLyricLoading.value = false
+        }
+    }
+
+    fun cycleLyricSource(song: Song) {
+        _isLyricLoading.value = true
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                lyricRepository.cycleLyricSource(song, _lyricSource.value)
+            }
+            result?.let { (lyricResult, source) ->
+                when (lyricResult) {
+                    is LyricResult.Synced -> {
+                        _syncedLyric.value = lyricResult.lines
+                        _plainLyric.value = null
+                        _lyricSource.value = source
+                    }
+                    is LyricResult.Plain -> {
+                        _plainLyric.value = lyricResult.text
+                        _syncedLyric.value = null
+                        _lyricSource.value = source
+                    }
+                    LyricResult.None -> {
+                        _lyricSource.value = LyricSource.UNKNOWN
+                    }
+                }
+            } ?: run {
+                _lyricSource.value = LyricSource.UNKNOWN
             }
             _isLyricLoading.value = false
         }
@@ -1033,12 +1076,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val info = _updateInfo.value ?: return
         val context = getApplication<android.app.Application>()
         _isDownloading.value = true
+        _isDownloaded.value = false
 
         val downloadId = UpdateManager.startDownload(context, info)
         downloadReceiver = UpdateManager.registerDownloadReceiver(context, downloadId) {
             _isDownloading.value = false
-            UpdateManager.installApk(context)
+            _isDownloaded.value = true
         }
+    }
+
+    fun installUpdate() {
+        val context = getApplication<android.app.Application>()
+        UpdateManager.installApk(context)
+        _isDownloaded.value = false
+        _isUpdateAvailable.value = false
+        _updateInfo.value = null
     }
 
     fun getAudioFormats(song: Song, onResult: (List<AudioFormat>) -> Unit) =

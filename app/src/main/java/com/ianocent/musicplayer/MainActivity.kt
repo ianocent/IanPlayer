@@ -3,6 +3,7 @@ package com.ianocent.musicplayer
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -2030,6 +2031,10 @@ fun PlaylistDetailView(
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
     var showCardSheet by remember { mutableStateOf(false) }
+    var showSongCardSheet by remember { mutableStateOf(false) }
+    var songArtLowRes by remember { mutableStateOf<Bitmap?>(null) }
+    var songArtHighRes by remember { mutableStateOf<Bitmap?>(null) }
+    var swipeDeleteSong by remember { mutableStateOf<com.ianocent.musicplayer.data.Song?>(null) }
 
     val exportContext = androidx.compose.ui.platform.LocalContext.current
     val exportLauncher = rememberLauncherForActivityResult(
@@ -2065,6 +2070,15 @@ fun PlaylistDetailView(
             viewModel.savePlaylistOrder(playlist, newIds)
         }
     )
+
+    LaunchedEffect(Unit) {
+        // Load low-res artwork for all playlist songs
+        playlistSongs.forEach { song ->
+            viewModel.getCachedArt(song) { bitmap ->
+                // Store in a map or just let the SongRow handle it
+            }
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -2143,55 +2157,168 @@ fun PlaylistDetailView(
                         contentPadding = PaddingValues(bottom = 120.dp, end = 20.dp)
                     ) {
                         items(playlistSongs, key = { it.id }) { song ->
+                            val density = LocalDensity.current
+                            val swipeThresholdPx = with(density) { 72.dp.toPx() }
+                            val maxSwipePx = with(density) { 88.dp.toPx() }
+
+                            var offsetX by remember { mutableStateOf(0f) }
+                            var isSwipedOpen by remember { mutableStateOf(false) }
+
+                            val animatedOffsetX by animateFloatAsState(
+                                targetValue = offsetX,
+                                animationSpec = spring(dampingRatio = 0.8f, stiffness = 400f),
+                                label = "swipe_offset"
+                            )
+                            val revealProgress = (offsetX / swipeThresholdPx).coerceIn(0f, 1f)
+                            val revealProgressRight = (-offsetX / swipeThresholdPx).coerceIn(0f, 1f)
+
                             ReorderableItem(reorderableState, key = song.id) { isDragging ->
                                 val elevation by animateDpAsState(
                                     if (isDragging) 8.dp else 0.dp,
                                     label = "drag_elevation"
                                 )
-                                Card(
+                                Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 4.dp)
-                                        .shadow(elevation, RoundedCornerShape(12.dp)),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
-                                            alpha = 0.3f
-                                        )
-                                    ),
-                                    shape = RoundedCornerShape(12.dp)
+                                        .clip(RoundedCornerShape(12.dp))
                                 ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
+                                    // Right swipe (negative) -> Delete
+                                    if (offsetX < -4f) {
                                         Box(
                                             modifier = Modifier
-                                                .size(24.dp)
-                                                .clip(CircleShape)
-                                                .background(adaptiveColor.copy(alpha = 0.2f))
-                                                .draggableHandle(),
+                                                .align(Alignment.CenterEnd)
+                                                .padding(end = 16.dp)
+                                                .size(40.dp)
+                                                .graphicsLayer {
+                                                    alpha = revealProgressRight
+                                                    scaleX = 0.6f + 0.4f * revealProgressRight
+                                                    scaleY = 0.6f + 0.4f * revealProgressRight
+                                                }
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(Color.Red.copy(alpha = 0.2f))
+                                                .clickable(enabled = isSwipedOpen) {
+                                                    swipeDeleteSong = song
+                                                },
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Icon(
-                                                Icons.Rounded.DragHandle,
-                                                contentDescription = "Drag",
-                                                tint = adaptiveColor,
-                                                modifier = Modifier.size(16.dp)
-                                            )
+                                            Icon(Icons.Rounded.Delete, "Delete", tint = Color.Red, modifier = Modifier.size(24.dp))
                                         }
-                                        Spacer(Modifier.width(8.dp))
-                                        SongRow(
-                                            song = song,
-                                            viewModel = viewModel,
-                                            customOnClick = {
-                                                viewModel.setQueue(
-                                                    playlistSongs,
-                                                    startSong = song
+                                    }
+
+                                    // Left swipe -> Song Card
+                                    if (offsetX > 4f) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.CenterStart)
+                                                .padding(start = 16.dp)
+                                                .size(40.dp)
+                                                .graphicsLayer {
+                                                    alpha = revealProgress
+                                                    scaleX = 0.6f + 0.4f * revealProgress
+                                                    scaleY = 0.6f + 0.4f * revealProgress
+                                                }
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(adaptiveColor.copy(alpha = 0.2f))
+                                                .clickable(enabled = isSwipedOpen) {
+                                                    showSongCardSheet = true
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(Icons.Rounded.Photo, "Song Card", tint = adaptiveColor, modifier = Modifier.size(24.dp))
+                                        }
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .offset { IntOffset(animatedOffsetX.roundToInt(), 0) }
+                                            .fillMaxWidth()
+                                            .pointerInput(song.id) {
+                                                detectHorizontalDragGestures(
+                                                    onDragEnd = {
+                                                        offsetX = if (offsetX <= -swipeThresholdPx) {
+                                                            isSwipedOpen = true
+                                                            -swipeThresholdPx
+                                                        } else if (offsetX >= swipeThresholdPx) {
+                                                            isSwipedOpen = true
+                                                            swipeThresholdPx
+                                                        } else {
+                                                            isSwipedOpen = false
+                                                            0f
+                                                        }
+                                                    },
+                                                    onDragCancel = {
+                                                        offsetX = if (isSwipedOpen) {
+                                                            if (offsetX < 0) -swipeThresholdPx else swipeThresholdPx
+                                                        } else 0f
+                                                    }
+                                                ) { change, dragAmount ->
+                                                    change.consume()
+                                                    offsetX = (offsetX + dragAmount).coerceIn(-maxSwipePx, maxSwipePx)
+                                                }
+                                            }
+                                    ) {
+                                        Card(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 4.dp)
+                                                .shadow(elevation, RoundedCornerShape(12.dp)),
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
+                                                    alpha = 0.3f
                                                 )
+                                            ),
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(24.dp)
+                                                        .clip(CircleShape)
+                                                        .background(adaptiveColor.copy(alpha = 0.2f))
+                                                        .draggableHandle(),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(Icons.Rounded.DragHandle, "Drag", tint = adaptiveColor, modifier = Modifier.size(16.dp))
+                                                }
+                                                Spacer(Modifier.width(8.dp))
+                                                SongRow(
+                                                    song = song,
+                                                    viewModel = viewModel,
+                                                    customOnClick = {
+                                                        if (isSwipedOpen) {
+                                                            offsetX = 0f
+                                                            isSwipedOpen = false
+                                                        } else {
+                                                            viewModel.setQueue(playlistSongs, startSong = song)
+                                                        }
+                                                    },
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    if (swipeDeleteSong != null) {
+                                        AlertDialog(
+                                            onDismissRequest = { swipeDeleteSong = null; offsetX = 0f; isSwipedOpen = false },
+                                            containerColor = MaterialTheme.colorScheme.surface,
+                                            shape = RoundedCornerShape(24.dp),
+                                            title = { Text("Remove from Playlist", fontWeight = FontWeight.Bold) },
+                                            text = { Text("Remove \"${swipeDeleteSong!!.title}\" from this playlist?") },
+                                            confirmButton = {
+                                                TextButton(onClick = {
+                                                    viewModel.savePlaylistOrder(playlist, playlistSongs.filter { it.id != swipeDeleteSong!!.id }.map { it.id })
+                                                    swipeDeleteSong = null
+                                                    offsetX = 0f
+                                                    isSwipedOpen = false
+                                                }) { Text("Remove", color = Color.Red) }
                                             },
-                                            modifier = Modifier.weight(1f)
+                                            dismissButton = { TextButton(onClick = { swipeDeleteSong = null }) { Text("Cancel") } }
                                         )
                                     }
                                 }

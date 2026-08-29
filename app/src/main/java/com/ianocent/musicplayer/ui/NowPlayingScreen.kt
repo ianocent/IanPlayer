@@ -50,6 +50,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.compositeOver
+import com.ianocent.musicplayer.data.LyricSource
 import com.ianocent.musicplayer.data.Song
 import com.ianocent.musicplayer.data.ElementRect
 import androidx.compose.animation.*
@@ -478,6 +479,25 @@ fun NowPlayingScreen(
                     ) {
                         Icon(Icons.Rounded.ReceiptLong, "Buat Kartu Lirik",
                             tint = if (selectedLyricLines.isNotEmpty()) adaptiveColor else Color.Gray.copy(alpha = 0.5f))
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    val lyricSource by viewModel.lyricSource.collectAsState()
+                    IconButton(
+                        onClick = { song?.let { viewModel.cycleLyricSource(it) } },
+                        modifier = Modifier.size(24.dp),
+                        enabled = song != null && !isLyricLoading
+                    ) {
+                        Icon(Icons.Rounded.SwapHoriz, "Ganti Sumber Lirik",
+                            tint = if (isLyricLoading) Color.Gray.copy(alpha = 0.5f) else adaptiveColor)
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    if (lyricSource != LyricSource.UNKNOWN) {
+                        Text(
+                            lyricSource.name.replace("_", " "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = adaptiveColor.copy(alpha = 0.8f),
+                            fontWeight = FontWeight.Medium
+                        )
                     }
                 }
             }
