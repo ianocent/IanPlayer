@@ -114,6 +114,7 @@ class PlayerGateway(
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _isPlaying.value = isPlaying
             onIsPlayingChange(isPlaying)
+            if (isPlaying) continuousFailures = 0
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -158,11 +159,7 @@ class PlayerGateway(
         override fun onPlayerError(error: PlaybackException) {
             error.printStackTrace()
             _isPlaying.value = false
-
-            val currentUri = player?.currentMediaItem?.localConfiguration?.uri?.toString()
-            if (isPlaceholderUri(currentUri)) return
-
-            playNext()
+            handleResolveFailure()
         }
     }
 
@@ -524,6 +521,7 @@ class PlayerGateway(
 
             _currentSong.value = song
             currentIndex = initialIndex
+            savePlayerState()
 
             val resolvedSong = resolveIfNeeded(song)
 
@@ -533,7 +531,6 @@ class PlayerGateway(
                 handleResolveFailure()
                 return@launch
             }
-            continuousFailures = 0
 
             // Update only the specific song in the LATEST queue
             val currentQueue = _queue.value.toMutableList()
@@ -565,7 +562,6 @@ class PlayerGateway(
                 handleResolveFailure()
                 return@launch
             }
-            continuousFailures = 0
 
             val currentQueue = _queue.value.toMutableList()
             val useIndex = currentQueue.indexOfFirst { it.id == resolvedSong.id }
