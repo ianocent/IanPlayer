@@ -165,29 +165,28 @@ class DownloadCompletionReceiver(
 
     private fun reconstructPath(context: Context, cursor: android.database.Cursor): String? {
         try {
-            val titleIdx = cursor.getColumnIndex(DownloadManager.COLUMN_TITLE)
-            val title = if (titleIdx >= 0) cursor.getString(titleIdx) else null
-            if (!title.isNullOrEmpty()) {
-                val musicDir = File(
-                    android.os.Environment.getExternalStoragePublicDirectory(
-                        android.os.Environment.DIRECTORY_MUSIC
-                    ), "IanPlayer"
-                )
-                val file = File(musicDir, "$title.mp3")
-                if (file.exists()) return file.absolutePath
-            }
-            
-            // Broad search in IanPlayer dir
             val musicDir = File(
                 android.os.Environment.getExternalStoragePublicDirectory(
                     android.os.Environment.DIRECTORY_MUSIC
                 ), "IanPlayer"
             )
-            if (musicDir.exists()) {
-                val files = musicDir.listFiles { f -> f.extension.equals("mp3", ignoreCase = true) }
-                if (files != null && files.isNotEmpty()) {
-                    return files.maxByOrNull { it.lastModified() }?.absolutePath
+            if (!musicDir.exists()) return null
+
+            val titleIdx = cursor.getColumnIndex(DownloadManager.COLUMN_TITLE)
+            val title = if (titleIdx >= 0) cursor.getString(titleIdx) else null
+            if (!title.isNullOrEmpty()) {
+                // Try all supported extensions, not just .mp3
+                for (ext in listOf("m4a", "webm", "mp3")) {
+                    val file = File(musicDir, "$title.$ext")
+                    if (file.exists()) return file.absolutePath
                 }
+            }
+
+            // Broad search: newest audio file in IanPlayer dir
+            val audioExts = setOf("m4a", "webm", "mp3")
+            val files = musicDir.listFiles { f -> f.extension.lowercase() in audioExts }
+            if (files != null && files.isNotEmpty()) {
+                return files.maxByOrNull { it.lastModified() }?.absolutePath
             }
         } catch (e: Exception) {
             Timber.w("reconstructPath failed: ${e.message}")

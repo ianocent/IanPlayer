@@ -263,75 +263,47 @@ object MetadataWriter {
                 return@withContext false
             }
 
-            // Read via ContentResolver, modify with mp3agic, write back
-            val mp3file = context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                val bytes = inputStream.readBytes()
-                Mp3File(File(filePath)) // Use File directly since we have path
+            // Detect container from magic bytes
+            val header = ByteArray(16).let { buf ->
+                file.inputStream().use { input ->
+                    var off = 0
+                    while (off < buf.size) {
+                        val n = input.read(buf, off, buf.size - off)
+                        if (n < 0) break
+                        off += n
+                    }
+                }
+                buf
             }
+            val container = SongTags.detectContainer(header)
+            Timber.d("writeMetadataFromFile: container=$container for $filePath")
 
-            if (mp3file == null) {
-                Timber.e("Failed to read MP3 file")
-                return@withContext false
-            }
-
-            val id3v2tag = if (mp3file.hasId3v2Tag()) {
-                mp3file.id3v2Tag
-            } else {
-                ID3v24Tag()
-            }
-
-            id3v2tag.title = newTitle
-            id3v2tag.artist = newArtist
-
-            if (newImageUri != null) {
+            val artBytes = if (newImageUri != null) {
                 try {
                     val inputStream = context.contentResolver.openInputStream(newImageUri)
                     val bitmap = BitmapFactory.decodeStream(inputStream)
                     inputStream?.close()
-                    if (bitmap != null) {
-                        val baos = ByteArrayOutputStream()
-                        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, baos)
-                        id3v2tag.setAlbumImage(baos.toByteArray(), "image/jpeg")
-                    }
+                    bitmap?.let { bitmapToJpeg(it) }
                 } catch (e: Exception) {
-                    Timber.e(e, "Failed to set album art from URI")
+                    Timber.e(e, "Failed to decode album art from URI")
+                    null
+                }
+            } else null
+
+            val success = when (container) {
+                SongTags.Container.MP3 -> writeMp3Tags(file, newTitle, newArtist, "", artBytes)
+                SongTags.Container.MP4 -> writeMp4Tags(file, newTitle, newArtist, "", artBytes)
+                SongTags.Container.WEBM, SongTags.Container.UNKNOWN -> {
+                    // WebM/Opus has no standard writable tag; rely on MediaStore columns only
+                    Timber.w("No embeddable tag for $container, updating MediaStore columns only")
+                    true
                 }
             }
 
-            mp3file.id3v2Tag = id3v2tag
-
-            val tempFile = File(file.parentFile, "${file.nameWithoutExtension}_temp_${System.currentTimeMillis()}.mp3")
-            mp3file.save(tempFile.absolutePath)
-
-            if (!tempFile.exists() || tempFile.length() == 0L) {
-                Timber.e("Temp file invalid")
-                tempFile.delete()
+            if (!success) {
+                Timber.e("Tag write failed for $filePath")
                 return@withContext false
             }
-
-            // Write back: prefer direct file write (keeps inode → MediaStore row keeps same id,
-            // scanner sees modify, not add → no duplicate rows).
-            // Fallback: ContentResolver stream (some OEM MediaProviders swap inode → duplicate rows,
-            // cleaned up by MusicViewModel post-write dedupe).
-            val tempBytes = tempFile.readBytes()
-            var wroteDirect = false
-            try {
-                java.io.FileOutputStream(file).use { outputStream ->
-                    outputStream.write(tempBytes)
-                    outputStream.flush()
-                }
-                wroteDirect = true
-            } catch (e: Exception) {
-                Timber.w(e, "Direct file write failed, falling back to ContentResolver")
-            }
-            if (!wroteDirect) {
-                context.contentResolver.openOutputStream(uri, "wt")?.use { outputStream ->
-                    outputStream.write(tempBytes)
-                    outputStream.flush()
-                }
-            }
-
-            tempFile.delete()
 
             // Also update MediaStore metadata
             val values = ContentValues().apply {
@@ -340,13 +312,11 @@ object MetadataWriter {
             }
             context.contentResolver.update(uri, values, null, null)
 
-            // Trigger scan via deprecated broadcast for broad compatibility
-            if (filePath != null) {
-                @Suppress("DEPRECATION")
-                context.sendBroadcast(android.content.Intent(android.content.Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, android.net.Uri.fromFile(file)))
-            }
+            // Trigger scan for broad compatibility
+            @Suppress("DEPRECATION")
+            context.sendBroadcast(android.content.Intent(android.content.Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, android.net.Uri.fromFile(file)))
 
-            Timber.d("Metadata written successfully via file stream for song $songId")
+            Timber.d("Metadata written successfully for song $songId ($container)")
             true
         } catch (e: RecoverableSecurityException) {
             Timber.w(e, "RecoverableSecurityException for song $songId — rethrowing for SAF")

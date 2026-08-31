@@ -295,6 +295,7 @@ class PlayerGateway(
             resolveSongFromItem(item)?.let { liveSong ->
                 publishCurrentSong(liveSong)
                 pendingMediaId = null
+                savePlayerState()
                 return true
             }
         }
@@ -307,6 +308,7 @@ class PlayerGateway(
         publishCurrentSong(activeSong)
         if (fireOnSongPlayed) onSongPlayed(activeSong)
         pendingMediaId = null
+        savePlayerState()
         return true
     }
 
@@ -326,7 +328,17 @@ class PlayerGateway(
         }
         val song = resolveSongFromItem(item) ?: return false
         publishCurrentSong(song)
+
+        // Ensure the live song exists in the queue so "Up Next" stays coherent.
+        val inQueue = _queue.value.any { it.id == song.id }
+        if (!inQueue) {
+            _queue.value = listOf(song) + _queue.value
+            currentIndex = 0
+        }
+
         if (fireOnSongPlayed) onSongPlayed(song)
+        // Persist so next cold start restores the *live* state, not the stale prefs.
+        savePlayerState()
         return true
     }
 

@@ -1130,11 +1130,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             if (scannedFilePath != null) {
                 withContext(Dispatchers.IO) {
+                    val scanMime = com.ianocent.musicplayer.data.SongTags.mimeForExtension(
+                        scannedFilePath.substringAfterLast('.', "")
+                    )
                     suspendCancellableCoroutine<Unit> { cont ->
                         android.media.MediaScannerConnection.scanFile(
                             appContext,
                             arrayOf(scannedFilePath),
-                            arrayOf("audio/mpeg")
+                            arrayOf(scanMime)
                         ) { _, _ -> if (cont.isActive) cont.resume(Unit) {} }
                     }
                 }
