@@ -48,6 +48,9 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.core.graphics.ColorUtils
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material.icons.rounded.*
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.compositeOver
 import com.ianocent.musicplayer.data.LyricSource
@@ -55,7 +58,6 @@ import com.ianocent.musicplayer.data.Song
 import com.ianocent.musicplayer.data.ElementRect
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import sh.calvin.reorderable.ReorderableItem
@@ -410,12 +412,26 @@ fun NowPlayingScreen(
                                 onClick = { showWaveRecordSheet = true },
                                 modifier = Modifier.size(28.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Recommend,
-                                    contentDescription = "Record",
-                                    tint = Color(0xFFE91E63),
+                                androidx.compose.foundation.Canvas(
                                     modifier = Modifier.size(22.dp)
-                                )
+                                ) {
+                                    val strokeWidth = 2.dp.toPx()
+                                    val center = Offset(size.width / 2, size.height / 2)
+                                    val radius = (size.width - strokeWidth) / 2
+                                    // Circle outline
+                                    drawCircle(
+                                        color = Color(0xFFE91E63),
+                                        radius = radius,
+                                        center = center,
+                                        style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                                    )
+                                    // Center dot
+                                    drawCircle(
+                                        color = Color(0xFFE91E63),
+                                        radius = radius * 0.35f,
+                                        center = center
+                                    )
+                                }
                             }
                         }
                     }

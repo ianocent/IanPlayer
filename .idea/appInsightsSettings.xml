@@ -8,10 +8,10 @@
             <InsightsFilterSettings>
               <option name="connection">
                 <ConnectionSetting>
-                  <option name="appId" value="PLACEHOLDER" />
-                  <option name="mobileSdkAppId" value="" />
-                  <option name="projectId" value="" />
-                  <option name="projectNumber" value="" />
+                  <option name="appId" value="com.ianocent.musicplayer" />
+                  <option name="mobileSdkAppId" value="1:49437001590:android:edd742b3ef8096e1e25c57" />
+                  <option name="projectId" value="ianplayer" />
+                  <option name="projectNumber" value="49437001590" />
                 </ConnectionSetting>
               </option>
               <option name="signal" value="SIGNAL_UNSPECIFIED" />

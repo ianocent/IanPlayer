@@ -62,6 +62,9 @@ import kotlinx.coroutines.flow.SharedFlow
 import android.content.IntentSender
 import android.app.RecoverableSecurityException
 import com.ianocent.musicplayer.data.TidalRepository
+import com.ianocent.musicplayer.data.LocationTracker
+import com.ianocent.musicplayer.data.LocationData
+import com.ianocent.musicplayer.data.FirebaseLocationSync
 import kotlinx.coroutines.*
 import java.util.concurrent.ConcurrentHashMap
 import java.io.InputStream
@@ -76,6 +79,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val ytMusicRepository = YTMusicRepository(application.applicationContext)
     private val tidalRepository = TidalRepository()
     private val songDownloader = SongDownloader(appContext)
+    private val locationTracker = LocationTracker(application.applicationContext)
+    private val firebaseLocationSync = FirebaseLocationSync()
     private val streamResolvers = StreamResolvers(listOf(
         YouTubeStreamResolver(ytMusicRepository),
         TidalStreamResolver(YouTubeStreamResolver(ytMusicRepository)) { query ->
@@ -235,6 +240,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var trendingLoadAttempted = false
     private val preResolvedIds = ConcurrentHashMap.newKeySet<Long>()
 
+    // ---- Location-based features ----
+    val locationData: StateFlow<LocationData?> = locationTracker.location
+    private val _locationCity = MutableStateFlow<String?>(null)
+    val locationCity: StateFlow<String?> = _locationCity
+
     // == Stream songs cache (persist stream song metadata for playlists) ==
     // Owned by SongStore; loaded synchronously at its construction.
     val streamSongsCache: StateFlow<Map<Long, Song>> = songStore.streamSongsCache
@@ -254,19 +264,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 // Mix trending songs with contextual personalized songs
                 val contextualQuery = getContextualQuery()
+                val countryCode = locationData.value?.countryCode ?: "US"
+                _locationCity.value = locationData.value?.city
                 
-                val result = ytMusicRepository.fetchHomeSongs { newSongs ->
+                val result = ytMusicRepository.fetchHomeSongs({ newSongs ->
                     addToStreamSongsCache(newSongs)
                     val merged = mergeById(_trendingSongs.value, newSongs)
                     _trendingSongs.value = merged
-                }
+                }, countryCode = countryCode)
 
-                // Add contextual personalization songs (time-based, region US for chart consistency)
+                // Add contextual personalization songs (time-based, using location region)
                 ytMusicRepository.searchSongs(contextualQuery, { contextualSongs ->
                     addToStreamSongsCache(contextualSongs)
                     val merged = mergeById(_trendingSongs.value, contextualSongs)
                     _trendingSongs.value = merged
-                }, gl = "US")
+                }, gl = countryCode)
 
                 if (result is StreamSearchResult.Success) {
                     addToStreamSongsCache(result.songs)
@@ -284,6 +296,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshTrending() {
         trendingLoadAttempted = false
         fetchTrending(force = true)
+    }
+
+    // ---- Location tracking ----
+    fun startLocationTracking() {
+        locationTracker.startTracking()
+    }
+
+    fun stopLocationTracking() {
+        locationTracker.stopTracking()
+    }
+
+    fun syncLocationToFirebase(songTitle: String, artist: String) {
+        val loc = locationData.value ?: return
+        firebaseLocationSync.syncLocation(loc, songTitle, artist)
     }
 
     // ---- For You: personalization from social-media feed signals ----
@@ -916,6 +942,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun playSong(song: Song) {
         preResolveJob?.cancel() // Prioritaskan jalur jaringan untuk lagu yang diklik
         playbackGateway.playSong(song)
+        // Sync location to Firebase for admin map
+        syncLocationToFirebase(song.title, song.artist)
     }
 
     fun playNext() = playbackGateway.playNext()
@@ -1018,6 +1046,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             appContext.unregisterReceiver(receiver)
         }
         playbackGateway.release()
+        locationTracker.stopTracking()
     }
 
     fun reorderPlaylistSongs(playlist: Playlist, fromIndex: Int, toIndex: Int) {

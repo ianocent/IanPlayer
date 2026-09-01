@@ -114,6 +114,8 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import kotlinx.coroutines.delay
@@ -384,8 +386,24 @@ fun ListingScreen(
         if (granted) viewModel.loadSongs()
     }
 
+    // Location permission
+    val locationPermission = Manifest.permission.ACCESS_COARSE_LOCATION
+    val locationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            viewModel.startLocationTracking()
+        }
+    }
+
     LaunchedEffect(Unit) {
         storageLauncher.launch(storagePermission)
+        // Request location permission
+        if (ctx.checkSelfPermission(locationPermission) == PackageManager.PERMISSION_GRANTED) {
+            viewModel.startLocationTracking()
+        } else {
+            locationLauncher.launch(locationPermission)
+        }
     }
 
     val songs by viewModel.songs.collectAsState()
@@ -709,10 +727,21 @@ fun ListingScreen(
                             targetValue = MaterialTheme.colorScheme.onBackground,
                             animationSpec = tween(400), label = "search_tint"
                         )
-                        IconButton(onClick = { isSearchActive = true }) {
+                        IconButton(
+                            onClick = { isSearchActive = true },
+                            modifier = Modifier.pointerInput(Unit) {
+                                detectTapGestures(
+                                    onLongPress = {
+                                        // Long press triggers admin map
+                                        val intent = Intent(ctx, com.ianocent.musicplayer.ui.AdminMapActivity::class.java)
+                                        ctx.startActivity(intent)
+                                    }
+                                )
+                            }
+                        ) {
                             Icon(
                                 Icons.Rounded.Search,
-                                contentDescription = "Search",
+                                contentDescription = "Search (long press for admin)",
                                 tint = searchIconTint
                             )
                             }

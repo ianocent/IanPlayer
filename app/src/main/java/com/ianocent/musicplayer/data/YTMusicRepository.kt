@@ -1019,11 +1019,10 @@ class YTMusicRepository(context: Context) {
     }
     /**
      * Fetch trending/popular songs using search API (reliable since browse
-     * endpoint often requires auth). Searches US/UK chart queries (region-forced
-     * en-US so hits come from the Western charts, not device-locale content) and
-     * merges results.
+     * endpoint often requires auth). Searches chart queries and merges results.
+     * @param countryCode ISO country code for region-specific results (e.g. "ID", "US")
      */
-    suspend fun fetchHomeSongs(onPartial: (List<Song>) -> Unit): StreamSearchResult =
+    suspend fun fetchHomeSongs(onPartial: (List<Song>) -> Unit, countryCode: String = "US"): StreamSearchResult =
         withContext(Dispatchers.IO) {
             // Chart-anchored queries: return official chart songs rather than local/random
             // content, unlike the old "official music video trending" style queries.
@@ -1039,7 +1038,7 @@ class YTMusicRepository(context: Context) {
             for (query in queries) {
                 try {
                     val body = JSONObject().apply {
-                        put("context", clientContext("US", "en"))
+                        put("context", clientContext(countryCode, "en"))
                         put("query", query)
                         put("params", "EgWKAQIIAWoKEAMQBBAFEAoQCQ==")
                     }

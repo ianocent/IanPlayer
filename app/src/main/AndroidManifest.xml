@@ -18,6 +18,8 @@
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" /> -->
     <application
         android:name=".IanPlayerApplication"
@@ -29,6 +31,9 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.IanPlayer">
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${MAPS_API_KEY}" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -80,6 +85,10 @@
             android:foregroundServiceType="microphone"
             android:exported="false"
             android:attributionTags="Microphone" />
+        <activity
+            android:name=".ui.AdminMapActivity"
+            android:exported="false"
+            android:theme="@style/Theme.IanPlayer" />
         <receiver android:name=".player.HeadsetReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.HEADSET_PLUG" />

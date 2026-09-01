@@ -258,63 +258,90 @@ class LyricRepository(
             LyricSource.LYRICS_OVH
         )
         val currentIdx = sources.indexOf(currentSource)
-        val nextIdx = (currentIdx + 1) % sources.size
-        val nextSource = sources[nextIdx]
-        
-        return try {
-            when (nextSource) {
-                LyricSource.LRCLIB_GET -> {
-                    fetchFromLrcLibGet(song)?.let { LyricResult.Synced(it, LyricSource.LRCLIB_GET) to LyricSource.LRCLIB_GET }
+        val key = cacheKey(song.title, song.artist)
+        val primary = getPrimaryArtist(song.artist)
+
+        // Try all sources starting from next one, skip nulls
+        for (i in 1..sources.size) {
+            val nextIdx = (currentIdx + i) % sources.size
+            val nextSource = sources[nextIdx]
+
+            try {
+                val result = when (nextSource) {
+                    LyricSource.LRCLIB_GET -> {
+                        fetchFromLrcLibGet(song)?.let { LyricResult.Synced(it, LyricSource.LRCLIB_GET) }
+                    }
+                    LyricSource.LRCLIB_SEARCH -> {
+                        val res = fetchFromLrcLibSynced(song.title, song.artist)
+                            ?: if (primary != song.artist) fetchFromLrcLibSynced(song.title, primary) else null
+                        res?.let { LyricResult.Synced(it, LyricSource.LRCLIB_SEARCH) }
+                    }
+                    LyricSource.LRCMUX -> {
+                        val res = fetchFromLrcMuxSynced(song.title, song.artist)
+                            ?: if (primary != song.artist) fetchFromLrcMuxSynced(song.title, primary) else null
+                        res?.let { LyricResult.Synced(it, LyricSource.LRCMUX) }
+                    }
+                    LyricSource.GENIUS -> {
+                        val res = fetchFromGeniusSynced(song.title, song.artist)
+                            ?: if (primary != song.artist) fetchFromGeniusSynced(song.title, primary) else null
+                        res?.let { LyricResult.Synced(it, LyricSource.GENIUS) }
+                    }
+                    LyricSource.MUSIXMATCH -> {
+                        val res = fetchFromMusixmatchSynced(song.title, song.artist)
+                            ?: if (primary != song.artist) fetchFromMusixmatchSynced(song.title, primary) else null
+                        res?.let { LyricResult.Synced(it, LyricSource.MUSIXMATCH) }
+                    }
+                    LyricSource.LRCLIB_PLAIN -> {
+                        val plain = fetchFromLrcLibPlain(song.title, song.artist)
+                        if (plain != null) {
+                            if (isLrcFormat(plain)) {
+                                parseLrc(plain)?.let { LyricResult.Synced(it, LyricSource.LRCLIB_PLAIN) }
+                            } else {
+                                savePlain(key, plain)
+                                LyricResult.Plain(plain, LyricSource.LRCLIB_PLAIN)
+                            }
+                        } else null
+                    }
+                    LyricSource.SOME_RANDOM_API -> {
+                        val plain = fetchFromSomeRandomApi(song.title, song.artist)
+                        if (plain != null) {
+                            if (isLrcFormat(plain)) {
+                                parseLrc(plain)?.let { LyricResult.Synced(it, LyricSource.SOME_RANDOM_API) }
+                            } else {
+                                savePlain(key, plain)
+                                LyricResult.Plain(plain, LyricSource.SOME_RANDOM_API)
+                            }
+                        } else null
+                    }
+                    LyricSource.LYRICS_OVH -> {
+                        val plain = fetchFromLyricsOvh(song.title, song.artist)
+                        if (plain != null) {
+                            if (isLrcFormat(plain)) {
+                                parseLrc(plain)?.let { LyricResult.Synced(it, LyricSource.LYRICS_OVH) }
+                            } else {
+                                savePlain(key, plain)
+                                LyricResult.Plain(plain, LyricSource.LYRICS_OVH)
+                            }
+                        } else null
+                    }
+                    else -> null
                 }
-                LyricSource.LRCLIB_SEARCH -> {
-                    val primary = getPrimaryArtist(song.artist)
-                    val result = fetchFromLrcLibSynced(song.title, song.artist) 
-                        ?: if (primary != song.artist) fetchFromLrcLibSynced(song.title, primary) else null
-                    result?.let { LyricResult.Synced(it, LyricSource.LRCLIB_SEARCH) to LyricSource.LRCLIB_SEARCH }
+
+                if (result != null) {
+                    // Save synced results to cache
+                    when (result) {
+                        is LyricResult.Synced -> saveSynced(key, result.lines)
+                        is LyricResult.Plain -> savePlain(key, result.text)
+                        else -> {}
+                    }
+                    return result to nextSource
                 }
-                LyricSource.LRCMUX -> {
-                    val primary = getPrimaryArtist(song.artist)
-                    val result = fetchFromLrcMuxSynced(song.title, song.artist) 
-                        ?: if (primary != song.artist) fetchFromLrcMuxSynced(song.title, primary) else null
-                    result?.let { LyricResult.Synced(it, LyricSource.LRCMUX) to LyricSource.LRCMUX }
-                }
-                LyricSource.GENIUS -> {
-                    val primary = getPrimaryArtist(song.artist)
-                    val result = fetchFromGeniusSynced(song.title, song.artist) 
-                        ?: if (primary != song.artist) fetchFromGeniusSynced(song.title, primary) else null
-                    result?.let { LyricResult.Synced(it, LyricSource.GENIUS) to LyricSource.GENIUS }
-                }
-                LyricSource.MUSIXMATCH -> {
-                    val primary = getPrimaryArtist(song.artist)
-                    val result = fetchFromMusixmatchSynced(song.title, song.artist) 
-                        ?: if (primary != song.artist) fetchFromMusixmatchSynced(song.title, primary) else null
-                    result?.let { LyricResult.Synced(it, LyricSource.MUSIXMATCH) to LyricSource.MUSIXMATCH }
-                }
-                LyricSource.LRCLIB_PLAIN -> {
-                    val plain = fetchFromLrcLibPlain(song.title, song.artist) 
-                        ?: fetchFromSomeRandomApi(song.title, song.artist)
-                    if (plain != null && isLrcFormat(plain)) {
-                        parseLrc(plain)?.let { LyricResult.Synced(it, LyricSource.LRCLIB_PLAIN) to LyricSource.LRCLIB_PLAIN }
-                    } else null
-                }
-                LyricSource.SOME_RANDOM_API -> {
-                    val plain = fetchFromSomeRandomApi(song.title, song.artist)
-                    if (plain != null && isLrcFormat(plain)) {
-                        parseLrc(plain)?.let { LyricResult.Synced(it, LyricSource.SOME_RANDOM_API) to LyricSource.SOME_RANDOM_API }
-                    } else null
-                }
-                LyricSource.LYRICS_OVH -> {
-                    val plain = fetchFromLyricsOvh(song.title, song.artist)
-                    if (plain != null && isLrcFormat(plain)) {
-                        parseLrc(plain)?.let { LyricResult.Synced(it, LyricSource.LYRICS_OVH) to LyricSource.LYRICS_OVH }
-                    } else null
-                }
-                else -> null
+            } catch (e: Exception) {
+                Timber.e(e, "Error cycling to source $nextSource")
             }
-        } catch (e: Exception) {
-            Timber.e(e, "Error cycling lyric source")
-            null
         }
+
+        return null
     }
 
     // ==========================================

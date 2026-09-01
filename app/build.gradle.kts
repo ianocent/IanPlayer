@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+    id("com.google.gms.google-services")
 }
 
 val ksProps = rootProject.file("keystore.properties").readLines()
@@ -40,13 +41,15 @@ android {
         applicationId = "com.ianocent.musicplayer"
         minSdk = 24
         targetSdk = 36
-        versionCode = 31
-        versionName = "5.9.0"
+        versionCode = 32
+        versionName = "5.9.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "YTMUSIC_WEB_KEY", "\"${localProps["YTMUSIC_WEB_KEY"] ?: ""}\"")
         buildConfigField("String", "YTMUSIC_ANDROID_KEY", "\"${localProps["YTMUSIC_ANDROID_KEY"] ?: ""}\"")
+        buildConfigField("String", "MAPS_API_KEY", "\"${localProps["MAPS_API_KEY"] ?: ""}\"")
+        manifestPlaceholders["MAPS_API_KEY"] = localProps["MAPS_API_KEY"] ?: ""
     }
 
     testOptions {
@@ -123,4 +126,12 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
+    // Firebase
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-database-ktx")
+    implementation("com.google.firebase:firebase-auth-ktx")
+    // Location
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+    // Maps
+    implementation("com.google.android.gms:play-services-maps:19.0.0")
 }

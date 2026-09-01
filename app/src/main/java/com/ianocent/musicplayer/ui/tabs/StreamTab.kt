@@ -517,6 +517,33 @@ fun StreamTabContent(
 
                                         Spacer(Modifier.height(20.dp))
 
+                                        // Popular Near You section
+                                        val locationCity by viewModel.locationCity.collectAsState()
+                                        if (locationCity != null && trendingSongs.isNotEmpty()) {
+                                            Text(
+                                                "Popular in $locationCity",
+                                                modifier = Modifier.padding(horizontal = 16.dp),
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = adaptiveColor
+                                            )
+                                            Spacer(Modifier.height(8.dp))
+                                            androidx.compose.foundation.lazy.LazyRow(
+                                                contentPadding = PaddingValues(horizontal = 12.dp),
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                items(trendingSongs.take(8)) { song ->
+                                                    com.ianocent.musicplayer.TrendingCard(
+                                                        song = song,
+                                                        viewModel = viewModel,
+                                                        adaptiveColor = adaptiveColor,
+                                                        modifier = Modifier.width(160.dp)
+                                                    )
+                                                }
+                                            }
+                                            Spacer(Modifier.height(20.dp))
+                                        }
+
                                         // Trending section
                                         if (isTrendingLoading && trendingSongs.isEmpty()) {
                                             Box(
