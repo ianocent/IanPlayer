@@ -112,6 +112,8 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -727,24 +729,26 @@ fun ListingScreen(
                             targetValue = MaterialTheme.colorScheme.onBackground,
                             animationSpec = tween(400), label = "search_tint"
                         )
-                        IconButton(
-                            onClick = { isSearchActive = true },
-                            modifier = Modifier.pointerInput(Unit) {
-                                detectTapGestures(
-                                    onLongPress = {
-                                        // Long press triggers admin map
-                                        val intent = Intent(ctx, com.ianocent.musicplayer.ui.AdminMapActivity::class.java)
-                                        ctx.startActivity(intent)
-                                    }
-                                )
-                            }
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .pointerInput(Unit) {
+                                    detectTapGestures(
+                                        onTap = { isSearchActive = true },
+                                        onLongPress = {
+                                            val intent = Intent(ctx, com.ianocent.musicplayer.ui.AdminMapActivity::class.java)
+                                            ctx.startActivity(intent)
+                                        }
+                                    )
+                                },
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 Icons.Rounded.Search,
                                 contentDescription = "Search (long press for admin)",
                                 tint = searchIconTint
                             )
-                            }
+                        }
                             var anchorHeightPx by remember { mutableIntStateOf(0) }
                             var startShine by remember { mutableStateOf(false) }
                             LaunchedEffect(Unit) {
