@@ -900,7 +900,13 @@ fun SwipeableSongRow(
                         ) {
                             Icon(Icons.Rounded.Download, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(12.dp))
-                            Text("${format.qualityLabel} (${format.bitrate}kbps)", fontWeight = FontWeight.SemiBold)
+                            val formatLabel = when {
+                                format.mimeType.contains("mp4") || format.mimeType.contains("aac") -> "M4A"
+                                format.mimeType.contains("webm") || format.mimeType.contains("opus") -> "WebM"
+                                format.mimeType.contains("mpeg") || format.mimeType.contains("mp3") -> "MP3"
+                                else -> format.mimeType.substringAfterLast('/')
+                            }
+                            Text("${format.qualityLabel} $formatLabel", fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }

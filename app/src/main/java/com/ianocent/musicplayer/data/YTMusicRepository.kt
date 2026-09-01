@@ -932,7 +932,7 @@ class YTMusicRepository(context: Context) {
             
             val bitrate = fmt.optInt("bitrate", 0)
             val label = when {
-                bitrate >= 320000 -> "Ultra (320kbps"
+                bitrate >= 320000 -> "Ultra (320kbps)"
                 bitrate >= 250000 -> "High (256kbps)"
                 bitrate >= 128000 -> "Medium (128kbps)"
                 else -> "Low (${bitrate / 1000}kbps)"
@@ -947,7 +947,9 @@ class YTMusicRepository(context: Context) {
             ))
         }
         
-        formats.sortedByDescending { it.bitrate }
+        val m4aFormats = formats.filter { it.mimeType.contains("mp4") || it.mimeType.contains("aac") }
+        val result = if (m4aFormats.isNotEmpty()) m4aFormats else formats
+        result.sortedByDescending { it.bitrate }
     }
 
     /**

@@ -1050,33 +1050,29 @@ fun ListingScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (page == 0) {
-                    if (page == 0) {
-                        TabItem("Songs", navState.tab == NavState.TAB_SONGS, adaptiveColor) { navState.selectTab(NavState.TAB_SONGS) }
-                        TabItem("Albums", navState.tab == NavState.TAB_ALBUMS, adaptiveColor) { navState.selectTab(NavState.TAB_ALBUMS) }
+                    TabItem("Songs", navState.tab == NavState.TAB_SONGS, adaptiveColor) { navState.selectTab(NavState.TAB_SONGS) }
+                    TabItem("Albums", navState.tab == NavState.TAB_ALBUMS, adaptiveColor) { navState.selectTab(NavState.TAB_ALBUMS) }
 
-                        // Tombol Next (>)
-                        IconButton(
-                            onClick = { navState.openStreamPage() },
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                        ) {
-                            Icon(Icons.Rounded.ChevronRight, contentDescription = "More Tabs", tint = Color.Gray)
-                        }
-                    } else {
-                        // Tombol Prev (<)
-                        IconButton(
-                            onClick = { navState.openLibraryPage() },
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                        ) {
-                            Icon(Icons.Rounded.ChevronLeft, contentDescription = "Previous Tabs", tint = Color.Gray)
-                        }
-
-                        TabItem("Stream", navState.tab == NavState.TAB_STREAM, adaptiveColor) { navState.selectTab(NavState.TAB_STREAM) }
-                        TabItem("Playlists", navState.tab == NavState.TAB_PLAYLISTS, adaptiveColor) { navState.selectTab(NavState.TAB_PLAYLISTS) }
+                    IconButton(
+                        onClick = { navState.openStreamPage() },
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    ) {
+                        Icon(Icons.Rounded.ChevronRight, contentDescription = "More Tabs", tint = Color.Gray)
                     }
+                } else {
+                    IconButton(
+                        onClick = { navState.openLibraryPage() },
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    ) {
+                        Icon(Icons.Rounded.ChevronLeft, contentDescription = "Previous Tabs", tint = Color.Gray)
+                    }
+
+                    TabItem("Stream", navState.tab == NavState.TAB_STREAM, adaptiveColor) { navState.selectTab(NavState.TAB_STREAM) }
+                    TabItem("Playlists", navState.tab == NavState.TAB_PLAYLISTS, adaptiveColor) { navState.selectTab(NavState.TAB_PLAYLISTS) }
                 }
             }
         }
