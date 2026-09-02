@@ -40,7 +40,7 @@ class TidalRepository {
                 val cover = item.optJSONObject("album")?.optString("cover")
                 
                 val artUrl = if (cover != null) {
-                    "https://resources.tidal.com/images/${cover.replace("-", "/")}/640x640.jpg"
+                    "https://resources.tidal.com/images/${cover.replace("-", "/")}/1280x1280.jpg"
                 } else null
 
                 results.add(Song(

@@ -8,8 +8,7 @@ import android.net.Uri
 import androidx.palette.graphics.Palette
 import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.graphics.toArgb
-import android.os.Build
-import android.util.Size
+
 
 object AlbumArtLoader {
     fun extractDominantColor(bitmap: Bitmap): androidx.compose.ui.graphics.Color {
@@ -30,20 +29,19 @@ object AlbumArtLoader {
         palette.dominantSwatch?.rgb?.let { colors.add(ComposeColor(it)) }
         return colors.distinct()
     }
-    fun getEmbeddedArt(context: Context, uri: Uri, targetSize: Int = 150): Bitmap? {
+    fun getEmbeddedArt(context: Context, uri: Uri, targetSize: Int = 256): Bitmap? {
         return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                context.contentResolver.loadThumbnail(uri, Size(targetSize, targetSize), null)
-            } else {
-                val retriever = MediaMetadataRetriever()
-                retriever.setDataSource(context, uri)
-                val art = retriever.embeddedPicture
-                retriever.release()
+            val retriever = MediaMetadataRetriever()
+            retriever.setDataSource(context, uri)
+            val art = retriever.embeddedPicture
+            retriever.release()
 
-                art?.let { bytes ->
-                    val options = BitmapFactory.Options().apply { inSampleSize = 2 }
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-                }
+            art?.let { bytes ->
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                val sampleSize = (options.outWidth / targetSize).coerceAtLeast(1)
+                val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
             }
         } catch (e: Exception) {
             null

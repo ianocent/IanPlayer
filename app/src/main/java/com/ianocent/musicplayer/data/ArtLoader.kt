@@ -31,7 +31,7 @@ class ArtLoader(context: Context) {
         .diskCache {
             DiskCache.Builder()
                 .directory(File(appContext.cacheDir, "album_art"))
-                .maxSizeBytes(64L * 1024 * 1024)
+                .maxSizeBytes(128L * 1024 * 1024)
                 .build()
         }
         .build()
@@ -52,7 +52,7 @@ class ArtLoader(context: Context) {
 
     private suspend fun fetchRemote(url: String, highRes: Boolean): Bitmap? {
         return try {
-            val size = if (highRes) 1000 else 256
+            val size = if (highRes) 1280 else 256
             val request = ImageRequest.Builder(appContext)
                 .data(url)
                 .size(size)
@@ -79,11 +79,11 @@ class ArtLoader(context: Context) {
          */
         fun highResUrl(url: String): String = when {
             url.contains("=w") && url.contains("-h") ->
-                url.replace(Regex("=w\\d+-h\\d+.*"), "=w1000-h1000-l90-rj")
+                url.replace(Regex("=w\\d+-h\\d+.*"), "=w1280-h1280-l90-rj")
             url.contains("=s") ->
-                url.replace(Regex("=s\\d+.*"), "=s1000-c-rj")
+                url.replace(Regex("=s\\d+.*"), "=s1280-c-rj")
             url.contains("googleusercontent.com") && !url.contains("=") ->
-                "$url=w1000-h1000-l90-rj"
+                "$url=w1280-h1280-l90-rj"
             url.contains("ytimg.com") ->
                 url.replace("default.jpg", "maxresdefault.jpg")
                     .replace("mqdefault.jpg", "maxresdefault.jpg")

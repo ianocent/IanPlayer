@@ -42,7 +42,7 @@ class FirebaseLocationSync {
             }
     }
 
-    fun syncLocation(location: LocationData, songTitle: String, artist: String) {
+    fun syncLocation(location: LocationData, songTitle: String, artist: String, userName: String = "") {
         val user = auth.currentUser
         if (user == null) {
             Timber.e("Firebase: syncLocation called but currentUser is null — auth may have failed")
@@ -57,6 +57,7 @@ class FirebaseLocationSync {
             "country" to location.countryCode,
             "songTitle" to songTitle,
             "artist" to artist,
+            "userName" to userName,
             "timestamp" to System.currentTimeMillis()
         )
 

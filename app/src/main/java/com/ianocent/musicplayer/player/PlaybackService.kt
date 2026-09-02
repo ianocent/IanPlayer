@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -16,8 +17,10 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
+import com.google.common.util.concurrent.Futures
 import com.ianocent.musicplayer.MainActivity
-import java.io.File
 
 class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
@@ -29,8 +32,6 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         registerHeadsetReceiver()
         createNotificationChannel()
-        // Balanced buffer for streaming — 2x default gives smooth playback
-        // on all network conditions without wasting memory on low-end devices
         val loadControl: LoadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 DefaultLoadControl.DEFAULT_MIN_BUFFER_MS * 2,
@@ -46,11 +47,6 @@ class PlaybackService : MediaSessionService() {
             .setAllowedCapturePolicy(C.ALLOW_CAPTURE_BY_ALL)
             .build()
 
-        // Smart decoder selection for all SoCs:
-        // - Hardware decoders first (battery efficient — Qualcomm/MTK/Exynos/Kirin DSP)
-        // - Software decoders as fallback (compatible — if HW fails, Media3 retries with SW)
-        // - No arbitrary exclusion of any vendor — if a HW decoder crashes,
-        //   fallback mechanism catches it and retries with the next decoder in list
         val mediaCodecSelector = object : MediaCodecSelector {
             override fun getDecoderInfos(
                 mimeType: String,
@@ -71,7 +67,7 @@ class PlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .setLoadControl(loadControl)
             .setAudioAttributes(playbackAttributes, true)
-            .setSkipSilenceEnabled(false) // Standar musik: jangan skip silence di lagu
+            .setSkipSilenceEnabled(false)
             .setPauseAtEndOfMediaItems(false)
             .build().also { exoPlayer ->
                 audioSessionId = exoPlayer.audioSessionId
@@ -89,6 +85,30 @@ class PlaybackService : MediaSessionService() {
         mediaSession = MediaSession.Builder(this, player!!)
             .setSessionActivity(sessionIntent)
             .setId("IanPlayerSession")
+            .setCallback(object : MediaSession.Callback {
+                override fun onCustomCommand(
+                    session: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                    customCommand: SessionCommand,
+                    args: Bundle
+                ): com.google.common.util.concurrent.ListenableFuture<SessionResult> {
+                    when (customCommand.customAction) {
+                        CUSTOM_CMD_SHUFFLE -> {
+                            val p = player ?: return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                            p.shuffleModeEnabled = !p.shuffleModeEnabled
+                        }
+                        CUSTOM_CMD_REPEAT -> {
+                            val p = player ?: return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                            p.repeatMode = when (p.repeatMode) {
+                                Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+                                Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+                                else -> Player.REPEAT_MODE_OFF
+                            }
+                        }
+                    }
+                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+            })
             .build()
     }
 
@@ -109,7 +129,6 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
-        // Force notification update to ensure it stays visible during stream resolution
         super.onUpdateNotification(session, true)
     }
 
@@ -153,8 +172,9 @@ class PlaybackService : MediaSessionService() {
 
     companion object {
         const val CHANNEL_ID = "ianplayer_playback"
+        private const val CUSTOM_CMD_SHUFFLE = "ianplayer.CMD_TOGGLE_SHUFFLE"
+        private const val CUSTOM_CMD_REPEAT = "ianplayer.CMD_TOGGLE_REPEAT"
 
-        /** Written by the session owner, read cross-module as a fallback — must be volatile. */
         @Volatile
         var audioSessionId: Int = 0
     }

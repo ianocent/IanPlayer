@@ -41,6 +41,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.*
@@ -81,6 +84,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -443,15 +447,46 @@ fun ListingScreen(
     val showListeningPill = viewModel.showListeningPill.collectAsState().value
     val miniLayoutIndex = viewModel.miniLayoutIndex.collectAsState().value
     val isPillAtBottom = viewModel.isPillAtBottom.collectAsState().value
+    val isVoiceAssistantEnabled by viewModel.isVoiceAssistantEnabled.collectAsState()
+    val socialSignalsEnabled by viewModel.socialSignalsEnabled.collectAsState()
+    val userName by viewModel.userName.collectAsState()
     var showPlaylistSelectionDialog by remember { mutableStateOf<Song?>(null) }
+
+    val isPreview = androidx.compose.ui.platform.LocalInspectionMode.current
 
     // ---- Voice Search ----
     var isListening by remember { mutableStateOf(false) }
+    var isIdentifying by remember { mutableStateOf(false) }
     val voicePermission = Manifest.permission.RECORD_AUDIO
     var rmsLevel by remember { mutableFloatStateOf(0f) }
     var voiceText by remember { mutableStateOf("") }
 
-    val isPreview = androidx.compose.ui.platform.LocalInspectionMode.current
+    val musicRecognitionManager = remember {
+        if (isPreview) null else MusicRecognitionManager(ctx)
+    }
+
+    // Use var to break circular reference between startSongRecognition and voiceManager
+    var _voiceManager: VoiceRecognitionManager? = null
+
+    fun startSongRecognition() {
+        isListening = false
+        isIdentifying = true
+        voiceText = ""
+        _voiceManager?.stopListening()
+        musicRecognitionManager?.start(
+            durationMs = 8_000,
+            onResult = { result ->
+                isIdentifying = false
+                if (result != null) {
+                    searchQuery = "${result.artist} ${result.title}"
+                    isSearchActive = true
+                    navState.openStreamPage()
+                }
+            },
+            onRmsChanged = { level -> rmsLevel = level }
+        )
+    }
+
     val voiceManager = remember {
         if (isPreview) null
         else VoiceRecognitionManager(
@@ -464,8 +499,9 @@ fun ListingScreen(
             onPartialResults = { text -> voiceText = text },
             onError = { isListening = false },
             onRmsChanged = { level -> rmsLevel = level },
-            onListeningStateChanged = { listening -> isListening = listening }
-        )
+            onListeningStateChanged = { listening -> isListening = listening },
+            onSpeechFailed = { startSongRecognition() }
+        ).also { _voiceManager = it }
     }
 
     val voicePermissionLauncher = rememberLauncherForActivityResult(
@@ -525,12 +561,26 @@ fun ListingScreen(
         }
     }
 
+    // Stop identifying if it takes too long (15 seconds)
+    LaunchedEffect(isIdentifying) {
+        if (!isIdentifying) return@LaunchedEffect
+        delay(15_000)
+        if (isIdentifying) {
+            musicRecognitionManager?.stop()
+            isIdentifying = false
+        }
+    }
+
     DisposableEffect(Unit) {
-        onDispose { voiceManager?.destroy() }
+        onDispose {
+            voiceManager?.destroy()
+            musicRecognitionManager?.destroy()
+        }
     }
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
+    var showSettingsSheet by remember { mutableStateOf(false) }
     var editingPlaylist by remember { mutableStateOf<com.ianocent.musicplayer.data.Playlist?>(null) }
     val playlists by viewModel.playlists.collectAsState()
     val selectedPlaylist = remember(playlists, navState.selectedPlaylistId) {
@@ -686,16 +736,21 @@ fun ListingScreen(
                                 color = MaterialTheme.colorScheme.onBackground
                             ),
                             cursorBrush = SolidColor(adaptiveColor),
+                            enabled = !isIdentifying,
                             decorationBox = { innerTextField ->
                                 if (searchQuery.isEmpty()) {
-                                    Text("Search songs...", color = Color.Gray, style = MaterialTheme.typography.bodyLarge)
+                                    val hint = when {
+                                        isIdentifying -> "Mengidentifikasi lagu..."
+                                        else -> "Search songs..."
+                                    }
+                                    Text(hint, color = Color.Gray, style = MaterialTheme.typography.bodyLarge)
                                 }
                                 innerTextField()
                             }
                         )
 
                         // Voice Search Button
-                        if (isListening) {
+                        if (isListening || isIdentifying) {
                             VoiceSpectrum(
                                 rmsLevel = rmsLevel,
                                 accentColor = adaptiveColor,
@@ -888,6 +943,30 @@ fun ListingScreen(
                                                                 "TikTok" -> TikTokIcon(modifier = Modifier.size(24.dp), tint = iconTint)
                                                             }
                                                         }
+                                                    }
+                                                }
+                                                // Settings gear icon
+                                                AnimatedVisibility(
+                                                    visible = socialMenuVisibleItems >= socialMenuItems.size,
+                                                    enter = fadeIn(tween(200)) + scaleIn(tween(200), initialScale = 0.8f)
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(40.dp)
+                                                            .clip(CircleShape)
+                                                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                                                            .clickable {
+                                                                showSocialMenu = false
+                                                                showSettingsSheet = true
+                                                            },
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Rounded.Settings,
+                                                            contentDescription = "Settings",
+                                                            modifier = Modifier.size(20.dp),
+                                                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                                        )
                                                     }
                                                 }
                                             }
@@ -1680,6 +1759,24 @@ fun ListingScreen(
                 viewModel.addSongsToPlaylist(playlist, listOf(showPlaylistSelectionDialog!!.id))
                 showPlaylistSelectionDialog = null
             }
+        )
+    }
+
+    if (showSettingsSheet) {
+        SettingsBottomSheet(
+            isDarkMode = isDarkMode,
+            onToggleDarkMode = { viewModel.toggleDarkMode() },
+            miniLayoutIndex = miniLayoutIndex,
+            onLayoutChange = { index -> viewModel.setMiniLayoutIndex(index) },
+            isPillAtBottom = isPillAtBottom,
+            onPillPositionChange = { viewModel.setPillAtBottom(it) },
+            isVoiceAssistantEnabled = isVoiceAssistantEnabled,
+            onVoiceAssistantToggle = { viewModel.toggleVoiceAssistant() },
+            socialSignalsEnabled = socialSignalsEnabled,
+            onSocialSignalsToggle = { viewModel.setSocialSignalsEnabled(!socialSignalsEnabled) },
+            userName = userName,
+            onUserNameChange = { viewModel.setUserName(it) },
+            onDismiss = { showSettingsSheet = false }
         )
     }
 }
@@ -3540,6 +3637,330 @@ fun PreviewMiniPlayerFloating() {
                 currentSong = Song(2, "Gerimis Mengundang", "Slam", 280000, android.net.Uri.EMPTY),
                 isPillAtBottom = true
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SettingsBottomSheet(
+    isDarkMode: Boolean,
+    onToggleDarkMode: () -> Unit,
+    miniLayoutIndex: Int,
+    onLayoutChange: (Int) -> Unit,
+    isPillAtBottom: Boolean,
+    onPillPositionChange: (Boolean) -> Unit,
+    isVoiceAssistantEnabled: Boolean,
+    onVoiceAssistantToggle: () -> Unit,
+    socialSignalsEnabled: Boolean,
+    onSocialSignalsToggle: () -> Unit,
+    userName: String,
+    onUserNameChange: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val context = LocalContext.current
+    val layoutNames = listOf("Default", "Floating", "Compact")
+    var editingName by remember { mutableStateOf(userName) }
+    val focusManager = LocalFocusManager.current
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+        ) {
+            // User Profile Section (One UI style)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 24.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Avatar circle with first letter
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = editingName.firstOrNull()?.uppercase() ?: "?",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Your Profile",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    BasicTextField(
+                        value = editingName,
+                        onValueChange = { editingName = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface
+                        ),
+                        singleLine = true,
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = {
+                            onUserNameChange(editingName)
+                            focusManager.clearFocus()
+                        }),
+                        decorationBox = { innerTextField ->
+                            if (editingName.isEmpty()) {
+                                Text(
+                                    "Set your name",
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                )
+                            }
+                            innerTextField()
+                        }
+                    )
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(bottom = 16.dp))
+
+            // Header
+            Text(
+                text = "Settings",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 20.dp)
+            )
+
+            // Dark Mode Toggle
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { onToggleDarkMode() }
+                    .padding(vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (isDarkMode) Icons.Rounded.DarkMode else Icons.Rounded.LightMode,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = "Dark Mode",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+                Switch(
+                    checked = isDarkMode,
+                    onCheckedChange = { onToggleDarkMode() }
+                )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            // Mini Player Layout
+            Text(
+                text = "Mini Player Layout",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 12.dp, top = 8.dp)
+            )
+
+            layoutNames.forEachIndexed { index, name ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onLayoutChange(index) }
+                        .padding(vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (miniLayoutIndex == index) MaterialTheme.colorScheme.primary
+                               else MaterialTheme.colorScheme.onSurface
+                    )
+                    if (miniLayoutIndex == index) {
+                        Icon(
+                            imageVector = Icons.Rounded.Check,
+                            contentDescription = "Selected",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            // Pill Position
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { onPillPositionChange(!isPillAtBottom) }
+                    .padding(vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (isPillAtBottom) Icons.Rounded.VerticalAlignBottom else Icons.Rounded.VerticalAlignTop,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Pill Position",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            text = if (isPillAtBottom) "Bottom" else "Top",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                }
+                Switch(
+                    checked = isPillAtBottom,
+                    onCheckedChange = { onPillPositionChange(it) }
+                )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            // Voice Assistant
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { onVoiceAssistantToggle() }
+                    .padding(vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Rounded.RecordVoiceOver,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Voice Assistant",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            text = "\"Halo Yan\" wake word",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                }
+                Switch(
+                    checked = isVoiceAssistantEnabled,
+                    onCheckedChange = { onVoiceAssistantToggle() }
+                )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            // Social Signals
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { onSocialSignalsToggle() }
+                    .padding(vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Rounded.NotificationsActive,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Social Signals",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            text = "Recommendations from your social feed",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                }
+                Switch(
+                    checked = socialSignalsEnabled,
+                    onCheckedChange = { onSocialSignalsToggle() }
+                )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            // Social Media
+            Text(
+                text = "Follow Ian",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 12.dp, top = 8.dp)
+            )
+
+            socialMenuItems.forEach { item ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            try {
+                                context.startActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(item.url)
+                                    )
+                                )
+                            } catch (_: Exception) {}
+                        }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    when (item.label) {
+                        "Facebook" -> FacebookIcon(modifier = Modifier.size(24.dp))
+                        "Instagram" -> InstagramIcon(modifier = Modifier.size(24.dp))
+                        "TikTok" -> TikTokIcon(modifier = Modifier.size(24.dp))
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = item.label,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }

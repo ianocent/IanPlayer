@@ -176,6 +176,13 @@ class PlayerGateway(
             {
                 player = controllerFuture?.get()
                 player?.addListener(playerListener)
+                // Sync play/pause state from the live session — the UI must reflect
+                // reality (e.g. when restoring after the app was killed while playing).
+                _isPlaying.value = player?.isPlaying ?: false
+                // Restore persisted repeat mode to the player (ExoPlayer defaults to OFF).
+                player?.repeatMode = _repeatMode.value
+                // Restore persisted shuffle mode to the player.
+                player?.shuffleModeEnabled = _isShuffleOn.value
                 val restored = restoreCurrentFromPlayer(fireOnSongPlayed = true)
                 onReady(restored, player?.isPlaying ?: false)
             },
@@ -425,6 +432,7 @@ class PlayerGateway(
     fun toggleShuffle() {
         _isShuffleOn.value = !_isShuffleOn.value
         prefs.edit().putBoolean(PREF_IS_SHUFFLE_ON, _isShuffleOn.value).apply()
+        player?.shuffleModeEnabled = _isShuffleOn.value
         val current = _currentSong.value
         if (_isShuffleOn.value) {
             baseQueueBeforeShuffle = _queue.value

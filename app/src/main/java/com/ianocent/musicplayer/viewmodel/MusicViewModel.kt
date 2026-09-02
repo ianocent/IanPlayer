@@ -318,7 +318,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             pendingLocationSync.value = PendingLocationSync(songTitle, artist)
             return
         }
-        firebaseLocationSync.syncLocation(loc, songTitle, artist)
+        firebaseLocationSync.syncLocation(loc, songTitle, artist, _userName.value)
     }
 
     // ---- For You: personalization from social-media feed signals ----
@@ -723,6 +723,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         settingsStore.miniLayoutIndex = index
     }
 
+    private val _userName = MutableStateFlow(settingsStore.userName)
+    val userName: StateFlow<String> = _userName
+
+    fun setUserName(name: String) {
+        _userName.value = name
+        settingsStore.userName = name
+    }
+
     private val _showListeningPill = MutableStateFlow(false)
     val showListeningPill: StateFlow<Boolean> = _showListeningPill
 
@@ -934,7 +942,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     val pending = pendingLocationSync.value
                     if (pending != null) {
                         Timber.d("Location now available, syncing pending: ${pending.songTitle}")
-                        firebaseLocationSync.syncLocation(loc, pending.songTitle, pending.artist)
+                        firebaseLocationSync.syncLocation(loc, pending.songTitle, pending.artist, _userName.value)
                         pendingLocationSync.value = null
                     }
                 }
@@ -1000,7 +1008,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun loadArt(song: Song) {
         viewModelScope.launch {
-            val bitmap = artLoader.load(song, highRes = false, embeddedSize = 400)
+            val bitmap = artLoader.load(song, highRes = true)
             _albumArt.value = bitmap
             _ambientColor.value = bitmap?.let {
                 AlbumArtLoader.extractDominantColor(it)

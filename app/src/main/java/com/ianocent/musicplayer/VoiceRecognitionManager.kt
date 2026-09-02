@@ -13,12 +13,16 @@ class VoiceRecognitionManager(
     private val onPartialResults: (String) -> Unit,
     private val onError: (Int) -> Unit,
     private val onRmsChanged: (Float) -> Unit,
-    private val onListeningStateChanged: (Boolean) -> Unit
+    private val onListeningStateChanged: (Boolean) -> Unit,
+    /** Fires when speech recognition ends with no useful text — signals caller to try song recognition. */
+    private val onSpeechFailed: (() -> Unit)? = null
 ) {
     private var speechRecognizer: SpeechRecognizer? = null
+    private var hadPartialResults = false
 
     private val recognitionListener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
+            hadPartialResults = false
             onListeningStateChanged(true)
             onRmsChanged(0f)
         }
@@ -35,20 +39,36 @@ class VoiceRecognitionManager(
 
         override fun onError(error: Int) {
             onListeningStateChanged(false)
-            onError(error)
+            // Speech failed — if no partial results came in, suggest song recognition
+            if (!hadPartialResults) {
+                onSpeechFailed?.invoke()
+            } else {
+                onError(error)
+            }
         }
 
         override fun onResults(results: Bundle?) {
             onListeningStateChanged(false)
             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             if (!matches.isNullOrEmpty()) {
-                onResults(matches[0])
+                val text = matches[0]
+                // If the recognized text is very short or looks like noise, suggest song recognition
+                if (text.length < 3 || text.isBlank()) {
+                    onSpeechFailed?.invoke()
+                } else {
+                    onResults(text)
+                }
+            } else {
+                onSpeechFailed?.invoke()
             }
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
             partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.let { list ->
-                if (list.isNotEmpty()) onPartialResults(list[0])
+                if (list.isNotEmpty()) {
+                    hadPartialResults = true
+                    onPartialResults(list[0])
+                }
             }
         }
 
@@ -65,6 +85,7 @@ class VoiceRecognitionManager(
     }
 
     fun startListening() {
+        hadPartialResults = false
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "id-ID")

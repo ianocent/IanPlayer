@@ -303,32 +303,79 @@ class YTMusicRepository(context: Context) {
     }
 
     private fun parseArtist(item: JSONObject): String {
-        val flexCols = item.optJSONArray("flexColumns") ?: return "Unknown Artist"
-        val runs = flexCols.optJSONObject(1)
-            ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
-            ?.optJSONObject("text")
-            ?.optJSONArray("runs")
-            ?: return "Unknown Artist"
+        // Primary path: flexColumns[1] runs with MUSIC_PAGE_TYPE_ARTIST
+        val flexCols = item.optJSONArray("flexColumns")
+        if (flexCols != null) {
+            val runs = flexCols.optJSONObject(1)
+                ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+                ?.optJSONObject("text")
+                ?.optJSONArray("runs")
+            if (runs != null) {
+                val artists = mutableListOf<String>()
+                for (i in 0 until runs.length()) {
+                    val run = runs.optJSONObject(i) ?: continue
+                    val text = run.optString("text", "")
+                    if (text.isBlank() || text == " • ") continue
+                    val pageType = run.optJSONObject("navigationEndpoint")
+                        ?.optJSONObject("browseEndpoint")
+                        ?.optJSONObject("browseEndpointContextSupportedConfigs")
+                        ?.optJSONObject("browseEndpointContextMusicConfig")
+                        ?.optString("pageType", "")
+                    if (pageType == "MUSIC_PAGE_TYPE_ARTIST") {
+                        artists.add(text)
+                    }
+                }
+                if (artists.isNotEmpty()) return artists.joinToString(", ")
+            }
 
-        // flexColumns[1] is a "Artist • Album • Duration" run list; every segment with a
-        // browseEndpoint could be an artist OR an album (both are clickable), so we must check
-        // pageType specifically rather than assume "any browseEndpoint = artist" (that previously
-        // picked up album names too, e.g. "Eminem, The Eminem Show").
-        val artists = mutableListOf<String>()
-        for (i in 0 until runs.length()) {
-            val run = runs.optJSONObject(i) ?: continue
-            val text = run.optString("text", "")
-            if (text.isBlank() || text == " • ") continue
-            val pageType = run.optJSONObject("navigationEndpoint")
-                ?.optJSONObject("browseEndpoint")
-                ?.optJSONObject("browseEndpointContextSupportedConfigs")
-                ?.optJSONObject("browseEndpointContextMusicConfig")
-                ?.optString("pageType", "")
-            if (pageType == "MUSIC_PAGE_TYPE_ARTIST") {
-                artists.add(text)
+            // Fallback: try flexColumns[0] (some responses put artist in first column)
+            val runs0 = flexCols.optJSONObject(0)
+                ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+                ?.optJSONObject("text")
+                ?.optJSONArray("runs")
+            if (runs0 != null) {
+                for (i in 0 until runs0.length()) {
+                    val run = runs0.optJSONObject(i) ?: continue
+                    val pageType = run.optJSONObject("navigationEndpoint")
+                        ?.optJSONObject("browseEndpoint")
+                        ?.optJSONObject("browseEndpointContextSupportedConfigs")
+                        ?.optJSONObject("browseEndpointContextMusicConfig")
+                        ?.optString("pageType", "")
+                    if (pageType == "MUSIC_PAGE_TYPE_ARTIST") {
+                        val text = run.optString("text", "")
+                        if (text.isNotBlank() && text != " • ") return text
+                    }
+                }
             }
         }
-        return if (artists.isEmpty()) "Unknown Artist" else artists.joinToString(", ")
+
+        // Fallback: byline text (video-type items mixed into search)
+        val byline = item.optJSONObject("longBylineText")
+            ?: item.optJSONObject("shortBylineText")
+        val bylineArtist = byline?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+        if (!bylineArtist.isNullOrBlank() && bylineArtist != "Unknown Artist") return bylineArtist
+
+        // Last resort: extract from title "Artist - Title" pattern
+        val titleText = item.optJSONObject("title")
+            ?.optJSONArray("runs")
+            ?.optJSONObject(0)
+            ?.optString("text", "")
+            ?: ""
+        extractArtistFromTitle(titleText)?.let { return it }
+
+        return "Unknown Artist"
+    }
+
+    /**
+     * Attempts to extract artist from a title string that follows the "Artist - Title" pattern.
+     * Used as a last-resort fallback when the API structure doesn't contain artist info.
+     */
+    private fun extractArtistFromTitle(title: String): String? {
+        val dashIndex = title.indexOf(" - ")
+        if (dashIndex <= 0) return null
+        val candidate = title.substring(0, dashIndex).trim()
+        if (candidate.isBlank() || candidate.length > 80) return null
+        return candidate
     }
 
     private fun parseDuration(item: JSONObject): Long {
@@ -775,11 +822,33 @@ class YTMusicRepository(context: Context) {
     }
 
     private fun parseVideoArtist(item: JSONObject): String {
-        return item.optJSONObject("ownerText")
+        // Primary: ownerText
+        val ownerArtist = item.optJSONObject("ownerText")
             ?.optJSONArray("runs")
             ?.optJSONObject(0)
-            ?.optString("text", "Unknown Artist")
-            ?: "Unknown Artist"
+            ?.optString("text")
+        if (!ownerArtist.isNullOrBlank()) return ownerArtist
+
+        // Fallback: longBylineText / shortBylineText
+        val bylineArtist = item.optJSONObject("longBylineText")
+            ?.optJSONArray("runs")
+            ?.optJSONObject(0)
+            ?.optString("text")
+            ?: item.optJSONObject("shortBylineText")
+                ?.optJSONArray("runs")
+                ?.optJSONObject(0)
+                ?.optString("text")
+        if (!bylineArtist.isNullOrBlank()) return bylineArtist
+
+        // Last resort: extract from title
+        val titleText = item.optJSONObject("title")
+            ?.optJSONArray("runs")
+            ?.optJSONObject(0)
+            ?.optString("text", "")
+            ?: ""
+        extractArtistFromTitle(titleText)?.let { return it }
+
+        return "Unknown Artist"
     }
 
     private fun parseVideoDuration(item: JSONObject): Long =
@@ -872,7 +941,7 @@ class YTMusicRepository(context: Context) {
                     uri = StreamSources.placeholderUri(vId),
                     source = StreamSources.YOUTUBE,
                     isStream = true,
-                    remoteArtUrl = item.optJSONObject("thumbnail")?.optJSONArray("thumbnails")?.optJSONObject(0)?.optString("url"),
+                    remoteArtUrl = bestThumbnailUrl(item.optJSONObject("thumbnail")?.optJSONArray("thumbnails")).ifEmpty { null },
                     remoteId = vId
                 ))
             }

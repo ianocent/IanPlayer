@@ -30,6 +30,7 @@ import timber.log.Timber
 
 data class ListenerData(
     val userId: String = "",
+    val userName: String = "",
     val lat: Double = 0.0,
     val lng: Double = 0.0,
     val city: String = "",
@@ -68,6 +69,7 @@ fun AdminMapScreen(onBack: () -> Unit) {
                     try {
                         val data = ListenerData(
                             userId = child.key ?: "",
+                            userName = child.child("userName").getValue(String::class.java) ?: "",
                             lat = child.child("lat").getValue(Double::class.java) ?: 0.0,
                             lng = child.child("lng").getValue(Double::class.java) ?: 0.0,
                             city = child.child("city").getValue(String::class.java) ?: "",
@@ -91,8 +93,9 @@ fun AdminMapScreen(onBack: () -> Unit) {
                         val bounds = com.google.android.gms.maps.model.LatLngBounds.Builder()
                         listeners.forEach { listener ->
                             val position = LatLng(listener.lat, listener.lng)
-                            val title = "${listener.songTitle} - ${listener.artist}"
-                            val snippet = "${listener.city}, ${listener.country}"
+                            val displayName = listener.userName.ifBlank { "Listener" }
+                            val title = "$displayName • ${listener.songTitle}"
+                            val snippet = "${listener.artist} • ${listener.city}"
                             map.addMarker(
                                 MarkerOptions()
                                     .position(position)
@@ -183,8 +186,9 @@ fun AdminMapScreen(onBack: () -> Unit) {
                                     val bounds = com.google.android.gms.maps.model.LatLngBounds.Builder()
                                     listeners.forEach { listener ->
                                         val position = LatLng(listener.lat, listener.lng)
-                                        val title = "${listener.songTitle} - ${listener.artist}"
-                                        val snippet = "${listener.city}, ${listener.country}"
+                                        val displayName = listener.userName.ifBlank { "Listener" }
+                                        val title = "$displayName • ${listener.songTitle}"
+                                        val snippet = "${listener.artist} • ${listener.city}"
                                         map.addMarker(
                                             MarkerOptions()
                                                 .position(position)
@@ -239,8 +243,9 @@ fun AdminMapScreen(onBack: () -> Unit) {
                                         else -> "${diff / 86400_000}d ago"
                                     }
                                 }
+                                val displayName = listener.userName.ifBlank { "Listener" }
                                 Text(
-                                    text = "${listener.songTitle} • ${listener.city} • $timeAgo",
+                                    text = "$displayName • ${listener.songTitle} • $timeAgo",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color.Gray
                                 )
