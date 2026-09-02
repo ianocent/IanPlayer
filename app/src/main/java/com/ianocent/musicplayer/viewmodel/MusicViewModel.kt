@@ -731,6 +731,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         settingsStore.userName = name
     }
 
+    private val _avatarUri = MutableStateFlow(settingsStore.avatarUri)
+    val avatarUri: StateFlow<String?> = _avatarUri
+
+    fun setAvatarUri(uri: String?) {
+        _avatarUri.value = uri
+        settingsStore.avatarUri = uri
+    }
+
     private val _showListeningPill = MutableStateFlow(false)
     val showListeningPill: StateFlow<Boolean> = _showListeningPill
 
@@ -903,6 +911,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 incrementPlayCount(song.id)
                 loadArt(song)
                 loadLyric(song)
+                syncLocationToFirebase(song.title, song.artist)
             },
             onBufferingChange = { },
             onIsPlayingChange = { isPlaying ->

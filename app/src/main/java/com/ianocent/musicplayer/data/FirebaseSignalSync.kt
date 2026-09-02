@@ -22,6 +22,38 @@ class FirebaseSignalSync {
 
     private val auth = FirebaseAuth.getInstance()
     private val db = FirebaseDatabase.getInstance().reference
+    private var authRetryCount = 0
+    private val maxAuthRetries = 3
+
+    init {
+        ensureAuthenticated()
+    }
+
+    private fun ensureAuthenticated() {
+        if (auth.currentUser != null) {
+            Timber.d("FirebaseSignalSync: already authenticated, uid=${auth.currentUser?.uid}")
+            return
+        }
+
+        Timber.d("FirebaseSignalSync: attempting anonymous auth (attempt ${authRetryCount + 1}/$maxAuthRetries)")
+        auth.signInAnonymously()
+            .addOnSuccessListener {
+                authRetryCount = 0
+                Timber.d("FirebaseSignalSync: anonymous auth success, uid=${auth.currentUser?.uid}")
+            }
+            .addOnFailureListener { e ->
+                authRetryCount++
+                Timber.e("FirebaseSignalSync: anonymous auth failed (attempt $authRetryCount/$maxAuthRetries): ${e.message}")
+
+                if (authRetryCount < maxAuthRetries) {
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        ensureAuthenticated()
+                    }, 2000)
+                } else {
+                    Timber.e("FirebaseSignalSync: auth retries exhausted, signal sync will not work")
+                }
+            }
+    }
 
     /**
      * Writes a rich signal context to Firebase.

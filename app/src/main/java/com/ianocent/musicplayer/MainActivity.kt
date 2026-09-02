@@ -450,6 +450,7 @@ fun ListingScreen(
     val isVoiceAssistantEnabled by viewModel.isVoiceAssistantEnabled.collectAsState()
     val socialSignalsEnabled by viewModel.socialSignalsEnabled.collectAsState()
     val userName by viewModel.userName.collectAsState()
+    val avatarUri by viewModel.avatarUri.collectAsState()
     var showPlaylistSelectionDialog by remember { mutableStateOf<Song?>(null) }
 
     val isPreview = androidx.compose.ui.platform.LocalInspectionMode.current
@@ -1776,6 +1777,8 @@ fun ListingScreen(
             onSocialSignalsToggle = { viewModel.setSocialSignalsEnabled(!socialSignalsEnabled) },
             userName = userName,
             onUserNameChange = { viewModel.setUserName(it) },
+            avatarUri = avatarUri,
+            onAvatarChange = { viewModel.setAvatarUri(it) },
             onDismiss = { showSettingsSheet = false }
         )
     }
@@ -3656,13 +3659,30 @@ private fun SettingsBottomSheet(
     onSocialSignalsToggle: () -> Unit,
     userName: String,
     onUserNameChange: (String) -> Unit,
+    avatarUri: String?,
+    onAvatarChange: (String?) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
     val layoutNames = listOf("Default", "Floating", "Compact")
     var editingName by remember { mutableStateOf(userName) }
+    var pickedAvatarUri by remember { mutableStateOf(avatarUri) }
     val focusManager = LocalFocusManager.current
+
+    val avatarPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    it, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
+            pickedAvatarUri = it.toString()
+            onAvatarChange(it.toString())
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -3680,20 +3700,32 @@ private fun SettingsBottomSheet(
                     .padding(bottom = 24.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Avatar circle with first letter
+                // Avatar circle with image or first letter
                 Box(
                     modifier = Modifier
                         .size(64.dp)
                         .clip(RoundedCornerShape(20.dp))
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                        .clickable { avatarPicker.launch("image/*") },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = editingName.firstOrNull()?.uppercase() ?: "?",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    if (pickedAvatarUri != null) {
+                        coil.compose.AsyncImage(
+                            model = pickedAvatarUri,
+                            contentDescription = "Avatar",
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(RoundedCornerShape(20.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Text(
+                            text = editingName.firstOrNull()?.uppercase() ?: "?",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
                 Spacer(modifier = Modifier.width(16.dp))
                 Column(modifier = Modifier.weight(1f)) {

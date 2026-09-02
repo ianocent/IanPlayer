@@ -26,21 +26,24 @@ class SocialSignalListener : NotificationListenerService() {
     private val firebaseSignalSync by lazy { FirebaseSignalSync() }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        if (!SettingsStore.from(this).isSocialSignalsEnabled) return
+        if (!SettingsStore.from(this).isSocialSignalsEnabled) {
+            Timber.d("SocialSignalListener: social signals disabled, skipping")
+            return
+        }
         val pkg = sbn.packageName
         if (pkg !in ALLOWED_PACKAGES) return
         val notification = sbn.notification ?: return
         val text = buildText(notification) ?: return
 
-        // Messaging apps: require explicit music/social keyword
-        if (pkg in MESSAGING_PACKAGES && !MUSIC_KEYWORDS.matcher(text).find()) return
+        Timber.d("SocialSignalListener: notification from $pkg, text=${text.take(80)}")
 
         val context = buildSignalContext(text, pkg)
         if (context == null) {
-            Timber.d("No signal extracted from: ${pkg}")
+            Timber.d("SocialSignalListener: no signal extracted from $pkg")
             return
         }
 
+        Timber.d("SocialSignalListener: storing signal artist=${context.artist}, title=${context.title}")
         storeSignal(context)
     }
 
@@ -94,7 +97,7 @@ class SocialSignalListener : NotificationListenerService() {
             .take(280) // Cap at 280 chars like Twitter
 
         // If no meaningful content extracted, skip
-        if (cleanText.length < 5 && artist == null && keywords.isEmpty()) return null
+        if (cleanText.length < 3 && artist == null && keywords.isEmpty()) return null
 
         return SignalContext(
             rawText = cleanText,

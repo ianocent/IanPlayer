@@ -42,6 +42,10 @@ class SettingsStore(private val prefs: SharedPreferences) {
         get() = prefs.getString(KEY_USER_NAME, "") ?: ""
         set(value) = prefs.edit().putString(KEY_USER_NAME, value).apply()
 
+    var avatarUri: String?
+        get() = prefs.getString(KEY_AVATAR_URI, null)
+        set(value) = prefs.edit().putString(KEY_AVATAR_URI, value).apply()
+
     companion object {
         private const val KEY_DARK_MODE = "is_dark_mode"
         private const val KEY_VOICE_ASSISTANT = "voice_assistant_enabled"
@@ -51,6 +55,7 @@ class SettingsStore(private val prefs: SharedPreferences) {
         private const val KEY_SORT_MODE = "sort_mode"
         private const val KEY_LAST_RECAP_CHECK_TS = "last_recap_check_ts"
         private const val KEY_USER_NAME = "user_name"
+        private const val KEY_AVATAR_URI = "avatar_uri"
 
         /** For receivers/listener services the system instantiates itself. */
         fun from(context: Context): SettingsStore =
