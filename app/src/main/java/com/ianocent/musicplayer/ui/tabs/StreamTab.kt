@@ -406,27 +406,6 @@ fun StreamTabContent(
                                                         color = Color.Gray
                                                     )
                                                 } else {
-                                                    if (forYouSignals.isNotEmpty()) {
-                                                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                            items(forYouSignals.take(6)) { (signal, _) ->
-                                                                Box(
-                                                                    Modifier
-                                                                        .clip(RoundedCornerShape(50))
-                                                                        .background(adaptiveColor.copy(alpha = 0.12f))
-                                                                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                                                                ) {
-                                                                    Text(
-                                                                        signal,
-                                                                        style = MaterialTheme.typography.labelSmall,
-                                                                        color = adaptiveColor.copy(alpha = 0.9f),
-                                                                        maxLines = 1,
-                                                                        overflow = TextOverflow.Ellipsis
-                                                                    )
-                                                                }
-                                                            }
-                                                        }
-                                                        Spacer(Modifier.height(8.dp))
-                                                    }
                                                     LazyRow(
                                                         state = forYouLazyListState,
                                                         horizontalArrangement = Arrangement.spacedBy(10.dp)

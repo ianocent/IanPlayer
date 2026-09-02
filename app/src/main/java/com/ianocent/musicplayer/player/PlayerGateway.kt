@@ -120,14 +120,13 @@ class PlayerGateway(
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             _duration.value = getDuration()
             syncStateFromPlayer()
-            // Persist on every auto-advance so prefs never go stale; otherwise a
-            // warm reconnect (activity recreated while the service kept playing)
-            // restores an outdated "current song".
             savePlayerState()
 
             val currentItem = player?.currentMediaItem
             if (currentItem != null && isPlaceholderUri(currentItem.localConfiguration?.uri?.toString())) {
-                _currentSong.value?.let { resolveAndStart(it) }
+                if (playbackJob?.isActive != true) {
+                    _currentSong.value?.let { resolveAndStart(it) }
+                }
             }
         }
 

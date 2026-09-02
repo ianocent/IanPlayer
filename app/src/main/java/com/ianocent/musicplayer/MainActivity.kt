@@ -3367,7 +3367,7 @@ fun ForYouSongCard(
 ) {
     var art by remember(song.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
     LaunchedEffect(song.id) {
-        viewModel.getCachedArt(song) { b -> art = b }
+        viewModel.getHighResArt(song) { b -> art = b }
     }
 
     Card(
