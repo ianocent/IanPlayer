@@ -30,42 +30,73 @@ class LocationTracker(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun startTracking() {
-        val request = LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 300_000L)
-            .setMinUpdateIntervalMillis(60_000L)
+        Timber.d("LocationTracker: startTracking called")
+
+        // Try last known location first
+        fusedClient.lastLocation
+            .addOnSuccessListener { loc ->
+                if (loc != null) {
+                    Timber.d("LocationTracker: lastLocation found (${loc.latitude}, ${loc.longitude}), accuracy=${loc.accuracy}m")
+                    if (_location.value == null) {
+                        resolveAndSet(loc)
+                    }
+                } else {
+                    Timber.d("LocationTracker: lastLocation is null")
+                }
+            }
+            .addOnFailureListener { e ->
+                Timber.w("LocationTracker: lastLocation failed: ${e.message}")
+            }
+
+        // Network-based location — works indoors, fast fix
+        // Falls back to GPS when outdoor for better accuracy
+        val request = LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 60_000L)
+            .setMinUpdateIntervalMillis(30_000L)
             .setMaxUpdates(Int.MAX_VALUE)
+            .setWaitForAccurateLocation(false)
             .build()
 
         val callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
-                result.lastLocation?.let { loc ->
-                    try {
-                        val addresses = geocoder.getFromLocation(loc.latitude, loc.longitude, 1)
-                        val countryCode = addresses?.firstOrNull()?.countryCode ?: "US"
-                        val city = addresses?.firstOrNull()?.locality ?: "Unknown"
-
-                        _location.value = LocationData(
-                            latitude = loc.latitude,
-                            longitude = loc.longitude,
-                            countryCode = countryCode,
-                            city = city
-                        )
-                        Timber.d("Location updated: $city, $countryCode")
-                    } catch (e: Exception) {
-                        Timber.e("Geocoder failed: ${e.message}")
-                        _location.value = LocationData(
-                            latitude = loc.latitude,
-                            longitude = loc.longitude,
-                            countryCode = "US",
-                            city = "Unknown"
-                        )
-                    }
+                val loc = result.lastLocation
+                if (loc == null) {
+                    Timber.w("LocationTracker: onLocationResult but lastLocation is null")
+                    return
                 }
+                Timber.d("LocationTracker: got update (${loc.latitude}, ${loc.longitude}), accuracy=${loc.accuracy}m, provider=${loc.provider}")
+                resolveAndSet(loc)
             }
         }
 
         locationCallback = callback
         fusedClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
-        Timber.d("Location tracking started")
+        Timber.d("LocationTracker: requesting BALANCED location (network+GPS, interval=1min)")
+    }
+
+    private fun resolveAndSet(loc: android.location.Location) {
+        try {
+            val addresses = geocoder.getFromLocation(loc.latitude, loc.longitude, 1)
+            val countryCode = addresses?.firstOrNull()?.countryCode ?: "ID"
+            val city = addresses?.firstOrNull()?.locality
+                ?: addresses?.firstOrNull()?.subAdminArea
+                ?: "Unknown"
+
+            _location.value = LocationData(
+                latitude = loc.latitude,
+                longitude = loc.longitude,
+                countryCode = countryCode,
+                city = city
+            )
+            Timber.d("LocationTracker: resolved — $city, $countryCode (${loc.latitude}, ${loc.longitude})")
+        } catch (e: Exception) {
+            Timber.e("LocationTracker: Geocoder failed: ${e.message}")
+            _location.value = LocationData(
+                latitude = loc.latitude,
+                longitude = loc.longitude,
+                countryCode = "ID",
+                city = "Unknown"
+            )
+        }
     }
 
     fun stopTracking() {

@@ -140,6 +140,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.ui.tooling.preview.Preview
+import timber.log.Timber
 
 private data class SocialMenuItem(val label: String, val url: String, val bgColor: Color, val textColor: Color)
 private val socialMenuItems = listOf(
@@ -381,30 +382,41 @@ fun ListingScreen(
     else
         Manifest.permission.READ_EXTERNAL_STORAGE
 
-    val storageLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        hasPermission = granted
-        if (granted) viewModel.loadSongs()
-    }
-
-    // Location permission
-    val locationPermission = Manifest.permission.ACCESS_COARSE_LOCATION
-    val locationLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            viewModel.startLocationTracking()
+    // Unified permission request — storage + location + notifications
+    val requiredPermissions = buildList {
+        add(storagePermission)
+        add(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (Build.VERSION.SDK_INT >= 33) {
+            add(Manifest.permission.POST_NOTIFICATIONS)
         }
+    }.toTypedArray()
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        val storageGranted = results[storagePermission] == true
+        val locationGranted = results[Manifest.permission.ACCESS_FINE_LOCATION] == true
+        val notifGranted = results[Manifest.permission.POST_NOTIFICATIONS] != false
+
+        Timber.d("Permissions: storage=$storageGranted, location=$locationGranted, notifications=$notifGranted")
+        hasPermission = storageGranted
+        if (storageGranted) viewModel.loadSongs()
+        if (locationGranted) viewModel.startLocationTracking()
     }
 
     LaunchedEffect(Unit) {
-        storageLauncher.launch(storagePermission)
-        // Request location permission
-        if (ctx.checkSelfPermission(locationPermission) == PackageManager.PERMISSION_GRANTED) {
+        // Check if all permissions already granted
+        val allGranted = requiredPermissions.all {
+            ctx.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+        }
+        if (allGranted) {
+            Timber.d("All permissions already granted")
+            hasPermission = true
+            viewModel.loadSongs()
             viewModel.startLocationTracking()
         } else {
-            locationLauncher.launch(locationPermission)
+            Timber.d("Requesting permissions")
+            permissionLauncher.launch(requiredPermissions)
         }
     }
 

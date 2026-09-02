@@ -245,6 +245,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _locationCity = MutableStateFlow<String?>(null)
     val locationCity: StateFlow<String?> = _locationCity
 
+    // Pending location sync — holds song info while waiting for location fix
+    private data class PendingLocationSync(val songTitle: String, val artist: String)
+    private val pendingLocationSync = MutableStateFlow<PendingLocationSync?>(null)
+
     // == Stream songs cache (persist stream song metadata for playlists) ==
     // Owned by SongStore; loaded synchronously at its construction.
     val streamSongsCache: StateFlow<Map<Long, Song>> = songStore.streamSongsCache
@@ -308,7 +312,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun syncLocationToFirebase(songTitle: String, artist: String) {
-        val loc = locationData.value ?: return
+        val loc = locationData.value
+        if (loc == null) {
+            Timber.d("syncLocationToFirebase: locationData null, queuing sync for: $songTitle")
+            pendingLocationSync.value = PendingLocationSync(songTitle, artist)
+            return
+        }
         firebaseLocationSync.syncLocation(loc, songTitle, artist)
     }
 
@@ -917,6 +926,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         playbackGateway.startPositionPolling()
+
+        // Watch for location fix and sync any pending location data
+        viewModelScope.launch {
+            locationData.collect { loc ->
+                if (loc != null) {
+                    val pending = pendingLocationSync.value
+                    if (pending != null) {
+                        Timber.d("Location now available, syncing pending: ${pending.songTitle}")
+                        firebaseLocationSync.syncLocation(loc, pending.songTitle, pending.artist)
+                        pendingLocationSync.value = null
+                    }
+                }
+            }
+        }
     }
 
 
@@ -935,22 +958,37 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun toggleShuffle() = playbackGateway.toggleShuffle()
 
-    fun setQueue(newQueue: List<Song>, startSong: Song? = null) =
+    fun setQueue(newQueue: List<Song>, startSong: Song? = null) {
         playbackGateway.setQueue(newQueue, startSong)
+        val song = startSong ?: newQueue.firstOrNull()
+        song?.let { syncLocationToFirebase(it.title, it.artist) }
+    }
     fun toggleRepeat() = playbackGateway.toggleRepeat()
 
     fun playSong(song: Song) {
+        Timber.d("MusicViewModel.playSong: ${song.title} - ${song.artist}")
         preResolveJob?.cancel() // Prioritaskan jalur jaringan untuk lagu yang diklik
         playbackGateway.playSong(song)
         // Sync location to Firebase for admin map
         syncLocationToFirebase(song.title, song.artist)
     }
 
-    fun playNext() = playbackGateway.playNext()
+    fun playNext() {
+        playbackGateway.playNext()
+        val song = playbackGateway.currentSong.value
+        song?.let { syncLocationToFirebase(it.title, it.artist) }
+    }
 
-    fun playPrevious() = playbackGateway.playPrevious()
+    fun playPrevious() {
+        playbackGateway.playPrevious()
+        val song = playbackGateway.currentSong.value
+        song?.let { syncLocationToFirebase(it.title, it.artist) }
+    }
 
-    fun playNext(song: Song) = playbackGateway.playNext(song)
+    fun playNext(song: Song) {
+        playbackGateway.playNext(song)
+        syncLocationToFirebase(song.title, song.artist)
+    }
 
     fun addToQueue(song: Song) = playbackGateway.addToQueue(song)
 
