@@ -383,7 +383,7 @@ class PlayerGateway(
         playedSongIds.add(songId)
     }
 
-    fun autoFillUpNext(context: AutoFillContext = AutoFillContext.Default) {
+    fun autoFillUpNext(context: AutoFillContext = AutoFillContext()) {
         if (_repeatMode.value == Player.REPEAT_MODE_ALL) return
         val list = _queue.value
         val idx = currentIndex
@@ -396,92 +396,19 @@ class PlayerGateway(
 
         autoFillJob = scope.launch {
             Timber.d("PlayerGateway triggering smart auto-fill for: ${current.title} (context: ${context})")
-            val relatedSongs = when (context) {
-                is AutoFillContext.Playlist -> ytMusicRepository.fetchRelatedSongs(current.remoteId, genre = current.genre)
-                is AutoFillContext.Genre -> ytMusicRepository.fetchRelatedSongs(current.remoteId, genre = _selectedGenre.value)
-                is AutoFillContext.SocialSignal -> {
-                    val signal = _forYouSignals.value.firstOrNull()
-                    if (signal.first != null) {
-                        val res = ytMusicRepository.searchSongs(signal.first, {}, gl = "US")
-                        if (res is StreamSearchResult.Success) res.songs else emptyList()
-                    } else ytMusicRepository.fetchRelatedSongs(current.remoteId)
-                }
-                else -> ytMusicRepository.fetchRelatedSongs(current.remoteId)
-            }
+            val relatedSongs = ytMusicRepository.fetchRelatedSongs(current.remoteId)
 
-            val enhancedRelated = when (context) {
-                is AutoFillContext.Default -> processAutoFillResults(relatedSongs)
-                is AutoFillContext.Playlist -> processAutoFillResults(relatedSongs, context = context)
-                is AutoFillContext.Genre -> processAutoFillResults(relatedSongs, context = context)
-                is AutoFillContext.SocialSignal -> {
-                    // Enhance with social signal context
-                    val filtered = relatedSongs
-                        .filterNot { it.id in playedSongIds }
-                        .filterNot { it.id in _queue.value.map { it.id }.toSet() }
-                    processAutoFillResults(filtered, context = context)
-                }
-            }
+            val filtered = relatedSongs
+                .filterNot { it.id in playedSongIds }
+                .filterNot { it.id in _queue.value.map { it.id }.toSet() }
+                .take(5)
 
-            // If social signal context, also add time-of-day contextual songs
-            if (context is AutoFillContext.SocialSignal) {
-                val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-                val ctxQuery = when (hour) {
-                    in 5..10 -> "morning upbeat coffee"
-                    in 11..16 -> "productive afternoon focus"
-                    in 17..20 -> "sunset evening chill"
-                    else -> "night drive aesthetic"
-                }
-                val timeSongs = ytMusicRepository.searchSongs(ctxQuery, {}, gl = "US")
-                if (timeSongs is StreamSearchResult.Success && timeSongs.songs.isNotEmpty()) {
-                    val merged = timeSongs.songs + enhancedRelated
-                    _queue.value = _queue.value.toMutableList().apply { addAll(merged.distinctBy { it.id }) }
-                }
+            if (filtered.isNotEmpty()) {
+                _queue.value = _queue.value.toMutableList().apply { addAll(filtered) }
+                filtered.forEach { addToPlayerQueue(it) }
+                savePlayerState()
             }
         }
-    }
-
-    private fun processAutoFillResults(songs: List<Song>, context: AutoFillContext = AutoFillContext.Default) {
-        val currentList = _queue.value
-        val currentIds = currentList.map { it.id }.toSet()
-        val fresh = songs
-            .filterNot { it.id in playedSongIds }
-            .filterNot { it.id in currentIds }
-            .take(5)
-
-        if (fresh.isEmpty()) return
-
-        // Context-aware weighting: boost songs matching current context
-        val weightedFresh = when (context) {
-            is AutoFillContext.Genre -> {
-                val genre = _selectedGenre.value ?: ""
-                fresh.map { song ->
-                    val matchScore = when {
-                        song.genre?.lowercase().contains(genre.lowercase()) -> 2f
-                        song.title.lowercase().contains(genre.lowercase()) -> 1.5f
-                        song.artist.lowercase().contains(genre.lowercase()) -> 1.2f
-                        else -> 1f
-                    }
-                    song.copy(extraData = "${song.extraData}_${matchScore}")
-                }
-            }
-            is AutoFillContext.SocialSignal -> {
-                // Boost songs matching social signal artist/mood
-                val signal = _forYouSignals.value.firstOrNull()
-                fresh.map { song ->
-                    val matchScore = when {
-                        signal.first != null && song.artist.lowercase().contains(signal.first!!.lowercase()) -> 2f
-                        signal.first != null && song.title.lowercase().contains(signal.first!!.lowercase()) -> 1.5f
-                        else -> 1f
-                    }
-                    song.copy(extraData = "${song.extraData}_${matchScore}")
-                }
-            }
-            else -> fresh
-        }
-
-        _queue.value = currentList.toMutableList().apply { addAll(weightedFresh) }
-        weightedFresh.forEach { addToPlayerQueue(it) }
-        savePlayerState()
     }
 
     fun toggleShuffle() {
@@ -688,7 +615,7 @@ class PlayerGateway(
             else -> currentIndex + 1
         }
         playSong(list[nextIndex])
-        autoFillUpNext(AutoFillContext.Default)
+        autoFillUpNext(AutoFillContext())
     }
 
     fun playPrevious() {
@@ -709,7 +636,7 @@ class PlayerGateway(
         playSong(list[prevIndex])
     }
 
-    fun playNext(song: Song, autoFillContext: AutoFillContext = AutoFillContext.Default) {
+    fun playNext(song: Song, autoFillContext: AutoFillContext = AutoFillContext()) {
         val list = _queue.value.toMutableList()
         val curIdx = currentIndex
         if (curIdx < 0) return
