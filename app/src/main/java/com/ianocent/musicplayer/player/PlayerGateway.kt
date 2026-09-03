@@ -383,7 +383,7 @@ class PlayerGateway(
         playedSongIds.add(songId)
     }
 
-    fun autoFillUpNext() {
+    fun autoFillUpNext(context: AutoFillContext = AutoFillContext.Default) {
         if (_repeatMode.value == Player.REPEAT_MODE_ALL) return
         val list = _queue.value
         val idx = currentIndex
@@ -395,25 +395,52 @@ class PlayerGateway(
         if (!current.isStream || current.remoteId == null) return
 
         autoFillJob = scope.launch {
-            Timber.d("PlayerGateway triggering smart auto-fill for: ${current.title}")
-            val relatedSongs = ytMusicRepository.fetchRelatedSongs(current.remoteId)
+            Timber.d("PlayerGateway triggering smart auto-fill for: ${current.title} (context: ${context})")
+            val relatedSongs = when (context) {
+                is AutoFillContext.Playlist -> ytMusicRepository.fetchRelatedSongs(current.remoteId, genre = current.genre)
+                is AutoFillContext.Genre -> ytMusicRepository.fetchRelatedSongs(current.remoteId, genre = _selectedGenre.value)
+                is AutoFillContext.SocialSignal -> {
+                    val signal = _forYouSignals.value.firstOrNull()
+                    if (signal.first != null) {
+                        val res = ytMusicRepository.searchSongs(signal.first, {}, gl = "US")
+                        if (res is StreamSearchResult.Success) res.songs else emptyList()
+                    } else ytMusicRepository.fetchRelatedSongs(current.remoteId)
+                }
+                else -> ytMusicRepository.fetchRelatedSongs(current.remoteId)
+            }
 
-            if (relatedSongs.isEmpty()) {
-                // Fallback to plain search when the 'next' endpoint fails
-                val query = "${current.artist} ${current.title} radio"
-                val result = withContext(Dispatchers.IO) {
-                    try { ytMusicRepository.searchSongs(query, onPartial = {}) } catch (e: Exception) { null }
+            val enhancedRelated = when (context) {
+                is AutoFillContext.Default -> processAutoFillResults(relatedSongs)
+                is AutoFillContext.Playlist -> processAutoFillResults(relatedSongs, context = context)
+                is AutoFillContext.Genre -> processAutoFillResults(relatedSongs, context = context)
+                is AutoFillContext.SocialSignal -> {
+                    // Enhance with social signal context
+                    val filtered = relatedSongs
+                        .filterNot { it.id in playedSongIds }
+                        .filterNot { it.id in _queue.value.map { it.id }.toSet() }
+                    processAutoFillResults(filtered, context = context)
                 }
-                if (result is StreamSearchResult.Success) {
-                    processAutoFillResults(result.songs)
+            }
+
+            // If social signal context, also add time-of-day contextual songs
+            if (context is AutoFillContext.SocialSignal) {
+                val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+                val ctxQuery = when (hour) {
+                    in 5..10 -> "morning upbeat coffee"
+                    in 11..16 -> "productive afternoon focus"
+                    in 17..20 -> "sunset evening chill"
+                    else -> "night drive aesthetic"
                 }
-            } else {
-                processAutoFillResults(relatedSongs)
+                val timeSongs = ytMusicRepository.searchSongs(ctxQuery, {}, gl = "US")
+                if (timeSongs is StreamSearchResult.Success && timeSongs.songs.isNotEmpty()) {
+                    val merged = timeSongs.songs + enhancedRelated
+                    _queue.value = _queue.value.toMutableList().apply { addAll(merged.distinctBy { it.id }) }
+                }
             }
         }
     }
 
-    private fun processAutoFillResults(songs: List<Song>) {
+    private fun processAutoFillResults(songs: List<Song>, context: AutoFillContext = AutoFillContext.Default) {
         val currentList = _queue.value
         val currentIds = currentList.map { it.id }.toSet()
         val fresh = songs
@@ -423,8 +450,37 @@ class PlayerGateway(
 
         if (fresh.isEmpty()) return
 
-        _queue.value = currentList.toMutableList().apply { addAll(fresh) }
-        fresh.forEach { addToPlayerQueue(it) }
+        // Context-aware weighting: boost songs matching current context
+        val weightedFresh = when (context) {
+            is AutoFillContext.Genre -> {
+                val genre = _selectedGenre.value ?: ""
+                fresh.map { song ->
+                    val matchScore = when {
+                        song.genre?.lowercase().contains(genre.lowercase()) -> 2f
+                        song.title.lowercase().contains(genre.lowercase()) -> 1.5f
+                        song.artist.lowercase().contains(genre.lowercase()) -> 1.2f
+                        else -> 1f
+                    }
+                    song.copy(extraData = "${song.extraData}_${matchScore}")
+                }
+            }
+            is AutoFillContext.SocialSignal -> {
+                // Boost songs matching social signal artist/mood
+                val signal = _forYouSignals.value.firstOrNull()
+                fresh.map { song ->
+                    val matchScore = when {
+                        signal.first != null && song.artist.lowercase().contains(signal.first!!.lowercase()) -> 2f
+                        signal.first != null && song.title.lowercase().contains(signal.first!!.lowercase()) -> 1.5f
+                        else -> 1f
+                    }
+                    song.copy(extraData = "${song.extraData}_${matchScore}")
+                }
+            }
+            else -> fresh
+        }
+
+        _queue.value = currentList.toMutableList().apply { addAll(weightedFresh) }
+        weightedFresh.forEach { addToPlayerQueue(it) }
         savePlayerState()
     }
 
@@ -632,7 +688,7 @@ class PlayerGateway(
             else -> currentIndex + 1
         }
         playSong(list[nextIndex])
-        autoFillUpNext()
+        autoFillUpNext(AutoFillContext.Default)
     }
 
     fun playPrevious() {
@@ -653,7 +709,7 @@ class PlayerGateway(
         playSong(list[prevIndex])
     }
 
-    fun playNext(song: Song) {
+    fun playNext(song: Song, autoFillContext: AutoFillContext = AutoFillContext.Default) {
         val list = _queue.value.toMutableList()
         val curIdx = currentIndex
         if (curIdx < 0) return
@@ -664,6 +720,7 @@ class PlayerGateway(
 
         insertAfterCurrent(song, curIdx)
         playSong(song)
+        autoFillUpNext(autoFillContext)
     }
 
     fun addToQueue(song: Song) {
@@ -913,6 +970,19 @@ class PlayerGateway(
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    data class AutoFillContext(
+        val source: AutoFillSource = AutoFillSource.Default,
+        val genre: String? = null,
+        val isFromSocialSignal: Boolean = false
+    )
+
+    enum class AutoFillSource {
+        Default,
+        Playlist,
+        Genre,
+        SocialSignal
     }
 
     companion object {

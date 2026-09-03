@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/Kotlin-2.1+-7F52FF?style=flat-square&logo=kotlin" alt="Kotlin" />
   <img src="https://img.shields.io/badge/Compose-Material3-0081CB?style=flat-square" alt="Compose" />
   <img src="https://img.shields.io/badge/Min%20SDK-24-333?style=flat-square" alt="Min SDK" />
-  <img src="https://img.shields.io/badge/Version-5.1.5-8A2BE2?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/Version-6.2.3-8A2BE2?style=flat-square" alt="Version" />
 </div>
 
 ---
@@ -15,8 +15,8 @@
 
 | Asset | Link                                                                                                          |
 | :--- |:--------------------------------------------------------------------------------------------------------------|
-| **APK (Latest)** | [IanPlayer-v.5.5.5.apk](https://github.com/ianocent/ianplayer/releases/download/v5.5.5/IanPlayer-v.5.5.5.apk) |
-| **Release Notes** | [v5.5.5](https://github.com/ianocent/IanPlayer/releases/tag/v5.5.5)                                           |
+| **APK (Latest)** | [IanPlayer-v.6.2.3.apk](https://github.com/ianocent/ianplayer/releases/download/v6.2.3/IanPlayer-v.6.2.3.apk) |
+| **Release Notes** | [v6.2.3](https://github.com/ianocent/IanPlayer/releases/tag/v6.2.3)                                           |
 
 ---
 
@@ -34,9 +34,10 @@
 - **Crossfade** between tracks (150ms volume fade in/out).
 - **Pre-fetch** next track automatically when 8 seconds remaining.
 - **Player state persistence** — queue survives app restart.
-- **Smart auto-fill UpNext** — when queue runs low (~5 remaining), auto-searches YouTube Music for related songs and appends them to queue (skips already-played songs).
+- **Smart auto-fill UpNext** — when queue runs low (~5 remaining), auto-searches YouTube Music for related songs and appends them to queue (skips already-played songs). Context-aware: considers current song source (global songs tab, genre in Stream tab, or playlist), social signals from notifications, and time-of-day context for personalized recommendations.
 - **Played song tracking** — tracks `playedSongIds` set; auto-fill and queue logic skip songs already played in current session.
 
+- **Content-Based Filtering (CBF) for UpNext** — uses extracted metadata (artist, title, mood, genre from social signals + location context) to weight related song relevance. Notification access collects artist/title from other apps; location tracking provides time-of-day contextual queries. Both feed into the upnext relevance scoring.
 ### 🌐 YouTube Music Streaming
 
 - Search YouTube Music via **InnerTube API** (WEB_REMIX client).

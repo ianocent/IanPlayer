@@ -25,6 +25,7 @@ import com.ianocent.musicplayer.data.SocialSignalListener
 import com.ianocent.musicplayer.player.IanVoiceAssistantService
 import com.ianocent.musicplayer.player.PlaybackService
 import com.ianocent.musicplayer.player.PlayerGateway
+import com.ianocent.musicplayer.player.AutoFillContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -1012,7 +1013,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playNext() {
-        playbackGateway.playNext()
+        playbackGateway.playNext(AutoFillContext(
+            source = when {
+                _selectedGenre.value != null -> AutoFillSource.Genre
+                else -> AutoFillSource.Default
+            },
+            genre = _selectedGenre.value
+        ))
         val song = playbackGateway.currentSong.value
         song?.let { syncLocationToFirebase(it.title, it.artist) }
     }
@@ -1024,7 +1031,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playNext(song: Song) {
-        playbackGateway.playNext(song)
+        playbackGateway.playNext(song, AutoFillContext(
+            source = when {
+                _selectedGenre.value != null -> AutoFillSource.Genre
+                else -> AutoFillSource.Default
+            },
+            genre = _selectedGenre.value
+        ))
         syncLocationToFirebase(song.title, song.artist)
     }
 
