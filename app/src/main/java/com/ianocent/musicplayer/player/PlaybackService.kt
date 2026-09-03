@@ -158,13 +158,17 @@ class PlaybackService : MediaSessionService() {
             addAction(android.bluetooth.BluetoothDevice.ACTION_ACL_CONNECTED)
             addAction(android.bluetooth.BluetoothDevice.ACTION_ACL_DISCONNECTED)
         }
-        registerReceiver(headsetReceiver, filter)
+        androidx.core.content.ContextCompat.registerReceiver(
+            this, headsetReceiver, filter, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
     }
 
     private fun registerNotificationReceiver() {
         notificationButtonReceiver = NotificationButtonReceiver()
         val filter = IntentFilter(NotificationButtonReceiver.ACTION_NOTIFICATION_BUTTON)
-        registerReceiver(notificationButtonReceiver, filter)
+        androidx.core.content.ContextCompat.registerReceiver(
+            this, notificationButtonReceiver, filter, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
     }
 
     private fun createNotificationChannel() {
