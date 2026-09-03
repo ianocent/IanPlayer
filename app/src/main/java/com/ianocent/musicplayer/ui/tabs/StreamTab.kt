@@ -326,6 +326,7 @@ fun StreamTabContent(
                                                 if (event == Lifecycle.Event.ON_RESUME) {
                                                     viewModel.refreshSocialAccess()
                                                     viewModel.refreshForYou(force = true)
+                                                    viewModel.refreshTrending()
                                                 }
                                             }
                                             lifecycleOwner.lifecycle.addObserver(observer)

@@ -120,18 +120,24 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     // Genre & mood browsing. Queries anchor on US Billboard / UK charts and are sent with
     // gl=US (see selectGenre/loadGenreArtworks) so YT Music returns Western hits, not
     // device-locale (ID) local content or random non-chart songs.
-    val genres = listOf(
-        Category("Pop", "popular pop songs 2024 2025"),
+    private val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+
+    private val _genres = listOf(
+        Category("Pop", "popular pop songs $currentYear hits"),
         Category("Rock", "rock music hits modern classic"),
         Category("Hip Hop", "hip hop rap songs hits"),
         Category("R&B", "r&b soul music songs"),
         Category("Electronic", "edm dance electronic music"),
         Category("Jazz", "jazz music classics"),
         Category("Indie", "indie alternative rock songs"),
-        Category("Metal", "heavy metal hard rock songs")
+        Category("Metal", "heavy metal hard rock songs"),
+        Category("K-Pop", "kpop korean pop songs hits"),
+        Category("Reggae", "reggae music chill vibes"),
+        Category("Country", "country music hits popular"),
+        Category("Lofi", "lofi hip hop beats relaxing")
     )
 
-    val moods = listOf(
+    private val _moods = listOf(
         Category("Sad", "sad emotional pop rock songs hits", true),
         Category("Energetic", "upbeat energy workout songs", true),
         Category("Chill", "chill lofi relaxing music", true),
@@ -139,8 +145,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         Category("Romantic", "romantic love songs hits", true),
         Category("Dark", "dark moody aesthetic songs", true),
         Category("Calm", "calm acoustic peaceful music", true),
-        Category("Focus", "focus study instrumental music", true)
+        Category("Focus", "focus study instrumental music", true),
+        Category("Party", "party dance hits banger songs", true),
+        Category("Nostalgia", "nostalgic throwback classic hits", true),
+        Category("Heartbreak", "heartbreak breakup sad songs", true),
+        Category("Confident", "confident boss energy songs", true)
     )
+
+    val genres: List<Category> = _genres.shuffled()
+    val moods: List<Category> = _moods.shuffled()
 
     // Contextual personalization: Time-based query
     fun getContextualQuery(): String {
@@ -739,6 +752,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         settingsStore.avatarUri = uri
     }
 
+    private val _tabOrder = MutableStateFlow(settingsStore.tabOrder)
+    val tabOrder: StateFlow<String> = _tabOrder
+
+    fun setTabOrder(order: String) {
+        _tabOrder.value = order
+        settingsStore.tabOrder = order
+    }
+
     private val _showListeningPill = MutableStateFlow(false)
     val showListeningPill: StateFlow<Boolean> = _showListeningPill
 
@@ -836,7 +857,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getCachedArt(song: Song, onLoaded: (Bitmap?) -> Unit) {
         viewModelScope.launch {
-            onLoaded(artLoader.load(song, highRes = false))
+            onLoaded(artLoader.load(song, highRes = true))
         }
     }
 
@@ -1136,6 +1157,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun checkForUpdate() {
+        if (settingsStore.dontShowUpdate) return
         viewModelScope.launch {
             val info = UpdateManager.checkForUpdate()
             if (info != null) {
@@ -1233,6 +1255,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun dismissUpdate() {
+        _isUpdateAvailable.value = false
+        _updateInfo.value = null
+    }
+
+    fun dontShowUpdateAgain() {
+        settingsStore.dontShowUpdate = true
         _isUpdateAvailable.value = false
         _updateInfo.value = null
     }

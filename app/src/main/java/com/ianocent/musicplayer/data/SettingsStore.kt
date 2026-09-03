@@ -46,6 +46,14 @@ class SettingsStore(private val prefs: SharedPreferences) {
         get() = prefs.getString(KEY_AVATAR_URI, null)
         set(value) = prefs.edit().putString(KEY_AVATAR_URI, value).apply()
 
+    var tabOrder: String
+        get() = prefs.getString(KEY_TAB_ORDER, DEFAULT_TAB_ORDER) ?: DEFAULT_TAB_ORDER
+        set(value) = prefs.edit().putString(KEY_TAB_ORDER, value).apply()
+
+    var dontShowUpdate: Boolean
+        get() = prefs.getBoolean(KEY_DONT_SHOW_UPDATE, false)
+        set(value) = prefs.edit().putBoolean(KEY_DONT_SHOW_UPDATE, value).apply()
+
     companion object {
         private const val KEY_DARK_MODE = "is_dark_mode"
         private const val KEY_VOICE_ASSISTANT = "voice_assistant_enabled"
@@ -56,6 +64,9 @@ class SettingsStore(private val prefs: SharedPreferences) {
         private const val KEY_LAST_RECAP_CHECK_TS = "last_recap_check_ts"
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_AVATAR_URI = "avatar_uri"
+        private const val KEY_TAB_ORDER = "tab_order"
+        private const val KEY_DONT_SHOW_UPDATE = "dont_show_update"
+        const val DEFAULT_TAB_ORDER = "songs,albums,stream,playlists"
 
         /** For receivers/listener services the system instantiates itself. */
         fun from(context: Context): SettingsStore =

@@ -451,6 +451,8 @@ fun ListingScreen(
     val socialSignalsEnabled by viewModel.socialSignalsEnabled.collectAsState()
     val userName by viewModel.userName.collectAsState()
     val avatarUri by viewModel.avatarUri.collectAsState()
+    val tabOrder by viewModel.tabOrder.collectAsState()
+    val parsedTabOrder = remember(tabOrder) { tabOrder.split(",") }
     var showPlaylistSelectionDialog by remember { mutableStateOf<Song?>(null) }
 
     val isPreview = androidx.compose.ui.platform.LocalInspectionMode.current
@@ -481,7 +483,7 @@ fun ListingScreen(
                 if (result != null) {
                     searchQuery = "${result.artist} ${result.title}"
                     isSearchActive = true
-                    navState.openStreamPage()
+                    navState.selectTab(parsedTabOrder.indexOf("stream").coerceAtLeast(0))
                 }
             },
             onRmsChanged = { level -> rmsLevel = level }
@@ -495,7 +497,7 @@ fun ListingScreen(
             onResults = { text ->
                 searchQuery = text
                 isSearchActive = true
-                navState.openStreamPage()
+                navState.selectTab(parsedTabOrder.indexOf("stream").coerceAtLeast(0))
             },
             onPartialResults = { text -> voiceText = text },
             onError = { isListening = false },
@@ -593,6 +595,7 @@ fun ListingScreen(
     val isUpdateAvailable by viewModel.isUpdateAvailable.collectAsState()
     val updateInfo by viewModel.updateInfo.collectAsState()
     val isDownloading by viewModel.isDownloading.collectAsState()
+    val isDownloaded by viewModel.isDownloaded.collectAsState()
 
     val sortMode by viewModel.sortMode.collectAsState()
 
@@ -1156,8 +1159,11 @@ fun ListingScreen(
 
         // ---------- 3. TABS ----------
 
+        val tabPageCount = (parsedTabOrder.size + 1) / 2
+        val tabPage = if (navState.tab >= tabPageCount) 1 else 0
+
         AnimatedContent(
-            targetState = navState.tabPage,
+            targetState = tabPage,
             transitionSpec = {
                 if (targetState > initialState) {
                     (slideInHorizontally { width -> width } + fadeIn()).togetherWith(slideOutHorizontally { width -> -width } + fadeOut())
@@ -1167,6 +1173,10 @@ fun ListingScreen(
             },
             label = "tab_paging_animation"
         ) { page ->
+            val startIdx = page * tabPageCount
+            val endIdx = minOf(startIdx + tabPageCount, parsedTabOrder.size)
+            val tabsForPage = parsedTabOrder.subList(startIdx, endIdx)
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1174,30 +1184,38 @@ fun ListingScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (page == 0) {
-                    TabItem("Songs", navState.tab == NavState.TAB_SONGS, adaptiveColor) { navState.selectTab(NavState.TAB_SONGS) }
-                    TabItem("Albums", navState.tab == NavState.TAB_ALBUMS, adaptiveColor) { navState.selectTab(NavState.TAB_ALBUMS) }
-
+                if (page == 1) {
                     IconButton(
-                        onClick = { navState.openStreamPage() },
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                    ) {
-                        Icon(Icons.Rounded.ChevronRight, contentDescription = "More Tabs", tint = Color.Gray)
-                    }
-                } else {
-                    IconButton(
-                        onClick = { navState.openLibraryPage() },
+                        onClick = { navState.selectTab(0) },
                         modifier = Modifier
                             .clip(CircleShape)
                             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                     ) {
                         Icon(Icons.Rounded.ChevronLeft, contentDescription = "Previous Tabs", tint = Color.Gray)
                     }
+                }
 
-                    TabItem("Stream", navState.tab == NavState.TAB_STREAM, adaptiveColor) { navState.selectTab(NavState.TAB_STREAM) }
-                    TabItem("Playlists", navState.tab == NavState.TAB_PLAYLISTS, adaptiveColor) { navState.selectTab(NavState.TAB_PLAYLISTS) }
+                tabsForPage.forEachIndexed { localIdx, tabId ->
+                    val globalIdx = startIdx + localIdx
+                    val label = when (tabId) {
+                        "songs" -> "Songs"
+                        "albums" -> "Albums"
+                        "stream" -> "Stream"
+                        "playlists" -> "Playlists"
+                        else -> tabId
+                    }
+                    TabItem(label, navState.tab == globalIdx, adaptiveColor) { navState.selectTab(globalIdx) }
+                }
+
+                if (page == 0 && endIdx < parsedTabOrder.size) {
+                    IconButton(
+                        onClick = { navState.selectTab(endIdx) },
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    ) {
+                        Icon(Icons.Rounded.ChevronRight, contentDescription = "More Tabs", tint = Color.Gray)
+                    }
                 }
             }
         }
@@ -1207,8 +1225,9 @@ fun ListingScreen(
         val streamSongs by viewModel.streamSongs.collectAsState()
         val isSearchingRemote by viewModel.isSearchingRemote.collectAsState()
         val streamParsingFailed by viewModel.streamParsingFailed.collectAsState()
-        LaunchedEffect(searchQuery, navState.tab) {
-            if (navState.tab == NavState.TAB_STREAM) {
+        LaunchedEffect(searchQuery, navState.tab, tabOrder) {
+            val currentTabContent = parsedTabOrder.getOrElse(navState.tab) { "songs" }
+            if (currentTabContent == "stream") {
                 viewModel.searchRemoteSongs(searchQuery)
             }
         }
@@ -1220,14 +1239,15 @@ fun ListingScreen(
                 .padding(horizontal = 16.dp)
                 .clip(RoundedCornerShape(32.dp))
                 .background(animatedContainerColor)
-                .pointerInput(navState.tab) {
+                .pointerInput(navState.tab, parsedTabOrder) {
                     var totalX = 0f
                     detectHorizontalDragGestures(
                         onDragStart = { totalX = 0f },
                         onDragEnd = {
                             if (kotlin.math.abs(totalX) > 100) {
-                                val newTab = if (totalX > 0) (navState.tab - 1).coerceIn(0, 3)
-                                    else (navState.tab + 1).coerceIn(0, 3)
+                                val maxTab = parsedTabOrder.size - 1
+                                val newTab = if (totalX > 0) (navState.tab - 1).coerceIn(0, maxTab)
+                                    else (navState.tab + 1).coerceIn(0, maxTab)
                                 if (newTab != navState.tab) {
                                     navState.selectTab(newTab)
                                 }
@@ -1241,8 +1261,9 @@ fun ListingScreen(
                 }
         ) {
             Crossfade(targetState = navState.tab) { tab ->
-                when (tab) {
-                    0 -> { // SONGS
+                val tabContent = parsedTabOrder.getOrElse(tab) { "songs" }
+                when (tabContent) {
+                    "songs" -> { // SONGS
                         val listState = rememberLazyListState()
                         var showFavoritesOnly by remember { mutableStateOf(false) }
                         val favoriteIds by viewModel.favoriteIds.collectAsState()
@@ -1345,18 +1366,18 @@ fun ListingScreen(
                                     }, adaptiveColor = adaptiveColor,
                                     onGoToArtist = { s ->
                                         navState.openArtist(s.artist)
-                                        navState.selectTab(NavState.TAB_ALBUMS)
+                                        navState.selectTab(parsedTabOrder.indexOf("albums").coerceAtLeast(0))
                                     },
                                     onGoToAlbum = { s ->
                                         navState.openAlbum(s.album)
-                                        navState.selectTab(NavState.TAB_ALBUMS)
+                                        navState.selectTab(parsedTabOrder.indexOf("albums").coerceAtLeast(0))
                                     })
                                 }
                             }
                         }
                     }
 
-                    1 -> { // ALBUMS / ARTISTS
+                    "albums" -> { // ALBUMS / ARTISTS
                         val albumGroups = remember(songs) {
                             songs.groupBy { it.album }.entries.toList()
                         }
@@ -1450,9 +1471,9 @@ fun ListingScreen(
                         }
                     }
 
-                    2 -> StreamTabContent(viewModel, searchQuery, streamSongs, isSearchingRemote, streamParsingFailed, adaptiveColor)
+                    "stream" -> StreamTabContent(viewModel, searchQuery, streamSongs, isSearchingRemote, streamParsingFailed, adaptiveColor)
 
-                    3 -> { // PLAYLISTS
+                    "playlists" -> { // PLAYLISTS
                         Box(modifier = Modifier.fillMaxSize()) {
                             if (selectedPlaylist != null) {
                                 PlaylistDetailView(
@@ -1737,8 +1758,11 @@ fun ListingScreen(
         UpdateDialog(
             updateInfo = updateInfo!!,
             isDownloading = isDownloading,
+            isDownloaded = isDownloaded,
             onUpdate = { viewModel.downloadUpdate() },
-            onDismiss = { viewModel.dismissUpdate() }
+            onInstall = { viewModel.installUpdate() },
+            onDismiss = { viewModel.dismissUpdate() },
+            onDontShowAgain = { viewModel.dontShowUpdateAgain() }
         )
     }
 
@@ -1779,6 +1803,12 @@ fun ListingScreen(
             onUserNameChange = { viewModel.setUserName(it) },
             avatarUri = avatarUri,
             onAvatarChange = { viewModel.setAvatarUri(it) },
+            tabOrder = tabOrder,
+            onTabOrderChange = { viewModel.setTabOrder(it) },
+            onCheckForUpdate = {
+                showSettingsSheet = false
+                viewModel.checkForUpdate()
+            },
             onDismiss = { showSettingsSheet = false }
         )
     }
@@ -1787,9 +1817,14 @@ fun ListingScreen(
 fun UpdateDialog(
     updateInfo: com.ianocent.musicplayer.data.UpdateInfo,
     isDownloading: Boolean,
+    isDownloaded: Boolean,
     onUpdate: () -> Unit,
-    onDismiss: () -> Unit
+    onInstall: () -> Unit,
+    onDismiss: () -> Unit,
+    onDontShowAgain: () -> Unit
 ) {
+    var dontShowAgain by remember { mutableStateOf(false) }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = MaterialTheme.colorScheme.surface,
@@ -1811,11 +1846,34 @@ fun UpdateDialog(
                         color = Color.Gray
                     )
                 }
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { dontShowAgain = !dontShowAgain }
+                        .padding(vertical = 4.dp)
+                ) {
+                    Checkbox(
+                        checked = dontShowAgain,
+                        onCheckedChange = { dontShowAgain = it },
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Don't show again", style = MaterialTheme.typography.bodySmall)
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = onUpdate,
+                onClick = {
+                    if (isDownloaded) {
+                        onInstall()
+                    } else {
+                        onUpdate()
+                    }
+                    if (dontShowAgain) onDontShowAgain()
+                },
                 enabled = !isDownloading,
                 shape = RoundedCornerShape(16.dp)
             ) {
@@ -1827,6 +1885,8 @@ fun UpdateDialog(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Downloading...")
+                } else if (isDownloaded) {
+                    Text("Install")
                 } else {
                     Text("Update")
                 }
@@ -1834,7 +1894,10 @@ fun UpdateDialog(
         },
         dismissButton = {
             TextButton(
-                onClick = onDismiss,
+                onClick = {
+                    if (dontShowAgain) onDontShowAgain()
+                    onDismiss()
+                },
                 enabled = !isDownloading
             ) { Text("Later") }
         }
@@ -2292,6 +2355,7 @@ fun PlaylistDetailView(
                 Box(modifier = Modifier.fillMaxSize()) {
                     LazyColumn(
                         state = lazyListState,
+                        flingBehavior = rememberSnapFlingBehavior(lazyListState = lazyListState),
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(horizontal = 12.dp),
@@ -3661,6 +3725,9 @@ private fun SettingsBottomSheet(
     onUserNameChange: (String) -> Unit,
     avatarUri: String?,
     onAvatarChange: (String?) -> Unit,
+    tabOrder: String,
+    onTabOrderChange: (String) -> Unit,
+    onCheckForUpdate: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -3669,6 +3736,8 @@ private fun SettingsBottomSheet(
     var editingName by remember { mutableStateOf(userName) }
     var pickedAvatarUri by remember { mutableStateOf(avatarUri) }
     val focusManager = LocalFocusManager.current
+    val tabIds = listOf("songs" to "Songs", "albums" to "Albums", "stream" to "Stream", "playlists" to "Playlists")
+    var currentTabOrder by remember { mutableStateOf(tabOrder.split(",")) }
 
     val avatarPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -3691,6 +3760,7 @@ private fun SettingsBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 16.dp)
         ) {
             // User Profile Section (One UI style)
@@ -3949,6 +4019,93 @@ private fun SettingsBottomSheet(
                     checked = socialSignalsEnabled,
                     onCheckedChange = { onSocialSignalsToggle() }
                 )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            // Tab Order
+            Text(
+                text = "Tab Order",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 12.dp, top = 8.dp)
+            )
+
+            currentTabOrder.forEachIndexed { index, tabId ->
+                val label = tabIds.find { it.first == tabId }?.second ?: tabId
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${index + 1}. $label",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Row {
+                        IconButton(
+                            onClick = {
+                                if (index > 0) {
+                                    val mutable = currentTabOrder.toMutableList()
+                                    val temp = mutable[index]
+                                    mutable[index] = mutable[index - 1]
+                                    mutable[index - 1] = temp
+                                    currentTabOrder = mutable
+                                    onTabOrderChange(mutable.joinToString(","))
+                                }
+                            },
+                            enabled = index > 0,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Rounded.ArrowUpward, contentDescription = "Move up", modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(
+                            onClick = {
+                                if (index < currentTabOrder.size - 1) {
+                                    val mutable = currentTabOrder.toMutableList()
+                                    val temp = mutable[index]
+                                    mutable[index] = mutable[index + 1]
+                                    mutable[index + 1] = temp
+                                    currentTabOrder = mutable
+                                    onTabOrderChange(mutable.joinToString(","))
+                                }
+                            },
+                            enabled = index < currentTabOrder.size - 1,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Rounded.ArrowDownward, contentDescription = "Move down", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            // Check for Updates
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { onCheckForUpdate() }
+                    .padding(vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Rounded.Refresh,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = "Check for Updates",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))

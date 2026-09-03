@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
 import androidx.media3.common.C
@@ -27,11 +28,13 @@ class PlaybackService : MediaSessionService() {
     private var player: ExoPlayer? = null
 
     private var headsetReceiver: HeadsetReceiver? = null
+    private var notificationButtonReceiver: NotificationButtonReceiver? = null
 
     override fun onCreate() {
         super.onCreate()
         registerHeadsetReceiver()
         createNotificationChannel()
+        registerNotificationReceiver()
         val loadControl: LoadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 DefaultLoadControl.DEFAULT_MIN_BUFFER_MS * 2,
@@ -71,6 +74,7 @@ class PlaybackService : MediaSessionService() {
             .setPauseAtEndOfMediaItems(false)
             .build().also { exoPlayer ->
                 audioSessionId = exoPlayer.audioSessionId
+                playerInstance = exoPlayer
                 exoPlayer.addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         if (audioSessionId == 0) {
@@ -134,6 +138,8 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         unregisterReceiver(headsetReceiver)
+        unregisterReceiver(notificationButtonReceiver)
+        playerInstance = null
         mediaSession?.run {
             player?.release()
             release()
@@ -153,6 +159,12 @@ class PlaybackService : MediaSessionService() {
             addAction(android.bluetooth.BluetoothDevice.ACTION_ACL_DISCONNECTED)
         }
         registerReceiver(headsetReceiver, filter)
+    }
+
+    private fun registerNotificationReceiver() {
+        notificationButtonReceiver = NotificationButtonReceiver()
+        val filter = IntentFilter(NotificationButtonReceiver.ACTION_NOTIFICATION_BUTTON)
+        registerReceiver(notificationButtonReceiver, filter)
     }
 
     private fun createNotificationChannel() {
@@ -177,5 +189,9 @@ class PlaybackService : MediaSessionService() {
 
         @Volatile
         var audioSessionId: Int = 0
+
+        @Volatile
+        var playerInstance: ExoPlayer? = null
+            private set
     }
 }
