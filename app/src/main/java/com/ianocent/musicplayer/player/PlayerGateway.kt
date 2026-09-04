@@ -516,8 +516,14 @@ class PlayerGateway(
         playbackJob?.cancel()
         playbackJob = scope.launch {
             // Check current index in current queue (don't snapshot yet)
-            val initialIndex = _queue.value.indexOfFirst { it.id == song.id }
-            if (initialIndex == -1) return@launch
+            var initialIndex = _queue.value.indexOfFirst { it.id == song.id }
+            if (initialIndex == -1) {
+                // Song not in queue — add it so playback can proceed
+                val updated = _queue.value.toMutableList()
+                updated.add(song)
+                _queue.value = updated
+                initialIndex = updated.size - 1
+            }
 
             fadeOutIfPlaying()
 

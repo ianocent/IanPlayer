@@ -949,46 +949,19 @@ fun ListingScreen(
                                                         }
                                                     }
                                                 }
-                                                // Settings gear icon
-                                                AnimatedVisibility(
-                                                    visible = socialMenuVisibleItems >= socialMenuItems.size,
-                                                    enter = fadeIn(tween(200)) + scaleIn(tween(200), initialScale = 0.8f)
-                                                ) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .size(40.dp)
-                                                            .clip(CircleShape)
-                                                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                                                            .clickable {
-                                                                showSocialMenu = false
-                                                                showSettingsSheet = true
-                                                            },
-                                                        contentAlignment = Alignment.Center
-                                                    ) {
-                                                        Icon(
-                                                            imageVector = Icons.Rounded.Settings,
-                                                            contentDescription = "Settings",
-                                                            modifier = Modifier.size(20.dp),
-                                                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                                        )
-                                                    }
-                                                }
+
                                             }
                                         }
                                     }
                                 }
                             }
-                            val sunMoonTint by animateColorAsState(
-                            targetValue = MaterialTheme.colorScheme.onBackground,
-                            animationSpec = tween(400), label = "sun_moon_tint"
-                        )
-                        IconButton(onClick = { viewModel.toggleDarkMode() }) {
-                            Icon(
-                                imageVector = if (isDarkMode) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                                contentDescription = "Toggle theme",
-                                tint = sunMoonTint
-                            )
-                        }
+                            IconButton(onClick = { showSettingsSheet = true }) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Settings,
+                                    contentDescription = "Settings",
+                                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                )
+                            }
                     }
                 }
             }
@@ -3789,7 +3762,7 @@ private fun SettingsBottomSheet(
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
-                    text = "Donasi via Saweria",
+                    text = "Support Developer :)",
                     style = MaterialTheme.typography.bodyLarge
                 )
             }
