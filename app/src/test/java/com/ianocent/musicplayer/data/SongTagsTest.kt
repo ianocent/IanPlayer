@@ -41,6 +41,47 @@ class SongTagsTest {
     }
 
     @Test
+    fun `strips trusted artist suffix from re-upload video title`() {
+        val (title, artist) = SongTags.resolve(
+            title = "Without Me - Eminem",
+            artist = "Eminem"
+        )
+        assertEquals("Eminem", artist)
+        assertEquals("Without Me", title)
+    }
+
+    @Test
+    fun `strips trusted artist prefix when title leads with it`() {
+        val (title, artist) = SongTags.resolve(
+            title = "Eminem - Lose Yourself",
+            artist = "Eminem"
+        )
+        assertEquals("Eminem", artist)
+        assertEquals("Lose Yourself", title)
+    }
+
+    @Test
+    fun `cleans VEVO channel before stripping artist from title`() {
+        val (title, artist) = SongTags.resolve(
+            title = "Without Me - Eminem",
+            artist = "EminemVEVO"
+        )
+        assertEquals("Eminem", artist)
+        assertEquals("Without Me", title)
+    }
+
+    @Test
+    fun `artist not in title stays untouched`() {
+        val (title, artist) = SongTags.resolve(
+            title = "Stan (Long Version)",
+            artist = "Eminem"
+        )
+        assertEquals("Eminem", artist)
+        // cleanTitle strips nothing here; the " (Long Version)" suffix is kept
+        assertEquals("Stan (Long Version)", title)
+    }
+
+    @Test
     fun `strips promotional suffixes`() {
         assertEquals("Monokrom", SongTags.cleanTitle("Monokrom [Official Music Video]"))
         assertEquals("Monokrom", SongTags.cleanTitle("Monokrom (Lyrics)"))

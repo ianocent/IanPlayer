@@ -32,7 +32,9 @@ class IanVoiceAssistantService : Service() {
     private var speechRecognizer: SpeechRecognizer? = null
     private var recognizerIntent: Intent? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
-    private val controller: MediaController? get() = if (controllerFuture?.isDone == true) controllerFuture?.get() else null
+    private val controller: MediaController? get() = runCatching {
+        if (controllerFuture?.isDone == true) controllerFuture?.get() else null
+    }.getOrNull()
 
     private var isListening = false
     private var commandPending = false

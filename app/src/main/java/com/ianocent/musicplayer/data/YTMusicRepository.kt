@@ -35,6 +35,16 @@ class YTMusicRepository(context: Context) {
         }
     )
 
+    // Resolved video streams for video mode (session-scoped; not persisted,
+    // since these expire like the audio ones and are only needed while visible).
+    private val videoStreamCache: MutableMap<String, VideoStream> = Collections.synchronizedMap(
+        object : LinkedHashMap<String, VideoStream>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, VideoStream>?): Boolean {
+                return size > 16
+            }
+        }
+    )
+
     // Coba parse 'expire=<unix_epoch_detik>' dari URL googlevideo (paling akurat).
     // Kalau gak ketemu (misal dari fallback Invidious), asumsi aman 5 jam dari sekarang.
     private fun computeExpiryMs(url: String, resolvedAtMs: Long): Long {
@@ -47,17 +57,31 @@ class YTMusicRepository(context: Context) {
         }
     }
 
+    /**
+     * True when a googlevideo URL's `expire` epoch is still in the future (with a
+     * small safety margin). URLs without `expire` (Invidious fallbacks) are
+     * assumed fresh. Signed URLs that have expired return 403 — a stale cache hit
+     * used to be handed straight to the player, whose error path skips to the
+     * next track ("lagu pindah-pindah" while toggling music/video mode).
+     */
+    private fun isUrlFresh(url: String): Boolean {
+        val match = Regex("[?&]expire=(\\d+)").find(url) ?: return true
+        val expireEpochSeconds = match.groupValues[1].toLongOrNull() ?: return true
+        return expireEpochSeconds * 1000L > System.currentTimeMillis() + 60_000L
+    }
+
     companion object {
         // Hard chart/playlist phrases: killed even when the uploader channel repeats them
         // (e.g. artist = "Billboard Top 100 Hits").
         // Hard chart/playlist phrases: killed even when the uploader channel repeats them
         // (e.g. artist = "Billboard Top 100 Hits").
         private val COMPILATION_PHRASE = Regex("\\b(Billboard|Top \\d+ (Hits|Songs|Tracks)?|Top 40|Greatest Hits|Best Of|Nonstop|Compilation|Masters|Hit Maker|Hit Co|Originally Performed By|Exitos|Internacionales|Del Momento|Le Meilleur|Music To|Music For|Relaxing Music|Background Music|Sleep Music|Workout Music|Study Music)\\b", RegexOption.IGNORE_CASE)
-        // Non-official versions and regional content we want to avoid (e.g. Indian/Bollywood leaks)
-        private val VERSION_MARKER = Regex("\\b(karaoke|instrumental|cover|remix|mashup|slowed|sped up|sped-up|reverb|acoustic|piano version|guitar version|live version|live at|live from|with lyrics|lyric video|official lyric video|tribute|tribute to|originally performed by|hit maker|the karaoke|various artists|hindi|bollywood|punjabi|tamil|telugu|t-series|zee music|arijit singh|jubin nautiyal|neha kakkar|badshah|shreya ghoshal|udit narayan|kumar sanu|alka yagnik|armaan malik|tony kakkar|bhakti|bhajan|ghazal|qawwali|tseries|zeemusic|sonu nigam|kanika kapoor|mika singh|sunidhi chauhan|himesh reshammiya|amal mallik|yo yo honey singh|raftaar|emiway|divine|sidhu moose wala|diljit dosanjh|guru randhawa|jassi gill|hardy sandhu|amrit maan|karan aujla|ap dhillon|shubh|ikka)\\b", RegexOption.IGNORE_CASE)
-        
-        // Devanagari script (Hindi, Marathi, etc.)
-        private val REGIONAL_SCRIPT = Regex("[\\u0900-\\u097F]")
+        // Non-original versions only. Deliberately narrow: over-filtering here was
+        // hiding legitimate songs (covers, remixes, live cuts, and entire regions
+        // are real music users search for), so only clearly not-the-real-track
+        // markers are killed.
+        private val VERSION_MARKER = Regex("\\b(karaoke|instrumental|tribute|originally performed by|made famous by|in the style of|hit maker|the karaoke)\\b", RegexOption.IGNORE_CASE)
+
         // Client identifiers from BuildConfig (keys.properties, gitignored).
         private val WEB_KEY = com.ianocent.musicplayer.BuildConfig.YTMUSIC_WEB_KEY
         private val ANDROID_KEY = com.ianocent.musicplayer.BuildConfig.YTMUSIC_ANDROID_KEY
@@ -355,26 +379,32 @@ class YTMusicRepository(context: Context) {
         val bylineArtist = byline?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
         if (!bylineArtist.isNullOrBlank() && bylineArtist != "Unknown Artist") return bylineArtist
 
-        // Last resort: extract from title "Artist - Title" pattern
+// Last resort: extract from "Song - Artist" video titles
         val titleText = item.optJSONObject("title")
             ?.optJSONArray("runs")
             ?.optJSONObject(0)
             ?.optString("text", "")
             ?: ""
-        extractArtistFromTitle(titleText)?.let { return it }
+        artistFromCombinedTitle(titleText)?.let { return it }
 
         return "Unknown Artist"
     }
 
-    /**
-     * Attempts to extract artist from a title string that follows the "Artist - Title" pattern.
-     * Used as a last-resort fallback when the API structure doesn't contain artist info.
+/**
+     * Attempts to extract an artist from a combined video title. Re-uploaded
+     * videos are titled "Song - Artist" ("Without Me - Eminem"), so the RIGHT
+     * side is the artist. Only trusted when it looks like a name: 2..40
+     * chars, no parentheses, no digits.
      */
-    private fun extractArtistFromTitle(title: String): String? {
+    private fun artistFromCombinedTitle(title: String): String? {
         val dashIndex = title.indexOf(" - ")
         if (dashIndex <= 0) return null
-        val candidate = title.substring(0, dashIndex).trim()
-        if (candidate.isBlank() || candidate.length > 80) return null
+        val candidate = title.substring(dashIndex + 3).trim()
+        if (candidate.isBlank() || candidate.length > 40 ||
+            candidate.contains('(') || candidate.any { it.isDigit() })
+        {
+            return null
+        }
         return candidate
     }
 
@@ -428,14 +458,19 @@ class YTMusicRepository(context: Context) {
         return "Unknown Album"
     }
 
-    private suspend fun tryPlayerContext(
+    /**
+     * POSTs a `player` request for one client and returns the parsed response
+     * together with the streaming-data PoToken (if one was minted), or null when
+     * the request/playability check failed.
+     */
+    private suspend fun postPlayer(
         videoId: String,
         ctx: JSONObject,
         apiKey: String,
         userAgent: String,
         origin: String,
         usePoToken: Boolean = false
-    ): String? {
+    ): Pair<JSONObject, String?>? {
         // WEB/WEB_REMIX playback is rejected by YouTube without a valid PoToken (BotGuard
         // attestation). Mint one via the WebView-based generator before asking for the stream;
         // ANDROID/IOS use DroidGuard/iosGuard instead, which we can't satisfy from a 3rd-party app.
@@ -481,13 +516,109 @@ class YTMusicRepository(context: Context) {
             Timber.w("YTMusicRepo InnerTube player $videoId: $status - ${playability?.optString("reason")}")
             return null
         }
+        return json to streamingDataPoToken
+    }
 
+    private suspend fun tryPlayerContext(
+        videoId: String,
+        ctx: JSONObject,
+        apiKey: String,
+        userAgent: String,
+        origin: String,
+        usePoToken: Boolean = false,
+        selector: (JSONObject) -> JSONObject? = ::pickBestAudioFormat
+    ): String? {
+        val (json, streamingDataPoToken) =
+            postPlayer(videoId, ctx, apiKey, userAgent, origin, usePoToken) ?: return null
+        val format = selector(json) ?: return null
+        val url = extractAudioUrl(format, videoId) ?: return null
+        return appendPoToken(url, streamingDataPoToken)
+    }
+
+    private fun appendPoToken(url: String, poToken: String?): String =
+        if (!poToken.isNullOrBlank()) "$url&pot=$poToken" else url
+
+    /** A candidate player client (context, key, UA, origin, PoToken need) for stream resolution. */
+    private data class PlayerClient(
+        val ctx: JSONObject,
+        val key: String,
+        val userAgent: String,
+        val origin: String,
+        val usePoToken: Boolean
+    )
+
+    /** The ordered client fallbacks tried when resolving a stream. */
+    private fun playerClients(): List<PlayerClient> {
+        val tvContext = JSONObject().apply {
+            put("client", JSONObject().apply {
+                put("clientName", "TV_EMBEDDED")
+                put("clientVersion", "2.0")
+                put("hl", "en")
+                put("gl", "US")
+                visitorData?.let { put("visitorData", it) }
+            })
+        }
+        val androidMusicContext = JSONObject().apply {
+            put("client", JSONObject().apply {
+                put("clientName", "ANDROID_MUSIC")
+                put("clientVersion", "5.03.51")
+                put("androidSdkVersion", 34)
+                put("osName", "Android")
+                put("osVersion", "14")
+                put("platform", "MOBILE")
+                put("hl", "en")
+                put("gl", "US")
+                visitorData?.let { put("visitorData", it) }
+            })
+        }
+        val webContext = JSONObject().apply {
+            put("client", JSONObject().apply {
+                put("clientName", "WEB")
+                put("clientVersion", "2.20250610.01.00")
+                put("hl", "en")
+                put("gl", "ID")
+                visitorData?.let { put("visitorData", it) }
+            })
+        }
+        val androidContext = JSONObject().apply {
+            put("client", JSONObject().apply {
+                put("clientName", "ANDROID")
+                put("clientVersion", "19.47.53")
+                put("androidSdkVersion", 34)
+                put("osName", "Android")
+                put("osVersion", "14")
+                put("platform", "MOBILE")
+                put("hl", "en")
+                put("gl", "ID")
+            })
+        }
+        val iosContext = JSONObject().apply {
+            put("client", JSONObject().apply {
+                put("clientName", "IOS")
+                put("clientVersion", "19.47.53")
+                put("osName", "iOS")
+                put("osVersion", "17.5.1.21F90")
+                put("platform", "MOBILE")
+                put("hl", "en")
+                put("gl", "ID")
+            })
+        }
+        return listOf(
+            PlayerClient(clientContext(), WEB_KEY, UA_WEB, "https://music.youtube.com", true),
+            PlayerClient(tvContext, TV_KEY, UA_TV, "https://www.youtube.com", false),
+            PlayerClient(androidMusicContext, ANDROID_KEY, UA_ANDROID, "https://music.youtube.com", true),
+            PlayerClient(webContext, WEB_KEY, UA_WEB, "https://www.youtube.com", true),
+            PlayerClient(androidContext, ANDROID_KEY, UA_ANDROID, "https://www.youtube.com", false),
+            PlayerClient(iosContext, ANDROID_KEY, UA_ANDROID, "https://www.youtube.com", false)
+        )
+    }
+
+    /** Best adaptive audio format: opus > mp4a, higher bitrate, quality-label boost. */
+    private fun pickBestAudioFormat(json: JSONObject): JSONObject? {
         val formats = json.optJSONObject("streamingData")
             ?.optJSONArray("adaptiveFormats")
             ?: return null
-
-        // Score and pick best format: opus > mp4a, higher bitrate, audioQuality enum
-        val bestFormat = (0 until formats.length())
+        return (0 until formats.length())
             .mapNotNull { i ->
                 val fmt = formats.getJSONObject(i)
                 val mime = fmt.optString("mimeType", "")
@@ -510,86 +641,93 @@ class YTMusicRepository(context: Context) {
                 fmt to (qualityScore + qualityBoost)
             }
             .maxByOrNull { it.second }
-            ?: return null
-
-        val url = extractAudioUrl(bestFormat.first, videoId) ?: return null
-        return if (!streamingDataPoToken.isNullOrBlank()) "$url&pot=$streamingDataPoToken" else url
+            ?.first
     }
 
-    private suspend fun fetchViaInnerTube(videoId: String): String? {
-        // 1. WEB_REMIX + PoToken (primary - highest quality with PoToken)
-        tryPlayerContext(
-            videoId, clientContext(), WEB_KEY, UA_WEB, "https://music.youtube.com", usePoToken = true
-        )?.let { return it }
-
-        // 2. TV_EMBEDDED (often 256kbps opus, no PoToken needed)
-        val tvContext = JSONObject().apply {
-            put("client", JSONObject().apply {
-                put("clientName", "TV_EMBEDDED")
-                put("clientVersion", "2.0")
-                put("hl", "en")
-                put("gl", "US")
-                visitorData?.let { put("visitorData", it) }
-            })
+    /**
+     * Best progressive (muxed audio+video) format. Progressive streams carry
+     * both tracks in one file, so ExoPlayer can render video without a
+     * MergingMediaSource; YouTube tops these out around 720p.
+     */
+    private fun pickBestMuxedVideoFormat(json: JSONObject): JSONObject? {
+        val formats = json.optJSONObject("streamingData")?.optJSONArray("formats") ?: return null
+        var best: JSONObject? = null
+        var bestScore = -1
+        for (i in 0 until formats.length()) {
+            val fmt = formats.optJSONObject(i) ?: continue
+            val mime = fmt.optString("mimeType", "")
+            if (!mime.startsWith("video/")) continue
+            val height = fmt.optInt("height", 0)
+            val bitrate = fmt.optInt("bitrate", 0)
+            val score = height * 100_000 + bitrate.coerceAtMost(99_999)
+            if (score > bestScore) {
+                bestScore = score
+                best = fmt
+            }
         }
-        tryPlayerContext(videoId, tvContext, TV_KEY, UA_TV, "https://www.youtube.com", usePoToken = false)?.let { return it }
+        return best
+    }
 
-        // 3. ANDROID_MUSIC (music-optimized client, may need PoToken)
-        val androidMusicContext = JSONObject().apply {
-            put("client", JSONObject().apply {
-                put("clientName", "ANDROID_MUSIC")
-                put("clientVersion", "5.03.51")
-                put("androidSdkVersion", 34)
-                put("osName", "Android")
-                put("osVersion", "14")
-                put("platform", "MOBILE")
-                put("hl", "en")
-                put("gl", "US")
-                visitorData?.let { put("visitorData", it) }
-            })
+    /**
+     * Best video-only adaptive format (no audio track of its own), capped at
+     * 720p to bound bandwidth. Paired with [pickBestAudioFormat] and merged by
+     * the player, this is what modern YouTube videos expose.
+     */
+    private fun pickBestVideoOnlyFormat(json: JSONObject): JSONObject? {
+        val formats = json.optJSONObject("streamingData")?.optJSONArray("adaptiveFormats") ?: return null
+        var best: JSONObject? = null
+        var bestScore = -1
+        for (i in 0 until formats.length()) {
+            val fmt = formats.optJSONObject(i) ?: continue
+            val mime = fmt.optString("mimeType", "")
+            if (!mime.startsWith("video/")) continue
+            val height = fmt.optInt("height", 0)
+            if (height <= 0 || height > 720) continue
+            val bitrate = fmt.optInt("bitrate", 0)
+            val score = height * 100_000 + bitrate.coerceAtMost(99_999)
+            if (score > bestScore) {
+                bestScore = score
+                best = fmt
+            }
         }
-        tryPlayerContext(videoId, androidMusicContext, ANDROID_KEY, UA_ANDROID, "https://music.youtube.com", usePoToken = true)?.let { return it }
+        return best
+    }
 
-        // 4. WEB + PoToken (fallback)
-        val webContext = JSONObject().apply {
-            put("client", JSONObject().apply {
-                put("clientName", "WEB")
-                put("clientVersion", "2.20250610.01.00")
-                put("hl", "en")
-                put("gl", "ID")
-                visitorData?.let { put("visitorData", it) }
-            })
+    /** Turns one player response into a [VideoStream], preferring progressive then adaptive-pair. */
+    private suspend fun parseVideoStream(json: JSONObject, videoId: String, poToken: String?): VideoStream? {
+        pickBestMuxedVideoFormat(json)?.let { progressive ->
+            extractAudioUrl(progressive, videoId)?.let {
+                return VideoStream(appendPoToken(it, poToken), null)
+            }
         }
-        tryPlayerContext(videoId, webContext, WEB_KEY, UA_WEB, "https://www.youtube.com", usePoToken = true)?.let { return it }
+        val videoFormat = pickBestVideoOnlyFormat(json) ?: return null
+        val videoUrl = extractAudioUrl(videoFormat, videoId) ?: return null
+        val audioUrl = pickBestAudioFormat(json)?.let { extractAudioUrl(it, videoId) }
+        return VideoStream(appendPoToken(videoUrl, poToken), audioUrl?.let { appendPoToken(it, poToken) })
+    }
 
-        // 5. Legacy ANDROID/IOS (rarely work without PoToken)
-        val androidContext = JSONObject().apply {
-            put("client", JSONObject().apply {
-                put("clientName", "ANDROID")
-                put("clientVersion", "19.47.53")
-                put("androidSdkVersion", 34)
-                put("osName", "Android")
-                put("osVersion", "14")
-                put("platform", "MOBILE")
-                put("hl", "en")
-                put("gl", "ID")
-            })
+    /** Resolves a playable video (progressive or video+audio pair) for [videoId]. */
+    private suspend fun fetchVideoStream(videoId: String): VideoStream? {
+        for (client in playerClients()) {
+            val (json, poToken) = postPlayer(
+                videoId, client.ctx, client.key, client.userAgent, client.origin,
+                usePoToken = client.usePoToken
+            ) ?: continue
+            parseVideoStream(json, videoId, poToken)?.let { return it }
         }
-        tryPlayerContext(videoId, androidContext, ANDROID_KEY, UA_ANDROID, "https://www.youtube.com")?.let { return it }
+        return null
+    }
 
-        val iosContext = JSONObject().apply {
-            put("client", JSONObject().apply {
-                put("clientName", "IOS")
-                put("clientVersion", "19.47.53")
-                put("osName", "iOS")
-                put("osVersion", "17.5.1.21F90")
-                put("platform", "MOBILE")
-                put("hl", "en")
-                put("gl", "ID")
-            })
+    private suspend fun fetchViaInnerTube(
+        videoId: String,
+        selector: (JSONObject) -> JSONObject? = ::pickBestAudioFormat
+    ): String? {
+        for (client in playerClients()) {
+            tryPlayerContext(
+                videoId, client.ctx, client.key, client.userAgent, client.origin,
+                usePoToken = client.usePoToken, selector = selector
+            )?.let { return it }
         }
-        tryPlayerContext(videoId, iosContext, ANDROID_KEY, UA_ANDROID, "https://www.youtube.com")?.let { return it }
-
         return null
     }
 
@@ -600,19 +738,25 @@ class YTMusicRepository(context: Context) {
         hl: String? = null
     ): StreamSearchResult =
         withContext(Dispatchers.IO) {
+            // Songs catalogue first, then uploads/videos. Many tracks — and mixes /
+            // DJ sets / re-uploads — exist only as videos, never in the YouTube Music
+            // songs catalogue, so a songs-only search silently misses them. Both
+            // paths stream their results through onPartial so the UI fills in live.
             val musicResult = searchMusicSongsSafe(query, onPartial, gl, hl)
-            if (musicResult is StreamSearchResult.Success) return@withContext musicResult
-
             val regularResult = searchRegularSongsSafe(query, onPartial, gl)
-            if (regularResult is StreamSearchResult.Success) return@withContext regularResult
 
-            // Kedua jalur gagal. Kalau SALAH SATU dari keduanya nunjukin ParsingFailed (bukan
-            // cuma Empty), berarti kemungkinan besar struktur JSON YouTube berubah, bukan sekadar
-            // query yang gak ketemu apa-apa — user berhak tau bedanya.
-            if (musicResult is StreamSearchResult.ParsingFailed || regularResult is StreamSearchResult.ParsingFailed) {
-                StreamSearchResult.ParsingFailed
-            } else {
-                StreamSearchResult.Empty
+            val merged = (
+                (musicResult as? StreamSearchResult.Success)?.songs.orEmpty() +
+                    (regularResult as? StreamSearchResult.Success)?.songs.orEmpty()
+                ).distinctBy { it.id }
+
+            when {
+                merged.isNotEmpty() -> StreamSearchResult.Success(merged)
+                // Both paths empty. If either even failed to parse, the response shape
+                // probably changed — the user deserves to know it's not just "no matches".
+                musicResult is StreamSearchResult.ParsingFailed ||
+                    regularResult is StreamSearchResult.ParsingFailed -> StreamSearchResult.ParsingFailed
+                else -> StreamSearchResult.Empty
             }
         }
 
@@ -647,7 +791,7 @@ class YTMusicRepository(context: Context) {
             }
 
             val items = walkMusicContents(response)
-            val limit = minOf(items.length(), 50)
+            val limit = minOf(items.length(), 100)
             if (limit == 0) {
                 // "contents" ADA tapi walkMusicContents() gak nemu satupun renderer yang dikenal
                 // (musicShelfRenderer/musicCardShelfRenderer/dst) -> kemungkinan besar YouTube
@@ -664,7 +808,7 @@ class YTMusicRepository(context: Context) {
                     val title = parseTitle(item)
                     val artist = parseArtist(item)
                     val duration = parseDuration(item)
-                    
+
                     // Strict filter to exclude compilations, playlists masquerading as songs, and long mixes
                     if (duration > 15 * 60 * 1000L || isCompilation(title, artist) ||
                         title.contains("full album", ignoreCase = true)) continue
@@ -676,7 +820,7 @@ class YTMusicRepository(context: Context) {
                         album = parseAlbum(item),
                         duration = duration,
                         uri = StreamSources.placeholderUri(videoId),
-                    source = StreamSources.YOUTUBE,
+                        source = StreamSources.YOUTUBE,
                         isStream = true,
                         remoteArtUrl = parseThumbnail(item),
                         remoteId = videoId
@@ -723,7 +867,7 @@ class YTMusicRepository(context: Context) {
             if (!response.has("contents")) return@withContext StreamSearchResult.ParsingFailed
 
             val items = walkVideoContents(response)
-            val limit = minOf(items.length(), 20)
+            val limit = minOf(items.length(), 50)
             if (limit == 0) return@withContext StreamSearchResult.ParsingFailed
 
             val results = mutableListOf<Song>()
@@ -733,12 +877,11 @@ class YTMusicRepository(context: Context) {
                     val videoId = item.optString("videoId", null) ?: continue
                     val title = parseVideoTitle(item)
                     val duration = parseVideoDuration(item)
-                    
-                    // Filter out non-song content
+
+                    // Filter out non-song content. Videos/mixes can legitimately run long,
+                    // so a generous cap (3h) only drops true marathons/24-7 streams.
                     val artist = parseVideoArtist(item)
-                    if (duration > 20 * 60 * 1000L || isCompilation(title, artist) ||
-                        title.contains("nonstop", ignoreCase = true) ||
-                        title.contains("full album", ignoreCase = true)) continue
+                    if (duration > 3 * 60 * 60 * 1000L || isCompilation(title, artist)) continue
 
                     val song = Song(
                         id = videoId.hashCode().toLong(),
@@ -747,10 +890,11 @@ class YTMusicRepository(context: Context) {
                         album = "YouTube",
                         duration = duration,
                         uri = StreamSources.placeholderUri(videoId),
-                    source = StreamSources.YOUTUBE,
+                        source = StreamSources.YOUTUBE,
                         isStream = true,
                         remoteArtUrl = parseVideoThumbnail(item),
-                        remoteId = videoId
+                        remoteId = videoId,
+                        isVideo = true
                     )
                     results.add(song)
                     onPartial(listOf(song))
@@ -790,21 +934,18 @@ class YTMusicRepository(context: Context) {
 
     private fun isCompilation(title: String, artist: String): Boolean {
         if (title.startsWith("Unknown")) return true // unparsed playlist cards (no flexColumns)
-        
-        val combined = "$title $artist".lowercase()
 
-        // 0. Regional script detection (e.g. Devanagari)
-        if (REGIONAL_SCRIPT.containsMatchIn(title) || REGIONAL_SCRIPT.containsMatchIn(artist)) return true
+        val combined = "$title $artist".lowercase()
 
         // 1. Version/Cover/Tribute markers (Hard Kill)
         if (VERSION_MARKER.containsMatchIn(title) || VERSION_MARKER.containsMatchIn(artist)) return true
-        
+
         // 2. Compilation phrases (Hard Kill)
         if (COMPILATION_PHRASE.containsMatchIn(title) || COMPILATION_PHRASE.containsMatchIn(artist)) return true
-        
+
         // 3. Generic "Music" titles/artists (Hard Kill)
         // Kills: "Music To Make You Happy", "Upbeat Morning Music", "Relaxing Piano Music", etc.
-        if (combined.contains("music to") || combined.contains("music for") || 
+        if (combined.contains("music to") || combined.contains("music for") ||
             (combined.contains("music") && (combined.contains("uplifting") || combined.contains("happy") || combined.contains("morning")))) return true
 
         // 4. Year markers in artist name usually indicate a yearly compilation (e.g. "Hits 2023")
@@ -840,13 +981,13 @@ class YTMusicRepository(context: Context) {
                 ?.optString("text")
         if (!bylineArtist.isNullOrBlank()) return bylineArtist
 
-        // Last resort: extract from title
+        // Last resort: extract from combined "Song - Artist" title
         val titleText = item.optJSONObject("title")
             ?.optJSONArray("runs")
             ?.optJSONObject(0)
             ?.optString("text", "")
             ?: ""
-        extractArtistFromTitle(titleText)?.let { return it }
+        artistFromCombinedTitle(titleText)?.let { return it }
 
         return "Unknown Artist"
     }
@@ -891,9 +1032,9 @@ class YTMusicRepository(context: Context) {
             }
             val raw = post("next", body) ?: return@withContext emptyList()
             val response = JSONObject(raw)
-            
+
             val results = mutableListOf<Song>()
-            
+
             // Mencari array playlist dari berbagai kemungkinan struktur JSON YouTube
             val contents = response.optJSONObject("contents")
                 ?.optJSONObject("singleColumnMusicWatchNextResultsRenderer")
@@ -907,7 +1048,7 @@ class YTMusicRepository(context: Context) {
                 ?.optJSONArray("content")
                 ?.optJSONObject(0)
                 ?.optJSONObject("playlistPanelRenderer")
-                ?.optJSONArray("contents") 
+                ?.optJSONArray("contents")
                 ?: response.optJSONObject("contents")
                     ?.optJSONObject("twoColumnWatchNextResultsRenderer")
                     ?.optJSONObject("secondaryResults")
@@ -920,14 +1061,14 @@ class YTMusicRepository(context: Context) {
                 val item = contents.optJSONObject(i)?.optJSONObject("playlistPanelVideoRenderer")
                     ?: contents.optJSONObject(i)?.optJSONObject("compactVideoRenderer")
                     ?: continue
-                
+
                 val vId = item.optString("videoId") ?: continue
-                if (vId == videoId) continue 
+                if (vId == videoId) continue
 
                 val title = item.optJSONObject("title")?.optString("simpleText")
                     ?: item.optJSONObject("title")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
                     ?: "Unknown"
-                
+
                 val artist = item.optJSONObject("longBylineText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
                     ?: item.optJSONObject("shortBylineText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
                     ?: "Unknown Artist"
@@ -954,7 +1095,7 @@ class YTMusicRepository(context: Context) {
 
     suspend fun getAudioFormats(videoId: String): List<AudioFormat> = withContext(Dispatchers.IO) {
         val formats = mutableListOf<AudioFormat>()
-        
+
         val sessionId = visitorData
         if (sessionId.isNullOrBlank()) return@withContext emptyList()
 
@@ -990,15 +1131,15 @@ class YTMusicRepository(context: Context) {
         if (status != "OK") return@withContext emptyList()
 
         val adaptiveFormats = json.optJSONObject("streamingData")?.optJSONArray("adaptiveFormats") ?: return@withContext emptyList()
-        
+
         for (i in 0 until adaptiveFormats.length()) {
             val fmt = adaptiveFormats.getJSONObject(i)
             val mime = fmt.optString("mimeType", "")
             if (!mime.startsWith("audio/")) continue
-            
+
             val url = extractAudioUrl(fmt, videoId) ?: continue
             val finalUrl = if (!streamingDataPoToken.isNullOrBlank()) "$url&pot=$streamingDataPoToken" else url
-            
+
             val bitrate = fmt.optInt("bitrate", 0)
             val label = when {
                 bitrate >= 320000 -> "Ultra (320kbps)"
@@ -1006,7 +1147,7 @@ class YTMusicRepository(context: Context) {
                 bitrate >= 128000 -> "Medium (128kbps)"
                 else -> "Low (${bitrate / 1000}kbps)"
             }
-            
+
             formats.add(AudioFormat(
                 url = finalUrl,
                 mimeType = mime,
@@ -1015,7 +1156,7 @@ class YTMusicRepository(context: Context) {
                 sizeBytes = fmt.optLong("contentLength", 0L)
             ))
         }
-        
+
         val m4aFormats = formats.filter { it.mimeType.contains("mp4") || it.mimeType.contains("aac") }
         val result = if (m4aFormats.isNotEmpty()) m4aFormats else formats
         result.sortedByDescending { it.bitrate }
@@ -1029,14 +1170,21 @@ class YTMusicRepository(context: Context) {
         val videoId = song.remoteId ?: return@withContext null
 
         if (!song.uri.toString().startsWith(StreamSources.PLACEHOLDER_PREFIX)) {
-            // Already has real URL
-            return@withContext song.uri.toString()
+            val cachedUri = song.uri.toString()
+            if (isUrlFresh(cachedUri)) return@withContext cachedUri
+            // Stale signed URL on the Song (restored from persisted state): fall
+            // through to the cache/network instead of replaying a dead URL.
+            streamUrlCache.remove(videoId)
         }
 
         // 1. In-memory cache dulu (tercepat, hidup selama proses app masih jalan)
         streamUrlCache[videoId]?.let {
-            Timber.d("YTMusicRepo Memory cache hit for: ${song.title}")
-            return@withContext it
+            if (isUrlFresh(it)) {
+                Timber.d("YTMusicRepo Memory cache hit for: ${song.title}")
+                return@withContext it
+            }
+            Timber.d("YTMusicRepo Memory cache EXPIRED for: ${song.title}")
+            streamUrlCache.remove(videoId)
         }
 
         // 2. Room DB (persist antar sesi/app-kill), cek masih valid apa udah expired
@@ -1056,7 +1204,7 @@ class YTMusicRepository(context: Context) {
             if (!highPriority) {
                 playerSemaphore.acquire()
             }
-            
+
             // Coba InnerTube dengan multiple clients (WEB_REMIX, TV_EMBEDDED, ANDROID_MUSIC, dll)
             var audioUrl = fetchViaInnerTube(videoId)
 
@@ -1086,10 +1234,62 @@ class YTMusicRepository(context: Context) {
             }
         }
     }
+
+    /**
+     * Resolves a playable video stream for video mode: a progressive (muxed)
+     * file when available, otherwise a video-only + audio-only pair that the
+     * player merges. Returns null when the video exposes nothing playable.
+     */
+    suspend fun resolveVideoStream(song: Song): VideoStream? = withContext(Dispatchers.IO) {
+        val videoId = song.remoteId ?: return@withContext null
+        videoStreamCache[videoId]?.let {
+            if (isUrlFresh(it.videoUrl) && (it.audioUrl.isNullOrBlank() || isUrlFresh(it.audioUrl))) {
+                Timber.d("YTMusicRepo Video cache hit for: ${song.title}")
+                return@withContext it
+            }
+            Timber.d("YTMusicRepo Video cache EXPIRED for: ${song.title}")
+            videoStreamCache.remove(videoId)
+        }
+        val stream = fetchVideoStream(videoId)
+        if (stream != null) {
+            videoStreamCache[videoId] = stream
+            Timber.d("YTMusicRepo Resolved video stream: ${song.title} - ${song.artist} (progressive=${stream.isProgressive})")
+        } else {
+            Timber.w("YTMusicRepo No playable video format for ${song.title} ($videoId)")
+        }
+        stream
+    }
+
     /**
      * Fetch trending/popular songs using search API (reliable since browse
      * endpoint often requires auth). Searches chart queries and merges results.
      * @param countryCode ISO country code for region-specific results (e.g. "ID", "US")
+     */
+    /**
+     * Fetches a "home feed"-ish list of songs for the Stream tab.
+     *
+     * FIX (root cause #3, see 04-Deep-Fix-And-Optimization-Trace.md): this
+     * used to swallow every failure with a bare `catch (_: Exception) {}` at
+     * both the per-query and per-item level, with zero logging. If YT Music's
+     * `search` response shape changed (or a request just failed), the tab
+     * would silently render empty with no way to tell "genuinely no results"
+     * apart from "every request actually failed". This version:
+     *  - logs every per-query failure (and *why* a query yielded zero items:
+     *    no body, non-JSON, missing `contents`, or fully filtered out) via
+     *    Timber instead of discarding the exception;
+     *  - tracks whether at least one query got a structurally valid response
+     *    ("contents" present) — if every single query failed to even reach
+     *    that point, that's a real fetch/parsing failure and we now return
+     *    [StreamSearchResult.ParsingFailed] instead of pretending it's just
+     *    an empty result, so callers/UI can eventually tell the two apart
+     *    (e.g. show a "couldn't load, tap to retry" state instead of a
+     *    permanently blank tab).
+     *
+     * Note: this still queries the `search` endpoint with hardcoded chart
+     * queries + an opaque base64 `params` filter blob — that's a separate,
+     * more structural issue (see §3 of the trace doc: prefer a real
+     * `browse`-based home-feed endpoint long term). This fix only addresses
+     * the silent-failure behavior, not the endpoint choice itself.
      */
     suspend fun fetchHomeSongs(onPartial: (List<Song>) -> Unit, countryCode: String = "US"): StreamSearchResult =
         withContext(Dispatchers.IO) {
@@ -1103,6 +1303,7 @@ class YTMusicRepository(context: Context) {
             )
             val seenIds = mutableSetOf<Long>()
             val allResults = mutableListOf<Song>()
+            var anyQueryReachedValidResponse = false
 
             for (query in queries) {
                 try {
@@ -1111,20 +1312,32 @@ class YTMusicRepository(context: Context) {
                         put("query", query)
                         put("params", "EgWKAQIIAWoKEAMQBBAFEAoQCQ==")
                     }
-                    val raw = post("search", body) ?: continue
+                    val raw = post("search", body)
+                    if (raw == null) {
+                        Timber.w("fetchHomeSongs: query=\"$query\" got null response body (network/post failure)")
+                        continue
+                    }
                     val response = JSONObject(raw)
                     updateVisitorData(response)
-                    if (!response.has("contents")) continue
+                    if (!response.has("contents")) {
+                        Timber.w("fetchHomeSongs: query=\"$query\" response has no \"contents\" key — response shape may have changed")
+                        continue
+                    }
+                    anyQueryReachedValidResponse = true
 
                     val items = walkMusicContents(response)
+                    if (items.length() == 0) {
+                        Timber.w("fetchHomeSongs: query=\"$query\" contents present but walkMusicContents() found 0 items")
+                    }
                     val limit = minOf(items.length(), 15)
+                    var addedFromThisQuery = 0
                     for (i in 0 until limit) {
                         try {
                             val item = items.getJSONObject(i)
                             val videoId = parseVideoId(item) ?: continue
                             val id = videoId.hashCode().toLong()
                             if (id in seenIds) continue
-                            
+
                             val title = parseTitle(item)
                             val artist = parseArtist(item)
                             val duration = parseDuration(item)
@@ -1141,19 +1354,37 @@ class YTMusicRepository(context: Context) {
                                 album = parseAlbum(item),
                                 duration = duration,
                                 uri = StreamSources.placeholderUri(videoId),
-                    source = StreamSources.YOUTUBE,
+                                source = StreamSources.YOUTUBE,
                                 isStream = true,
                                 remoteArtUrl = parseThumbnail(item),
                                 remoteId = videoId
                             )
                             allResults.add(song)
+                            addedFromThisQuery++
                             onPartial(listOf(song))
-                        } catch (_: Exception) {}
+                        } catch (e: Exception) {
+                            Timber.w(e, "fetchHomeSongs: query=\"$query\" failed to parse item at index $i")
+                        }
                     }
-                } catch (_: Exception) {}
+                    if (addedFromThisQuery == 0 && items.length() > 0) {
+                        Timber.w("fetchHomeSongs: query=\"$query\" had ${items.length()} raw items but all were filtered out (duration/compilation/nonstop/full-album rules)")
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "fetchHomeSongs: query=\"$query\" threw an exception")
+                }
             }
 
-            if (allResults.isEmpty()) StreamSearchResult.Empty else StreamSearchResult.Success(allResults)
+            when {
+                allResults.isNotEmpty() -> StreamSearchResult.Success(allResults)
+                !anyQueryReachedValidResponse -> {
+                    // Every single query failed before we even got a usable
+                    // response body — this is a fetch/parsing failure, not a
+                    // legitimate "no results" state.
+                    Timber.e("fetchHomeSongs: all ${queries.size} queries failed to reach a valid response — treating as ParsingFailed, not Empty")
+                    StreamSearchResult.ParsingFailed
+                }
+                else -> StreamSearchResult.Empty
+            }
         }
 
     suspend fun cleanupExpiredCache() = withContext(Dispatchers.IO) {

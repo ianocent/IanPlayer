@@ -82,8 +82,11 @@ android {
         compose = true
         buildConfig = true
     }
-    kotlinOptions {
-        jvmTarget = "11"
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
     }
 }
 
@@ -105,6 +108,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
     implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-ui:1.4.1")
     implementation("androidx.media3:media3-session:1.4.1")
     implementation("androidx.navigation:navigation-compose:2.8.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
@@ -113,6 +117,8 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.5.0")
     implementation("com.google.accompanist:accompanist-systemuicontroller:0.32.0")
     implementation("sh.calvin.reorderable:reorderable:2.4.0")
+    // Real backdrop blur for the glass UI (frosted effect). Apache-2.0.
+    implementation("dev.chrisbanes.haze:haze:1.7.2")
     // YouTube PoToken (BotGuard) generation + signature cipher deobfuscation for streaming.
     // Pinned to a specific commit (not master-SNAPSHOT) for reproducible builds.
     implementation("com.github.ZemerTeam:zemer-cipher:55ef918b75")
@@ -123,9 +129,9 @@ dependencies {
     implementation("com.mpatric:mp3agic:0.9.1")
     // Audio metadata tags for MP4/M4A containers (YouTube audio downloads are AAC-in-MP4)
     implementation("net.jthink:jaudiotagger:3.0.1")
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    ksp("androidx.room:room-compiler:2.6.1")
+    implementation("androidx.room:room-runtime:2.8.4")
+    implementation("androidx.room:room-ktx:2.8.4")
+    ksp("androidx.room:room-compiler:2.8.4")
     // Firebase
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-database-ktx")

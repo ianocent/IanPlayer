@@ -26,15 +26,17 @@ import java.net.URL
  * Single entry point for embedding ID3-style metadata into downloaded audio
  * files. The container is sniffed from magic bytes (download filenames can
  * lie), then dispatched to the matching tag writer: mp3agic for MP3,
- * jaudiotagger for AAC-in-MP4 (.m4a). WebM/Opus has no writable standard tag,
- * so those files rely on the caller updating MediaStore columns instead.
+ * jaudiotagger for AAC-in-MP4 (.m4a) and FLAC. WebM/Opus has no writable
+ * standard tag, so those files rely on the caller updating MediaStore columns
+ * instead.
  */
 object MetadataWriter {
     suspend fun writeMetadata(
         context: Context,
         filePath: String,
         song: Song,
-        newArt: Bitmap? = null
+        newArt: Bitmap? = null,
+        meta: TrackMetadata? = null
     ) = withContext(Dispatchers.IO) {
         try {
             val file = File(filePath)
@@ -46,6 +48,7 @@ object MetadataWriter {
             // Provider titles/channels are messy ("Ed Sheeran - Topic",
             // "(Official Music Video)") — normalise before they land in tags.
             val (title, artist) = SongTags.resolve(song.title, song.artist)
+            val fields = buildFields(title, artist, song, meta)
 
             val header = ByteArray(16).let { buf ->
                 file.inputStream().use { input ->
@@ -59,13 +62,13 @@ object MetadataWriter {
                 buf
             }
             val container = SongTags.detectContainer(header)
-            Timber.d("Tagging $container file: title=\"$title\" artist=\"$artist\" album=\"${song.album}\"")
+            Timber.d("Tagging $container file: title=\"$title\" artist=\"$artist\" album=\"${fields.album}\"")
 
-            val artBytes = resolveAlbumArtBytes(song, newArt)
+            val artBytes = resolveAlbumArtBytes(song, newArt, meta)
 
             val success = when (container) {
-                SongTags.Container.MP3 -> writeMp3Tags(file, title, artist, song.album, artBytes)
-                SongTags.Container.MP4 -> writeMp4Tags(file, title, artist, song.album, artBytes)
+                SongTags.Container.MP3 -> writeMp3Tags(file, fields, artBytes)
+                SongTags.Container.MP4, SongTags.Container.FLAC -> writeJaudioTags(file, fields, artBytes)
                 SongTags.Container.WEBM, SongTags.Container.UNKNOWN -> {
                     Timber.w("No embeddable tag standard for $container; relying on MediaStore columns")
                     true
@@ -79,10 +82,49 @@ object MetadataWriter {
         }
     }
 
-    /** Returns JPEG bytes for the artwork to embed, downloading remote art if needed. */
-    private suspend fun resolveAlbumArtBytes(song: Song, newArt: Bitmap?): ByteArray? {
+    /** Canonical tag values written to every supported container. */
+    private data class TagFields(
+        val title: String,
+        val artist: String,
+        val album: String? = null,
+        val albumArtist: String? = null,
+        val genre: String? = null,
+        val year: String? = null,
+        val trackNumber: Int? = null,
+        val totalTracks: Int? = null,
+        val discNumber: Int? = null
+    )
+
+    /**
+     * Folds catalog metadata ([TrackMetadata]) over the provider row. Catalog
+     * values win; provider values fill the rest, and placeholder album names
+     * ("Unknown Album") are dropped rather than embedded.
+     */
+    private fun buildFields(title: String, artist: String, song: Song, meta: TrackMetadata?): TagFields {
+        val providerAlbum = song.album?.takeIf { it.isNotBlank() && !it.equals("Unknown Album", true) }
+        return TagFields(
+            title = title,
+            artist = artist,
+            album = meta?.album?.takeIf { it.isNotBlank() } ?: providerAlbum,
+            albumArtist = meta?.albumArtist?.takeIf { it.isNotBlank() },
+            genre = meta?.genre?.takeIf { it.isNotBlank() },
+            year = meta?.year?.takeIf { it.isNotBlank() },
+            trackNumber = meta?.trackNumber,
+            totalTracks = meta?.totalTracks,
+            discNumber = meta?.discNumber
+        )
+    }
+
+    /**
+     * Returns JPEG bytes for the artwork to embed, downloading remote art if
+     * needed. Catalog cover (square, high-res) is preferred over the provider's
+     * letterboxed video thumbnail.
+     */
+    private suspend fun resolveAlbumArtBytes(song: Song, newArt: Bitmap?, meta: TrackMetadata?): ByteArray? {
         newArt?.let { return bitmapToJpeg(it) }
-        val url = song.remoteArtUrl?.takeIf { it.isNotBlank() } ?: return null
+        val url = meta?.artUrl?.takeIf { it.isNotBlank() }
+            ?: song.remoteArtUrl?.takeIf { it.isNotBlank() }
+            ?: return null
         return try {
             Timber.d("Downloading album art from: $url")
             downloadBitmap(url)?.let { bitmap ->
@@ -104,18 +146,23 @@ object MetadataWriter {
     /** MP3 tagging via mp3agic: rewrite through a temp file (mp3agic cannot overwrite its input). */
     private fun writeMp3Tags(
         file: File,
-        title: String,
-        artist: String,
-        album: String,
+        fields: TagFields,
         artBytes: ByteArray?
     ): Boolean {
         return try {
             val mp3file = Mp3File(file)
             val id3v2tag: ID3v2 = if (mp3file.hasId3v2Tag()) mp3file.id3v2Tag else ID3v24Tag()
 
-            id3v2tag.artist = artist
-            id3v2tag.title = title
-            id3v2tag.album = album
+            id3v2tag.title = fields.title
+            id3v2tag.artist = fields.artist
+            fields.album?.let { id3v2tag.album = it }
+            fields.albumArtist?.let { id3v2tag.albumArtist = it }
+            fields.genre?.let { id3v2tag.genreDescription = it }
+            fields.year?.let { id3v2tag.year = it }
+            fields.trackNumber?.let { n ->
+                id3v2tag.track =
+                    if ((fields.totalTracks ?: 0) > 0) "$n/${fields.totalTracks}" else n.toString()
+            }
 
             if (artBytes != null) {
                 id3v2tag.setAlbumImage(artBytes, "image/jpeg")
@@ -146,21 +193,24 @@ object MetadataWriter {
         }
     }
 
-    /** MP4/M4A tagging via jaudiotagger: commits in place. */
-    private fun writeMp4Tags(
+    /** MP4/M4A and FLAC tagging via jaudiotagger: commits in place. */
+    private fun writeJaudioTags(
         file: File,
-        title: String,
-        artist: String,
-        album: String,
+        fields: TagFields,
         artBytes: ByteArray?
     ): Boolean {
         return try {
             val audioFile = AudioFileIO.read(file)
             val tag = audioFile.tagOrCreateDefault
 
-            tag.setField(FieldKey.TITLE, title)
-            tag.setField(FieldKey.ARTIST, artist)
-            if (album.isNotBlank()) tag.setField(FieldKey.ALBUM, album)
+            tag.setField(FieldKey.TITLE, fields.title)
+            tag.setField(FieldKey.ARTIST, fields.artist)
+            fields.album?.let { tag.setField(FieldKey.ALBUM, it) }
+            fields.albumArtist?.let { tag.setField(FieldKey.ALBUM_ARTIST, it) }
+            fields.year?.let { tag.setField(FieldKey.YEAR, it) }
+            fields.genre?.let { tag.setField(FieldKey.GENRE, it) }
+            fields.trackNumber?.let { tag.setField(FieldKey.TRACK, it.toString()) }
+            fields.discNumber?.let { tag.setField(FieldKey.DISC_NO, it.toString()) }
 
             if (artBytes != null) {
                 try {
@@ -171,13 +221,13 @@ object MetadataWriter {
                 artwork.binaryData = artBytes
                 artwork.mimeType = "image/jpeg"
                 tag.setField(artwork)
-                Timber.d("Album art embedded into M4A")
+                Timber.d("Album art embedded into ${file.extension.uppercase()}")
             }
 
             audioFile.commit()
             true
         } catch (e: Exception) {
-            Timber.e(e, "M4A tagging failed: ${e.message}")
+            Timber.e(e, "Tag write failed: ${e.message}")
             false
         }
     }
@@ -290,9 +340,10 @@ object MetadataWriter {
                 }
             } else null
 
+            val fields = TagFields(title = newTitle, artist = newArtist)
             val success = when (container) {
-                SongTags.Container.MP3 -> writeMp3Tags(file, newTitle, newArtist, "", artBytes)
-                SongTags.Container.MP4 -> writeMp4Tags(file, newTitle, newArtist, "", artBytes)
+                SongTags.Container.MP3 -> writeMp3Tags(file, fields, artBytes)
+                SongTags.Container.MP4, SongTags.Container.FLAC -> writeJaudioTags(file, fields, artBytes)
                 SongTags.Container.WEBM, SongTags.Container.UNKNOWN -> {
                     // WebM/Opus has no standard writable tag; rely on MediaStore columns only
                     Timber.w("No embeddable tag for $container, updating MediaStore columns only")

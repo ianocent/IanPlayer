@@ -300,6 +300,7 @@ class SongStore(
             song.remoteArtUrl?.let { obj.put("remoteArtUrl", it) }
             song.remoteId?.let { obj.put("remoteId", it) }
             song.source?.let { obj.put("source", it) }
+            obj.put("isVideo", song.isVideo)
             obj.put("dateAdded", song.dateAdded)
             return obj
         }
@@ -317,7 +318,8 @@ class SongStore(
                     remoteArtUrl = if (obj.has("remoteArtUrl")) obj.optString("remoteArtUrl", null) else null,
                     dateAdded = obj.optLong("dateAdded", 0L),
                     remoteId = if (obj.has("remoteId")) obj.optString("remoteId", null) else null,
-                    source = if (obj.has("source")) obj.optString("source", null) else null
+                    source = if (obj.has("source")) obj.optString("source", null) else null,
+                    isVideo = obj.optBoolean("isVideo", false)
                 )
             } catch (_: Exception) { null }
         }

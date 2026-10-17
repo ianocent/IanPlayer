@@ -4,7 +4,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
+import android.view.TextureView
 import androidx.core.content.ContextCompat
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -14,13 +16,16 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.ianocent.musicplayer.data.AudioFormat
+import com.ianocent.musicplayer.data.ArtLoader
 import com.ianocent.musicplayer.data.Song
 import com.ianocent.musicplayer.data.SongStore
 import com.ianocent.musicplayer.data.StreamResolvers
 import com.ianocent.musicplayer.data.StreamSearchResult
 import com.ianocent.musicplayer.data.StreamSources
+import com.ianocent.musicplayer.data.VideoStreamUri
 import com.ianocent.musicplayer.data.YTMusicRepository
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -57,6 +62,7 @@ class PlayerGateway(
     private val onSongPlayed: (Song) -> Unit,
     private val onBufferingChange: (Boolean) -> Unit,
     private val onIsPlayingChange: (Boolean) -> Unit,
+    private val onVideoModeUnsupported: () -> Unit = {},
 ) {
     // == Player connection ==
 
@@ -104,9 +110,24 @@ class PlayerGateway(
     private var autoFillJob: Job? = null
     private var playbackJob: Job? = null
     private var continuousFailures = 0
+    private var playbackGeneration = 0
+    private var overlapPlayer: ExoPlayer? = null
+    private var overlapGen = -1
+
+    // The TextureView the session player renders video into (video mode). A
+    // TextureView (not SurfaceView) so the UI can sample frames for the
+    // dynamic ambient/vibrance color.
+    private var videoTexture: TextureView? = null
 
     private fun isPlaceholderUri(uriString: String?): Boolean =
         uriString?.startsWith(StreamSources.PLACEHOLDER_PREFIX) == true
+
+    /**
+     * One-line traces for the music/video mode-switch seam. Filter logcat with
+     * the keyword `MODESWITCH` to follow exactly what changed and why a track
+     * advanced (transition, ENDED, errors, reverts, skips) without the noise.
+     */
+    private fun mlog(msg: String) = Timber.tag("MODESWITCH").d(msg)
 
     // == Player event handling ==
 
@@ -118,6 +139,7 @@ class PlayerGateway(
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            mlog("onMediaItemTransition: id=${mediaItem?.mediaId} reason=$reason queueIdx=${player?.currentMediaItemIndex} pos=${getCurrentPosition()} videoActive=$videoSourceActive")
             _duration.value = getDuration()
             syncStateFromPlayer()
             savePlayerState()
@@ -135,29 +157,56 @@ class PlayerGateway(
             _isBuffering.value = isBuf
             onBufferingChange(isBuf)
             if (playbackState == Player.STATE_ENDED) {
+                mlog("STATE_ENDED pos=${getCurrentPosition()} dur=${getDuration()} videoActive=$videoSourceActive overlapGen=$overlapGen playbackJobActive=${playbackJob?.isActive} repeat=${player?.repeatMode}")
+                // During an overlap fade the service player may hit the end of the
+                // old track naturally while the temp player is already playing the
+                // next — don't auto-advance on top of the handoff.
+                if (overlapGen >= 0 && playbackJob?.isActive == true) { mlog("STATE_ENDED ignored (overlap handoff active)"); return }
+                // A merged video source can report ENDED spuriously when its
+                // timeline collapses. If we're nowhere near the real end (or can't
+                // tell because the duration is unknown), fall back to the
+                // audio-only stream for the SAME song instead of cascading through
+                // the queue ("ganti-ganti lagu").
+                if (isVideoSourceActive()) {
+                    val pos = getCurrentPosition()
+                    val dur = getDuration()
+                    if ((dur <= 0L || pos < dur - 1500L) && tryRevertVideoToAudio()) { mlog("STATE_ENDED -> revert to audio (same song)"); return }
+                }
                 if (player?.repeatMode != Player.REPEAT_MODE_ONE) {
+                    mlog("STATE_ENDED -> playNext()")
                     playNext()
                 }
             }
             if (playbackState == Player.STATE_IDLE && player?.playerError != null) {
+                mlog("STATE_IDLE error=${player?.playerError} videoActive=$videoSourceActive")
                 _isPlaying.value = false
 
                 val currentUri = player?.currentMediaItem?.localConfiguration?.uri?.toString()
-                if (isPlaceholderUri(currentUri)) return
+                if (isPlaceholderUri(currentUri)) { mlog("STATE_IDLE ignored (placeholder item)"); return }
+
+                // A failed merged video source must not cascade through the queue:
+                // fall back to the audio-only stream for the SAME song first.
+                if (tryRevertVideoToAudio()) { mlog("STATE_IDLE -> revert to audio (same song)"); return }
 
                 try {
                     player?.prepare()
                     player?.play()
                 } catch (e: Exception) {
                     Timber.w(e, "PlayerGateway player retry failed, skip to next")
+                    mlog("STATE_IDLE retry failed -> playNext()")
                     playNext()
                 }
             }
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            mlog("onPlayerError: ${(error.cause?.cause ?: error.cause ?: error).message} videoActive=$videoSourceActive")
             error.printStackTrace()
             _isPlaying.value = false
+            // Don't skip songs when the merged video source fails — revert to the
+            // audio-only item for the current track and leave video mode instead.
+            if (tryRevertVideoToAudio()) { mlog("onPlayerError -> revert to audio (same song)"); return }
+            mlog("onPlayerError -> resolve-failure path")
             handleResolveFailure()
         }
     }
@@ -173,23 +222,36 @@ class PlayerGateway(
         controllerFuture = MediaController.Builder(context, sessionToken).buildAsync()
         controllerFuture?.addListener(
             {
-                player = controllerFuture?.get()
-                player?.addListener(playerListener)
-                // Sync play/pause state from the live session — the UI must reflect
-                // reality (e.g. when restoring after the app was killed while playing).
-                _isPlaying.value = player?.isPlaying ?: false
-                // Restore persisted repeat mode to the player (ExoPlayer defaults to OFF).
-                player?.repeatMode = _repeatMode.value
-                // Restore persisted shuffle mode to the player.
-                player?.shuffleModeEnabled = _isShuffleOn.value
-                val restored = restoreCurrentFromPlayer(fireOnSongPlayed = true)
-                onReady(restored, player?.isPlaying ?: false)
+                // The listener fires on BOTH success and failure. If the bind failed
+                // (e.g. the previous session's PlaybackService is still tearing down
+                // when the app is relaunched after playback), `get()` throws
+                // ExecutionException. Left unhandled it crashes the process — which is
+                // exactly the intermittent "force close on reopen, works after retries".
+                try {
+                    player = controllerFuture?.get()
+                    player?.addListener(playerListener)
+                    // Sync play/pause state from the live session — the UI must reflect
+                    // reality (e.g. when restoring after the app was killed while playing).
+                    _isPlaying.value = player?.isPlaying ?: false
+                    // Restore persisted repeat mode to the player (ExoPlayer defaults to OFF).
+                    player?.repeatMode = _repeatMode.value
+                    // Restore persisted shuffle mode to the player.
+                    player?.shuffleModeEnabled = _isShuffleOn.value
+                    val restored = restoreCurrentFromPlayer(fireOnSongPlayed = true)
+                    onReady(restored, player?.isPlaying ?: false)
+                } catch (e: Exception) {
+                    Timber.e(e, "PlayerGateway failed to connect to PlaybackService")
+                    player = null
+                    _isPlaying.value = false
+                    onReady(false, false)
+                }
             },
             ContextCompat.getMainExecutor(context)
         )
     }
 
     fun release() {
+        releaseOverlapPlayer()
         controllerFuture?.let { MediaController.releaseFuture(it) }
         player = null
     }
@@ -272,7 +334,8 @@ class PlayerGateway(
         val p = player ?: return null
         val meta = item.mediaMetadata
         val songUri = item.localConfiguration?.uri ?: Uri.EMPTY
-        val isStream = songUri.scheme == "http" || songUri.scheme == "https"
+        val isVideoSource = songUri.scheme == VideoStreamUri.SCHEME
+        val isStream = isVideoSource || songUri.scheme == "http" || songUri.scheme == "https"
         return Song(
             id = item.mediaId.toLongOrNull() ?: fallbackId,
             title = meta.title?.toString() ?: "Unknown",
@@ -281,6 +344,7 @@ class PlayerGateway(
             uri = songUri,
             album = meta.albumTitle?.toString() ?: "Unknown Album",
             isStream = isStream,
+            isVideo = isVideoSource,
             remoteArtUrl = meta.artworkUri?.toString(),
             remoteId = if (isStream) item.mediaId else null
         )
@@ -513,7 +577,10 @@ class PlayerGateway(
     // == Playback control ==
 
     fun playSong(song: Song) {
+        mlog("playSong: ${song.title} id=${song.id} preemptingJob=${playbackJob?.isActive}")
         playbackJob?.cancel()
+        val gen = ++playbackGeneration
+        releaseOverlapPlayer()
         playbackJob = scope.launch {
             // Check current index in current queue (don't snapshot yet)
             var initialIndex = _queue.value.indexOfFirst { it.id == song.id }
@@ -525,8 +592,6 @@ class PlayerGateway(
                 initialIndex = updated.size - 1
             }
 
-            fadeOutIfPlaying()
-
             _currentSong.value = song
             currentIndex = initialIndex
             savePlayerState()
@@ -535,6 +600,7 @@ class PlayerGateway(
 
             if (resolvedSong == null) {
                 Timber.w("PlayerGateway failed to resolve stream for ${song.title}, aborting")
+                mlog("playSong(${song.title}): resolve FAILED -> failure path")
                 _isBuffering.value = false
                 handleResolveFailure()
                 return@launch
@@ -549,9 +615,8 @@ class PlayerGateway(
                 currentIndex = finalIndex
             }
 
-            startPlayback(resolvedSong, _queue.value, if (finalIndex != -1) finalIndex else 0)
+            startWithCrossfade(resolvedSong, _queue.value, if (finalIndex != -1) finalIndex else 0, gen)
 
-            fadeIn()
             onSongPlayed(song)
             savePlayerState()
         }
@@ -587,27 +652,144 @@ class PlayerGateway(
 
     /** Shared resolution step: unresolved stream songs go through the provider resolver. */
     private suspend fun resolveIfNeeded(song: Song): Song? {
-        if (!StreamSources.needsResolution(song)) return song
+        if (!needsPlaybackResolution(song)) return song
         _isBuffering.value = true
         return try {
-            val streamUrl = streamResolvers.resolve(song)
-            _isBuffering.value = false
-            if (streamUrl != null && !isPlaceholderUri(streamUrl)) song.copy(uri = Uri.parse(streamUrl)) else null
+            // Video-catalogue songs play the merged video+audio source directly —
+            // no runtime mode toggle, no replaceMediaItem mid-playback (the whole
+            // swap seam was the source of mid-track cascades).
+            if (song.isVideo && song.source == StreamSources.YOUTUBE && !song.remoteId.isNullOrBlank()) {
+                val videoStream = withContext(Dispatchers.IO) { ytMusicRepository.resolveVideoStream(song) }
+                _isBuffering.value = false
+                when {
+                    videoStream == null -> {
+                        mlog("resolveIfNeeded(${song.title}): no video stream -> audio fallback")
+                        onVideoModeUnsupported()
+                        fallbackAudio(song)
+                    }
+                    else -> song.copy(uri = VideoStreamUri.build(videoStream))
+                }
+            } else {
+                val streamUrl = streamResolvers.resolve(song)
+                _isBuffering.value = false
+                if (streamUrl != null && !isPlaceholderUri(streamUrl)) song.copy(uri = Uri.parse(streamUrl)) else null
+            }
         } catch (e: Exception) {
             _isBuffering.value = false
             null
         }
     }
 
+    /** Audio-only resolution for a video song whose video stream is unavailable. */
+    private suspend fun fallbackAudio(song: Song): Song? {
+        return try {
+            val url = streamResolvers.resolve(song)
+            if (url != null && !isPlaceholderUri(url)) song.copy(uri = Uri.parse(url)) else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * True when [song] still needs its playable URI resolved — an unresolved
+     * placeholder, a stale `ianvideo://` merged URI, or a signed audio URL whose
+     * `expire` epoch has passed (restored from persisted state, or left playing
+     * past its lifetime). Expired URLs used to be handed straight to the player,
+     * whose error path then skipped to the next track.
+     */
+    private fun needsPlaybackResolution(song: Song): Boolean =
+        StreamSources.needsResolution(song) || song.uri.scheme == VideoStreamUri.SCHEME ||
+            (song.isStream && song.remoteId != null && StreamSources.isSignedUrlExpired(song.uri.toString()))
+
     /** Shared retry policy after resolution failure: skip, unless we failed repeatedly. */
     private fun handleResolveFailure() {
         continuousFailures++
         if (continuousFailures < 3) {
+            mlog("resolveFailure #$continuousFailures -> playNext (skip)")
             playNext()
         } else {
             continuousFailures = 0
             _isPlaying.value = false
+            mlog("resolveFailure x3 -> stopped, no skip")
         }
+    }
+
+    /**
+     * When the merged video source fails to load, ExoPlayer emits an error and
+     * the shared retry policy would skip through the queue ("ganti-ganti lagu").
+     * Instead, swap the SAME song back to its audio-only stream so playback
+     * continues, and tell the UI to drop video mode. Returns true when a revert
+     * was started (the caller must then stop handling the error itself).
+     */
+    private fun tryRevertVideoToAudio(): Boolean {
+        if (!isVideoSourceActive()) return false
+        // One revert at a time: onPlayerError and STATE_IDLE can both fire for the
+        // same failure, and two concurrent swaps would fight each other.
+        if (revertingVideo) { mlog("revertToAudio: already reverting, swallow"); return true }
+        revertingVideo = true
+        val song = _currentSong.value
+        val p = player ?: run { revertingVideo = false; return false }
+        if (song == null) { revertingVideo = false; return false }
+        mlog("revertToAudio: start song=${song.title} pos=${getCurrentPosition()} playheadIdx=${p.currentMediaItemIndex}")
+
+        val pos = getCurrentPosition()
+        val wasPlaying = p.isPlaying
+        onVideoModeUnsupported()
+
+        scope.launch {
+            try {
+                val url = try {
+                    // Always resolve the AUDIO-only URL for the fallback — never
+                    // the merged `ianvideo://` URI, which would just fail again.
+                    streamResolvers.resolve(song)
+                } catch (e: Exception) {
+                    Timber.w(e, "tryRevertVideoToAudio resolve failed")
+                    null
+                }
+                if (url.isNullOrBlank() || isPlaceholderUri(url)) {
+                    mlog("revertToAudio: resolve FAILED -> resolve-failure path")
+                    handleResolveFailure()
+                    return@launch
+                }
+                mlog("revertToAudio: resolved, swapping item + prepare @pos=$pos")
+                try {
+                    p.setVideoTextureView(null)
+                    videoTexture = null
+                    videoSourceActive = false
+                    // A video-switch fade may have left the player at silence;
+                    // make sure the audio fallback comes back at full volume.
+                    p.volume = 1f
+                    val audioItem = buildMediaItem(song.copy(uri = Uri.parse(url)))
+                    // The cascade may have moved the playhead off the video item
+                    // before the failure fired. Swap in place at the video item's
+                    // own slot and re-seat the playhead there, so exactly ONE copy
+                    // of this song's audio exists and current stays coherent.
+                    val videoSlot = (0 until p.mediaItemCount)
+                        .firstOrNull { p.getMediaItemAt(it).mediaId == songMediaId(song) }
+                    val seats: Int
+                    if (videoSlot != null && videoSlot != p.currentMediaItemIndex) {
+                        mlog("revertToAudio: playhead ran away to idx=${p.currentMediaItemIndex}; restoring slot=$videoSlot")
+                        p.replaceMediaItem(videoSlot, audioItem)
+                        seats = videoSlot
+                    } else {
+                        val idx = p.currentMediaItemIndex
+                        if (idx >= 0) p.replaceMediaItem(idx, audioItem) else p.setMediaItem(audioItem)
+                        seats = if (idx >= 0) idx else 0
+                    }
+                    p.prepare()
+                    if (pos > 0) p.seekTo(seats, pos) else if (seats != p.currentMediaItemIndex) p.seekTo(seats, 0)
+                    if (wasPlaying) p.play()
+                    mlog("revertToAudio: OK slot=$seats")
+                } catch (e: Exception) {
+                    Timber.w(e, "tryRevertVideoToAudio swap failed")
+                    mlog("revertToAudio: swap FAILED -> resolve-failure path")
+                    handleResolveFailure()
+                }
+            } finally {
+                revertingVideo = false
+            }
+        }
+        return true
     }
 
     fun playNext() {
@@ -617,9 +799,11 @@ class PlayerGateway(
 
         val nextIndex = when {
             isLast && _repeatMode.value == Player.REPEAT_MODE_ALL -> 0
-            isLast -> return
+            isLast -> { mlog("playNext: blocked (last track, no repeat)"); return }
             else -> currentIndex + 1
         }
+        mlog("playNext: cur=$currentIndex next=$nextIndex (${
+            list.getOrNull(currentIndex)?.title} -> ${list.getOrNull(nextIndex)?.title})")
         playSong(list[nextIndex])
         autoFillUpNext(AutoFillContext())
     }
@@ -665,6 +849,18 @@ class PlayerGateway(
     fun togglePlayPause() {
         scope.launch {
             val p = player ?: return@launch
+            // Cold-start restore publishes the current song but never repopulates
+            // the fresh player's timeline (the service was stopped on task remove).
+            // Resuming via playSong rebuilds the queue instead of no-oping.
+            if (p.mediaItemCount == 0) {
+                val song = _currentSong.value
+                if (song != null) {
+                    playSong(song)
+                }
+                return@launch
+            }
+            // Never leave the temp overlap player audible if the user pauses.
+            if (overlapGen >= 0) releaseOverlapPlayer()
             if (p.isPlaying) {
                 fadeVolume(1f, 0f, 150)
                 pauseOrPlay()
@@ -694,6 +890,29 @@ class PlayerGateway(
         _currentPosition.value = positionMs
     }
 
+    /** Binds (or clears, with null) the TextureView the session player renders video to. */
+    fun setVideoTextureView(view: TextureView?) {
+        videoTexture = view
+        runCatching { player?.setVideoTextureView(view) }
+    }
+
+    // Guards against two concurrent audio fallbacks for the same failed video item.
+    private var revertingVideo = false
+
+    /** Media id rule shared with [buildMediaItem]: remoteId first, else local id. */
+    private fun songMediaId(song: Song): String =
+        if (song.isStream && !song.remoteId.isNullOrBlank()) song.remoteId else song.id.toString()
+
+    // Tracks whether the player currently sits on the merged video+audio source.
+    // Set explicitly on every swap instead of relying only on the MediaController
+    // item's URI (which is not guaranteed to expose localConfiguration).
+    private var videoSourceActive = false
+
+    /** True while the player's current item is the merged video+audio source. */
+    private fun isVideoSourceActive(): Boolean =
+        videoSourceActive ||
+            player?.currentMediaItem?.localConfiguration?.uri?.scheme == VideoStreamUri.SCHEME
+
     fun getLivePosition(): Long = getCurrentPosition()
 
     fun getAudioFormats(song: Song, onResult: (List<AudioFormat>) -> Unit) {
@@ -709,7 +928,7 @@ class PlayerGateway(
         scope.launch {
             var formats = ytMusicRepository.getAudioFormats(remoteId)
             if (formats.isEmpty()) {
-                val resolvedUrl = if (StreamSources.needsResolution(song)) {
+                val resolvedUrl = if (needsPlaybackResolution(song)) {
                     streamResolvers.resolve(song)
                 } else song.uri.toString()
                 formats = ytMusicRepository.getAudioFormats(remoteId)
@@ -731,15 +950,42 @@ class PlayerGateway(
 
     // == Volume fades ==
 
+    /** Crossfade/inter-track fade duration in ms. 0 keeps the old instant cut. */
+    var crossfadeMs: Int = 0
+        set(value) {
+            field = value.coerceIn(0, 2000)
+        }
+
     private suspend fun fadeOutIfPlaying() {
-        if (player?.isPlaying == true) {
-            fadeVolume(1f, 0f, 150)
+        val p = player ?: return
+        if (p.isPlaying) {
+            val ms = crossfadeMs
+            if (ms <= 0) { p.volume = 0f; return }
+            easeFade(p, 1f, 0f, ms.toLong())
         } else {
-            player?.volume = 0f
+            p.volume = 0f
         }
     }
 
-    private suspend fun fadeIn() = fadeVolume(0f, 1f, 150)
+    private suspend fun fadeIn() {
+        val p = player ?: return
+        val ms = crossfadeMs
+        if (ms <= 0) { p.volume = 1f; return }
+        easeFade(p, 0f, 1f, ms.toLong())
+    }
+
+    /** Smoothstep-curved volume ramp so track switches feel like a crossfade. */
+    private suspend fun easeFade(p: Player, from: Float, to: Float, durationMs: Long) {
+        val steps = 12
+        val interval = (durationMs / steps).coerceAtLeast(1L)
+        for (i in 1..steps) {
+            val t = i / steps.toFloat()
+            val eased = t * t * (3f - 2f * t)
+            p.volume = (from + (to - from) * eased).coerceIn(0f, 1f)
+            delay(interval)
+        }
+        p.volume = to.coerceIn(0f, 1f)
+    }
 
     private suspend fun fadeVolume(from: Float, to: Float, durationMs: Long) {
         val p = player ?: return
@@ -755,6 +1001,120 @@ class PlayerGateway(
         p.volume = to.coerceIn(0f, 1f)
     }
 
+    // == True-overlap crossfade ==
+    //
+    // A second, focus-free ExoPlayer briefly plays the *next* track while the
+    // session player fades the *old* one out, then the handoff moves to the
+    // session player (so notifications/session stay coherent) and the temp
+    // player is retired. Only runs for user-initiated switches; the auto
+    // advance path has no audible tail to overlap.
+
+    private suspend fun startWithCrossfade(song: Song, queueSongs: List<Song>, startIndex: Int, gen: Int) {
+        val svc = player
+        if (crossfadeMs <= 0 || svc == null || !svc.isPlaying) {
+            fadeOutIfPlaying()
+            startPlayback(song, queueSongs, startIndex)
+            fadeIn()
+            return
+        }
+
+        val temp = ensureOverlapPlayer()
+        try {
+            temp.setMediaItem(buildMediaItem(song))
+            temp.prepare()
+            temp.volume = 0f
+            temp.play()
+        } catch (e: Exception) {
+            Timber.w(e, "PlayerGateway overlap prepare failed, fell back to direct switch")
+            releaseOverlapPlayer()
+            fadeOutIfPlaying()
+            startPlayback(song, queueSongs, startIndex)
+            fadeIn()
+            return
+        }
+        overlapGen = gen
+
+        try {
+            val svcStartVolume = svc.volume.coerceIn(0f, 1f)
+            crossfadeVolumes(svc, temp, svcStartVolume, crossfadeMs.toLong())
+            if (gen != playbackGeneration) return
+
+            startPlayback(song, queueSongs, startIndex)
+            svc.volume = 1f
+            waitForTargetPlayback(svc, song)
+            if (gen != playbackGeneration) return
+
+            // Handoff complete: duck the temp player out quickly, then retire it.
+            easeFade(temp, 1f, 0f, 80)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "PlayerGateway crossfade handoff failed, falling back")
+            try {
+                startPlayback(song, queueSongs, startIndex)
+                svc.volume = 1f
+            } catch (_: Exception) {
+            }
+        } finally {
+            if (overlapPlayer === temp) releaseOverlapPlayer()
+            if (gen == playbackGeneration) {
+                player?.let { p -> runCatching { p.volume = 1f } }
+            }
+        }
+    }
+
+    private suspend fun crossfadeVolumes(svc: Player, temp: Player, fromSvc: Float, fadeMs: Long) {
+        val steps = 16
+        val interval = (fadeMs / steps).coerceAtLeast(16L)
+        for (i in 1..steps) {
+            val t = i / steps.toFloat()
+            val eased = t * t * (3f - 2f * t)
+            svc.volume = (fromSvc * (1f - eased)).coerceIn(0f, 1f)
+            temp.volume = eased.coerceIn(0f, 1f)
+            delay(interval)
+        }
+        svc.volume = 0f
+        temp.volume = 1f
+    }
+
+    /** Blocks until the session player actually starts the [song] target item. */
+    private suspend fun waitForTargetPlayback(svc: Player, song: Song) {
+        val targetId = if (song.isStream && !song.remoteId.isNullOrBlank()) song.remoteId else song.id.toString()
+        val deadline = System.currentTimeMillis() + 8000
+        while (System.currentTimeMillis() < deadline) {
+            if (svc.playerError != null) {
+                handleResolveFailure()
+                return
+            }
+            if (svc.isPlaying && svc.currentMediaItem?.mediaId == targetId) return
+            delay(40)
+        }
+        Timber.w("PlayerGateway overlap handoff timed out waiting for ${song.title}")
+    }
+
+    private fun ensureOverlapPlayer(): ExoPlayer {
+        overlapPlayer?.let { return it }
+        return ExoPlayer.Builder(context)
+            .build()
+            .also { p ->
+                p.setAudioAttributes(AudioAttributes.DEFAULT, false)
+                p.setHandleAudioBecomingNoisy(false)
+                overlapPlayer = p
+            }
+    }
+
+    private fun releaseOverlapPlayer() {
+        overlapPlayer?.let { p ->
+            runCatching {
+                p.stop()
+                p.clearMediaItems()
+            }
+            p.release()
+        }
+        overlapPlayer = null
+        overlapGen = -1
+    }
+
     // == Prefetch ==
 
     private fun prefetchNextIfNeeded() {
@@ -767,7 +1127,12 @@ class PlayerGateway(
         if (!prefetchingIds.add(next.id)) return
 
         scope.launch {
-            val resolvedUrl = try { streamResolvers.resolve(next) } catch (e: Exception) { Timber.w(e, "PlayerGateway prefetchNext failed"); null }
+            val resolvedUrl = if (next.isVideo && next.source == StreamSources.YOUTUBE && !next.remoteId.isNullOrBlank()) {
+                try { ytMusicRepository.resolveVideoStream(next)?.let { VideoStreamUri.build(it).toString() } }
+                catch (e: Exception) { Timber.w(e, "PlayerGateway prefetchNext video failed"); null }
+            } else {
+                try { streamResolvers.resolve(next) } catch (e: Exception) { Timber.w(e, "PlayerGateway prefetchNext failed"); null }
+            }
             prefetchingIds.remove(next.id)
             if (resolvedUrl == null) return@launch
 
@@ -794,6 +1159,9 @@ class PlayerGateway(
     private fun startPlayback(song: Song, queueSongs: List<Song>, startIndex: Int, startPositionMs: Long = 0) {
         try {
             val p = player ?: return
+            // Fresh playback always starts audio-only until the user opts into
+            // video mode for this track.
+            videoSourceActive = false
 
             // Swap-in path: the session already sits on this song's placeholder item;
             // replacing it preserves the position instead of rebuilding the timeline.
@@ -841,7 +1209,7 @@ class PlayerGateway(
             .setAlbumTitle(s.album)
             .apply {
                 if (!s.remoteArtUrl.isNullOrEmpty()) {
-                    setArtworkUri(Uri.parse(s.remoteArtUrl))
+                    setArtworkUri(Uri.parse(ArtLoader.standardArtworkUrl(s.remoteArtUrl)))
                 }
             }
             .build()
@@ -855,9 +1223,19 @@ class PlayerGateway(
             .build()
     }
 
-    private fun getCurrentPosition(): Long = player?.currentPosition ?: 0L
+    private fun getCurrentPosition(): Long = player?.currentPosition?.coerceAtLeast(0L) ?: 0L
 
-    private fun getDuration(): Long = player?.duration ?: 0L
+    /**
+     * Player duration, sanitised. Merged video sources report C.TIME_UNSET
+     * (Long.MIN_VALUE) until the container is fully read, which leaked into the
+     * UI as a huge negative "total time". Fall back to the song's known duration
+     * for that window.
+     */
+    private fun getDuration(): Long {
+        val d = player?.duration ?: 0L
+        if (d != androidx.media3.common.C.TIME_UNSET && d > 0L) return d
+        return _currentSong.value?.duration?.takeIf { it > 0L } ?: 0L
+    }
 
     private fun addToPlayerQueue(song: Song) {
         try {

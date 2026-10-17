@@ -61,6 +61,7 @@ import kotlin.coroutines.resume
 
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.collect
 import android.content.IntentSender
 import android.app.RecoverableSecurityException
 import com.ianocent.musicplayer.data.TidalRepository
@@ -98,10 +99,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         onSongsSeen = { songStore.addToStreamSongsCache(it) },
         onResultsSettled = { preResolveSearchResults() }
     )
-    
+
     private val _deleteIntentSender = MutableSharedFlow<IntentSender>(extraBufferCapacity = 1)
     val deleteIntentSender: SharedFlow<IntentSender> = _deleteIntentSender
-    
+
     private val _editIntentSender = MutableSharedFlow<IntentSender>(extraBufferCapacity = 1)
     val editIntentSender: SharedFlow<IntentSender> = _editIntentSender
 
@@ -285,7 +286,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 val contextualQuery = getContextualQuery()
                 val countryCode = locationData.value?.countryCode ?: "US"
                 _locationCity.value = locationData.value?.city
-                
+
                 val result = ytMusicRepository.fetchHomeSongs({ newSongs ->
                     addToStreamSongsCache(newSongs)
                     val merged = mergeById(_trendingSongs.value, newSongs)
@@ -395,7 +396,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _isForYouLoading.value = true
         val stored = loadSocialSignals()
         _forYouSignals.value = stored
-        
+
         forYouJob = viewModelScope.launch {
             // Wait for local songs to load if we're falling back to play counts
             if (stored.isEmpty() && _songs.value.isEmpty()) {
@@ -413,7 +414,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     .distinct()
                     .map { it to System.currentTimeMillis() }
             }
-            
+
             if (signals.isEmpty() && _forYouSongs.value.isNotEmpty()) {
                 // Don't overwrite existing cache with empty results if we have no signals
                 _isForYouLoading.value = false
@@ -435,7 +436,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 } catch (_: Exception) {}
                 if (results.size >= 24) break
             }
-            
+
             if (results.isNotEmpty() || !force) {
                 _forYouSongs.value = results
                 saveListToPrefs("cached_foryou", results)
@@ -686,7 +687,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     ?.substringAfterLast('/')
                     ?.substringBeforeLast('.')
                     ?.takeIf { it.isNotBlank() }
-                    ?: "Imported Playlist"
+                ?: "Imported Playlist"
 
                 createPlaylist("$baseName (${matched.size})", matched.map { it.id })
                 android.widget.Toast.makeText(
@@ -738,8 +739,67 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         settingsStore.miniLayoutIndex = index
     }
 
+    private val _reduceMotion = MutableStateFlow(settingsStore.reduceMotion)
+    val reduceMotion: StateFlow<Boolean> = _reduceMotion
+
+    fun setReduceMotion(enabled: Boolean) {
+        _reduceMotion.value = enabled
+        settingsStore.reduceMotion = enabled
+    }
+
+    private val _motionScale = MutableStateFlow(settingsStore.motionScale)
+    val motionScale: StateFlow<Float> = _motionScale
+
+    fun setMotionScale(scale: Float) {
+        _motionScale.value = scale
+        settingsStore.motionScale = scale
+    }
+
+    private val _crossfadeMs = MutableStateFlow(settingsStore.crossfadeDurationMs)
+    val crossfadeMs: StateFlow<Int> = _crossfadeMs
+
+    fun setCrossfade(ms: Int) {
+        _crossfadeMs.value = ms
+        settingsStore.crossfadeDurationMs = ms
+        if (::playbackGateway.isInitialized) {
+            playbackGateway.crossfadeMs = ms
+        }
+    }
+
     private val _userName = MutableStateFlow(settingsStore.userName)
     val userName: StateFlow<String> = _userName
+
+    private val _glassEnabled = MutableStateFlow(settingsStore.glassEnabled)
+    val glassEnabled: StateFlow<Boolean> = _glassEnabled
+
+    fun setGlassEnabled(enabled: Boolean) {
+        _glassEnabled.value = enabled
+        settingsStore.glassEnabled = enabled
+    }
+
+    private val _glassBlur = MutableStateFlow(settingsStore.glassBlur)
+    val glassBlur: StateFlow<Float> = _glassBlur
+
+    fun setGlassBlur(blur: Float) {
+        _glassBlur.value = blur
+        settingsStore.glassBlur = blur
+    }
+
+    private val _canvasFadeBeforeUpnext = MutableStateFlow(settingsStore.canvasFadeBeforeUpnext)
+    val canvasFadeBeforeUpnext: StateFlow<Boolean> = _canvasFadeBeforeUpnext
+
+    fun setCanvasFadeBeforeUpnext(enabled: Boolean) {
+        _canvasFadeBeforeUpnext.value = enabled
+        settingsStore.canvasFadeBeforeUpnext = enabled
+    }
+
+    private val _glassVibrancy = MutableStateFlow(settingsStore.glassVibrancy)
+    val glassVibrancy: StateFlow<Float> = _glassVibrancy
+
+    fun setGlassVibrancy(vibrancy: Float) {
+        _glassVibrancy.value = vibrancy
+        settingsStore.glassVibrancy = vibrancy
+    }
 
     fun setUserName(name: String) {
         _userName.value = name
@@ -761,6 +821,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _tabOrder.value = order
         settingsStore.tabOrder = order
     }
+
+    private val _canvasMode = MutableStateFlow(settingsStore.canvasMode)
+    val canvasMode: StateFlow<Int> = _canvasMode
+
+    fun setCanvasMode(mode: Int) {
+        _canvasMode.value = mode
+        settingsStore.canvasMode = mode
+    }
+
 
     private val _showListeningPill = MutableStateFlow(false)
     val showListeningPill: StateFlow<Boolean> = _showListeningPill
@@ -858,8 +927,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val artLoader = ArtLoader(appContext)
 
     fun getCachedArt(song: Song, onLoaded: (Bitmap?) -> Unit) {
+        // Thumbnail accessor: rows/cards request these at ~48-64dp, so a low-res
+        // decode (150px embedded / 256px remote) is plenty and avoids holding a
+        // 640px bitmap per list row. Callers that render large artwork must use
+        // getHighResArt instead.
         viewModelScope.launch {
-            onLoaded(artLoader.load(song, highRes = true))
+            onLoaded(artLoader.load(song, highRes = false))
         }
     }
 
@@ -882,6 +955,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val isBuffering: StateFlow<Boolean> get() = playbackGateway.isBuffering
     val audioSessionId: StateFlow<Int> get() = playbackGateway.audioSessionId
 
+    private val _videoMode = MutableStateFlow(false)
+    val videoMode: StateFlow<Boolean> = _videoMode
+
+    // Songs whose video identity was dropped after a failed video resolve/play.
+    // Kept so a safety-net recollect never re-enters the video stage for them.
+    private val droppedVideoIds = mutableSetOf<Long>()
+
     private fun saveListToPrefs(key: String, songs: List<Song>) {
         songStore.saveCachedSongIds(key, songs)
     }
@@ -894,7 +974,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _playCounts.value = loadPlayCounts()
         _sortMode.value = settingsStore.sortMode
         loadFavoriteIds()
-        
+
         // Load cached stream content
         _trendingSongs.value = loadListFromPrefs("cached_trending")
         _forYouSongs.value = loadListFromPrefs("cached_foryou")
@@ -932,6 +1012,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 if (song.isStream) addToStreamSongsCache(listOf(song))
                 playbackGateway.markAsPlayed(song.id)
                 incrementPlayCount(song.id)
+                lastVisualSongId = song.id
+                _videoMode.value = song.isVideo && song.id !in droppedVideoIds
                 loadArt(song)
                 loadLyric(song)
                 syncLocationToFirebase(song.title, song.artist)
@@ -944,9 +1026,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     startHidePillTimer()
                 }
+            },
+            onVideoModeUnsupported = {
+                // A video-catalogue song failed to play as video — drop its video
+                // identity so the UI leaves the video stage and future resolves
+                // use audio. The song keeps playing via the audio fallback built
+                // inside the gateway.
+                playbackGateway.currentSong.value?.let { droppedVideoIds.add(it.id) }
+                _videoMode.value = false
             }
         )
 
+        playbackGateway.crossfadeMs = settingsStore.crossfadeDurationMs
         playbackGateway.restorePlayerState()
 
         playbackGateway.initialize { hasRestoredSong, restoredIsPlaying ->
@@ -966,6 +1057,24 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         playbackGateway.startPositionPolling()
+
+        // Safety net for process-death restores: onSongPlayed may miss the
+        // resumed track (e.g. resolveSongFromItem fails before the library
+        // loads), leaving art/ambient/lyrics empty in NowPlaying. Re-derive the
+        // visuals for whatever song ends up current, once per song id.
+        viewModelScope.launch(Dispatchers.Default) {
+            playbackGateway.currentSong.collect { song ->
+                if (song != null && song.id != lastVisualSongId) {
+                    lastVisualSongId = song.id
+                    loadArt(song)
+                    loadLyric(song)
+                    // Video identity is intrinsic to the song (source section):
+                    // video-catalogue songs carry the stage, songs don't.
+                    _videoMode.value = song.isVideo && song.id !in droppedVideoIds
+                    if (droppedVideoIds.size > 100) droppedVideoIds.clear()
+                }
+            }
+        }
 
         // Watch for location fix and sync any pending location data
         viewModelScope.launch {
@@ -987,7 +1096,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _isLoadingSongs.value = true
         viewModelScope.launch {
             val rawList = withContext(Dispatchers.IO) { repository.getAllSongs() }
-            val list = rawList.filter { it.duration >= 60_000L }
+            val list = rawList.filter { it.duration >= 60_000L || it.duration == 0L }
             _songs.value = list
             if (playbackGateway.queue.value.isEmpty()) {
                 playbackGateway.setDefaultQueueIfEmpty(list)
@@ -1043,6 +1152,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _paletteColors = MutableStateFlow<List<Color>>(emptyList())
     val paletteColors: StateFlow<List<Color>> = _paletteColors
+
+    // Ambient color sampled live from the video surface while video mode is on,
+    // so the backdrop vibrance follows the video (not just the album art).
+    // Null when no frame has been sampled / video mode is off.
+    private val _videoAmbientColor = MutableStateFlow<Color?>(null)
+    val videoAmbientColor: StateFlow<Color?> = _videoAmbientColor
+
+    fun setVideoAmbientColor(color: Color?) { _videoAmbientColor.value = color }
+
+    // Tracks which song's visuals (art/ambient/lyrics) are loaded, so a fresh
+    // ViewModel after process death re-derives them for the restored song.
+    private var lastVisualSongId: Long? = null
 
     private fun loadArt(song: Song) {
         viewModelScope.launch {
@@ -1116,6 +1237,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun togglePlayPause() = playbackGateway.togglePlayPause()
+
+    /** Exits the video stage for the current song without touching the player. */
+    fun dropVideoForCurrentSong() {
+        val song = playbackGateway.currentSong.value ?: return
+        if (!song.isVideo) return
+        droppedVideoIds.add(song.id)
+        _videoMode.value = false
+        Timber.tag("MODESWITCH").d("dropVideoForCurrentSong: ${song.title} id=${song.id}")
+    }
+
+    fun attachVideoTexture(view: android.view.TextureView?) = playbackGateway.setVideoTextureView(view)
 
     fun seekTo(positionMs: Long) = playbackGateway.seekTo(positionMs)
 
@@ -1213,13 +1345,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     @android.annotation.SuppressLint("UnspecifiedRegisterReceiverFlag")
     fun downloadSong(song: Song, format: AudioFormat) {
         viewModelScope.launch {
-            // 1. Resolve URL: unresolved stream songs go through the provider's resolver;
-            // already-resolved URLs pass through.
+            // 1. Resolve URL: honour the format the user picked (getAudioFormats
+            //    prefers AAC/M4A, which is the only container we can tag), and
+            //    only fall back to the provider's default resolver when the
+            //    chosen URL isn't a real HTTP link.
             val realUrl = withContext(Dispatchers.IO) {
-                if (StreamSources.needsResolution(song) || StreamSources.isTidalSong(song)) {
+                val chosen = format.url
+                if (chosen.startsWith("http")) {
+                    chosen
+                } else if (StreamSources.needsResolution(song) || StreamSources.isTidalSong(song)) {
                     streamResolvers.resolve(song)
                 } else {
-                    format.url
+                    chosen
                 }
             }
             if (realUrl == null || !realUrl.startsWith("http")) {
@@ -1257,7 +1394,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             val rawList = withContext(Dispatchers.IO) { repository.getAllSongs() }
-            val list = rawList.filter { it.duration >= 60_000L }
+            val list = rawList.filter { it.duration >= 60_000L || it.duration == 0L }
             _songs.value = list
             playbackGateway.setDefaultQueueIfEmpty(list)
         }
@@ -1318,7 +1455,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         pendingUpdateInfo = PendingUpdate(songId, newTitle, newArtist, newImageUri)
         viewModelScope.launch {
             val song = _songs.value.find { it.id == songId } ?: return@launch
-            
+
             try {
                 withContext(Dispatchers.IO) {
                     // 1. Write metadata to actual file via ContentResolver
@@ -1335,11 +1472,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     } catch (e: Exception) {
                         Timber.e(e, "Metadata write failed, continuing with MediaStore update")
                     }
-                    
+
                     // 2. Update MediaStore directly
                     repository.updateSongInfo(songId, newTitle, newArtist)
                 }
-                
+
                 // 3. Update UI state
                 _songs.value = _songs.value.map {
                     if (it.id == songId) it.copy(title = newTitle, artist = newArtist) else it

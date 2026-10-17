@@ -14,7 +14,13 @@ data class Song(
     val dateAdded: Long = 0L,
     val remoteId: String? = null,
     /** Provider tag ([StreamSources] constant); null for local files and legacy rows. */
-    val source: String? = null
+    val source: String? = null,
+    /**
+     * True when this stream result came from the video/upload catalogue rather
+     * than the YouTube Music songs shelf — used to group stream-search results
+     * into "Songs" vs "Videos".
+     */
+    val isVideo: Boolean = false
 )
 
 data class AudioFormat(

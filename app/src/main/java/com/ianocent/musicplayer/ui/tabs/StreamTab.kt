@@ -135,9 +135,24 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.ui.tooling.preview.Preview
 
 import com.ianocent.musicplayer.ResponsiveSnapList
+import com.ianocent.musicplayer.DraggableScrollbar
 import com.ianocent.musicplayer.TrendingCard
 import com.ianocent.musicplayer.CategoryCard
 import com.ianocent.musicplayer.ForYouSongCard
+
+/** Small labelled divider for the grouped stream-search results. */
+@Composable
+private fun StreamSectionHeader(title: String, color: Color) {
+    Text(
+        text = title,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, top = 14.dp, bottom = 2.dp),
+        color = color,
+        fontWeight = FontWeight.Bold,
+        style = MaterialTheme.typography.titleSmall
+    )
+}
 
 @Composable
 fun StreamTabContent(
@@ -642,6 +657,12 @@ fun StreamTabContent(
                                     )
                                 } else {
                                     val listState = rememberLazyListState()
+                                    // Split the merged results into Songs (YouTube Music
+                                    // catalogue) and Videos (upload catalogue) so each gets
+                                    // its own labelled section.
+                                    val songsList = remember(streamSongs) { streamSongs.filter { !it.isVideo } }
+                                    val videosList = remember(streamSongs) { streamSongs.filter { it.isVideo } }
+
                                     val shouldLoadMore by remember {
                                         derivedStateOf {
                                             val layoutInfo = listState.layoutInfo
@@ -655,18 +676,38 @@ fun StreamTabContent(
                                         if (shouldLoadMore) viewModel.loadMoreStreamSongs()
                                     }
 
-                                    ResponsiveSnapList(
-                                        items = streamSongs,
-                                        key = { it.id },
-                                        scrollbarColor = adaptiveColor,
-                                        listState = listState,
-                                        topPadding = 16.dp
-                                    ) { song, _ ->
-                                        SwipeableSongRow(song, viewModel, customOnClick = {
-                                            viewModel.setQueue(streamSongs, startSong = song)
-                                        }, adaptiveColor = adaptiveColor,
-                                            onGoToArtist = { s -> streamFilterArtist = s.artist; streamFilterAlbum = null },
-                                            onGoToAlbum = { s -> streamFilterAlbum = s.album; streamFilterArtist = null })
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        LazyColumn(
+                                            state = listState,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentPadding = PaddingValues(top = 8.dp, bottom = 90.dp, end = 20.dp)
+                                        ) {
+                                            if (songsList.isNotEmpty()) {
+                                                item(key = "section-songs") {
+                                                    StreamSectionHeader("Songs", adaptiveColor)
+                                                }
+                                                items(songsList, key = { "song-${it.id}" }) { song ->
+                                                    SwipeableSongRow(song, viewModel, customOnClick = {
+                                                        viewModel.setQueue(streamSongs, startSong = song)
+                                                    }, adaptiveColor = adaptiveColor,
+                                                        onGoToArtist = { s -> streamFilterArtist = s.artist; streamFilterAlbum = null },
+                                                        onGoToAlbum = { s -> streamFilterAlbum = s.album; streamFilterArtist = null })
+                                                }
+                                            }
+                                            if (videosList.isNotEmpty()) {
+                                                item(key = "section-videos") {
+                                                    StreamSectionHeader("Videos", adaptiveColor)
+                                                }
+                                                items(videosList, key = { "video-${it.id}" }) { song ->
+                                                    SwipeableSongRow(song, viewModel, customOnClick = {
+                                                        viewModel.setQueue(streamSongs, startSong = song)
+                                                    }, adaptiveColor = adaptiveColor,
+                                                        onGoToArtist = { s -> streamFilterArtist = s.artist; streamFilterAlbum = null },
+                                                        onGoToAlbum = { s -> streamFilterAlbum = s.album; streamFilterArtist = null })
+                                                }
+                                            }
+                                        }
+                                        DraggableScrollbar(listState, adaptiveColor)
                                     }
                                 }
                             }

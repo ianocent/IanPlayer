@@ -23,19 +23,23 @@ class SongDownloader(private val context: Context) {
         val fileName = "$cleanArtist - $cleanTitle.$extension"
 
         val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        // Land in the app-owned external files dir first: the app owns this file,
+        // so it can embed tags + album art (public DownloadProvider files are
+        // read-only to us under scoped storage). The receiver then publishes a
+        // copy into public Music/IanPlayer via MediaStore.
         val request = DownloadManager.Request(Uri.parse(url))
             .setTitle(song.title)
             .setDescription("$cleanArtist - IanPlayer")
-            .setDestinationInExternalPublicDir(Environment.DIRECTORY_MUSIC, "IanPlayer/$fileName")
+            .setDestinationInExternalFilesDir(context, Environment.DIRECTORY_MUSIC, "IanPlayer/$fileName")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setAllowedOverMetered(true)
             .setAllowedOverRoaming(true)
 
         val downloadId = downloadManager.enqueue(request)
 
-        // Receiver applies ID3 metadata, scans the file into MediaStore, then
+        // Receiver applies tags + art, publishes into MediaStore, then
         // unregisters itself.
-        val receiver = DownloadCompletionReceiver(downloadId, song, onComplete)
+        val receiver = DownloadCompletionReceiver(downloadId, song, fileName, onComplete)
         val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)

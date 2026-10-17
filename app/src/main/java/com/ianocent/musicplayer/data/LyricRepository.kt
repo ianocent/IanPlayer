@@ -145,7 +145,7 @@ class LyricRepository(
             val isExpired = nowMs() - cached.cachedAtMs > cacheTtlMs
             if (it == "NONE") {
                 if (!isExpired) return null
-            } else if (it.isNotBlank()) {
+            } else if (it.isNotBlank() && !isBlockedPage(it)) {
                 return it to LyricSource.UNKNOWN
             }
         }
@@ -163,7 +163,7 @@ class LyricRepository(
 
         for ((source, src) in sources) {
             val res = try { source() } catch (_: Exception) { null }
-            if (!res.isNullOrBlank()) {
+            if (!res.isNullOrBlank() && !isBlockedPage(res)) {
                 // If it's LRC, clean it for plain view
                 val cleanText = if (isLrcFormat(res)) stripLrcTags(res) else res
                 savePlain(key, cleanText)
@@ -177,6 +177,17 @@ class LyricRepository(
 
     private fun isLrcFormat(text: String): Boolean =
         text.contains(Regex("""\[\d{2}:\d{2}"""))
+
+    /**
+     * jina.ai (used by the Genius/Musixmatch extraction below) answers with a
+     * markdown header — "Title: 403 Forbidden" + "URL Source: …" — whenever the
+     * upstream page is blocked. That is not a lyric, so drop it instead of
+     * leaking the debug text into the player's lyric view.
+     */
+    private fun isBlockedPage(text: String): Boolean {
+        val t = text.trimStart()
+        return t.startsWith("Title:") && t.contains("URL Source:")
+    }
 
     /**
      * Single HTTP transport for every lyric source. Returns the body when the

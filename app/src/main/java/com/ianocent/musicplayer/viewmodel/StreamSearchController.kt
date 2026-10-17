@@ -121,7 +121,7 @@ class StreamSearchController(
     }
 
     companion object {
-        private const val PAGE_SIZE = 50
+        private const val PAGE_SIZE = 100
         private const val DEBOUNCE_MS = 400L
 
         fun mergeById(current: List<Song>, incoming: List<Song>): List<Song> =

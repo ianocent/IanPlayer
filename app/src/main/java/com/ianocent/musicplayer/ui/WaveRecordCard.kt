@@ -27,7 +27,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.rounded.FiberManualRecord
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -44,7 +44,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.clipPath
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.geometry.RoundRect
@@ -70,54 +69,62 @@ import kotlinx.coroutines.withContext
 import androidx.compose.runtime.withFrameNanos
 import java.io.File
 import java.nio.ByteBuffer
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.sqrt
 
 // ---------- ANIMATED LYRIC ----------
-
-
-// ---------- ANIMATED LYRIC ----------
-// FIX BUG B: sebelumnya prevText gapernah di-reassign ke text baru, jadi abis line
-// pertama, state freeze permanen dan lyric keliatan blank/stuck. Sekarang semua logic
-// (showText toggle + prevText reassignment) disatuin di dalam satu LaunchedEffect(text).
+// Smooth per-line lyric: each time the active line changes the old line slides
+// out while the new one slides in (with a soft fade), instead of the previous
+// jittery "fade to zero, wait 50ms, swap the text" trick that read as a blink.
+// AnimatedContent keeps the outgoing line alive during the transition so the
+// motion is continuous — this is what makes it look smooth on the card.
 
 @Composable
 fun AnimatedLyricLine(syncedLyric: List<LyricLine>?, plainLyric: String?, currentPosition: Long, accentColor: Color, modifier: Modifier = Modifier) {
-    val text = if (!syncedLyric.isNullOrEmpty()) {
-        val idx = syncedLyric.indexOfLast { it.timeMs <= currentPosition }
-        if (idx >= 0) syncedLyric[idx].text else ""
+    val activeIndex: Int
+    val text: String
+    if (!syncedLyric.isNullOrEmpty()) {
+        activeIndex = syncedLyric.indexOfLast { it.timeMs <= currentPosition }
+        text = if (activeIndex >= 0) syncedLyric[activeIndex].text else ""
     } else if (!plainLyric.isNullOrBlank()) {
         val lines = plainLyric.lines().filter { it.isNotBlank() }
-        lines.getOrElse(((currentPosition % 5000L).toFloat() / 5000f * lines.size).toInt().coerceAtMost(lines.size - 1)) { "" }
-    } else ""
-    var prevText by remember { mutableStateOf(text) }
-    var showText by remember { mutableStateOf(true) }
-    LaunchedEffect(text) {
-        if (text != prevText) {
-            showText = false
-            delay(50)
-            prevText = text
-            showText = true
-        }
+        activeIndex = ((currentPosition % 5000L).toFloat() / 5000f * lines.size)
+            .toInt()
+            .coerceIn(0, (lines.size - 1).coerceAtLeast(0))
+        text = lines.getOrElse(activeIndex) { "" }
+    } else {
+        activeIndex = -1
+        text = ""
     }
-    val alpha = animateFloatAsState(if (showText) 1f else 0f, animationSpec = tween(120, delayMillis = 50, easing = LinearEasing))
-    val scale = animateFloatAsState(if (showText) 1f else 0.85f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessHigh))
-    val translateY = animateFloatAsState(if (showText) 0f else 20f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessHigh))
-    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+
+    AnimatedContent(
+        targetState = activeIndex to text,
+        modifier = modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center,
+        label = "wave_lyric",
+        transitionSpec = {
+            // Forward: the new line rises from below, old line slides up out.
+            val dir = if (targetState.first >= initialState.first) 1f else -1f
+            (slideInVertically(
+                animationSpec = tween(340, easing = FastOutSlowInEasing)
+            ) { h -> (h / 3f * dir).toInt() } + fadeIn(tween(300)))
+                .togetherWith(
+                    slideOutVertically(
+                        animationSpec = tween(240, easing = FastOutSlowInEasing)
+                    ) { h -> (-h / 3f * dir).toInt() } + fadeOut(tween(180))
+                )
+        }
+    ) { (_, lineText) ->
         Text(
-            text = prevText.ifEmpty { "\u266A" },
+            text = lineText.ifEmpty { "\u266A" },
             fontSize = 22.sp,
             fontWeight = FontWeight.Bold,
             color = Color.White,
             textAlign = TextAlign.Center,
             lineHeight = 30.sp,
-            modifier = Modifier
-                .fillMaxWidth()
-                .graphicsLayer {
-                    this.alpha = alpha.value
-                    this.scaleX = scale.value
-                    this.scaleY = scale.value
-                    this.translationY = translateY.value
-                }
+            modifier = Modifier.fillMaxWidth()
         )
     }
 }
@@ -191,6 +198,14 @@ private class AvRecorder(
     private var audioFeedJob: kotlinx.coroutines.Job? = null
     private val audioFeedScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
 
+    // Single dedicated encoder thread. Frame readback→Surface→MediaCodec→muxer all
+    // happen here so the UI thread is never blocked while recording (that blocking
+    // is what made the on-screen lyric animation stutter during capture).
+    private val encodeExec = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "wave-encode").apply { priority = Thread.NORM_PRIORITY + 1 }
+    }
+    private val frameBusy = AtomicBoolean(false)
+
     fun setStartTime(ns: Long) {
         startNs = ns
     }
@@ -255,28 +270,45 @@ private class AvRecorder(
     }
 
     fun frame(bitmap: ImageBitmap, presentationTimeUs: Long) {
+        // Called on the main thread — must return immediately. If the encoder is
+        // still busy with the previous frame we drop this one rather than queue
+        // (a bounded, real-time capture) so the UI keeps rendering at full rate.
+        if (!frameBusy.compareAndSet(false, true)) return
         try {
-            val s = inputSurface ?: return
-            val c = s.lockHardwareCanvas()
-            c.drawColor(0xFF00B140.toInt())
-            val paint = android.graphics.Paint().apply { isFilterBitmap = true }
-            val srcW = bitmap.width
-            val srcH = bitmap.height
-            val scale = minOf(width.toFloat() / srcW, height.toFloat() / srcH)
-            val dstW = (srcW * scale).toInt()
-            val dstH = (srcH * scale).toInt()
-            val left = (width - dstW) / 2
-            val top = (height - dstH) / 2
-            c.drawBitmap(bitmap.asAndroidBitmap(), null, android.graphics.Rect(left, top, left + dstW, top + dstH), paint)
-            s.unlockCanvasAndPost(c)
-            ptsUs = presentationTimeUs
-            drainVideo(false)
-        } catch (_: Exception) {}
+            encodeExec.execute {
+                try { encodeFrame(bitmap, presentationTimeUs) } catch (_: Exception) {}
+                finally { frameBusy.set(false) }
+            }
+        } catch (_: Exception) {
+            frameBusy.set(false)
+        }
+    }
+
+    private fun encodeFrame(bitmap: ImageBitmap, presentationTimeUs: Long) {
+        val s = inputSurface ?: return
+        val c = s.lockHardwareCanvas()
+        c.drawColor(0xFF00B140.toInt())
+        val paint = android.graphics.Paint().apply { isFilterBitmap = true }
+        val srcW = bitmap.width
+        val srcH = bitmap.height
+        val scale = minOf(width.toFloat() / srcW, height.toFloat() / srcH)
+        val dstW = (srcW * scale).toInt()
+        val dstH = (srcH * scale).toInt()
+        val left = (width - dstW) / 2
+        val top = (height - dstH) / 2
+        c.drawBitmap(bitmap.asAndroidBitmap(), null, android.graphics.Rect(left, top, left + dstW, top + dstH), paint)
+        s.unlockCanvasAndPost(c)
+        ptsUs = presentationTimeUs
+        drainVideo(false)
     }
 
     fun stop() {
         isRunning = false
         audioFeedJob?.cancel()
+        // Let every queued frame finish encoding BEFORE we signal end-of-stream,
+        // otherwise the tail of the clip is dropped.
+        encodeExec.shutdown()
+        try { encodeExec.awaitTermination(3, TimeUnit.SECONDS) } catch (_: Exception) {}
         try { videoCodec?.signalEndOfInputStream() } catch (_: Exception) {}
         try { audioCodec?.signalEndOfInputStream() } catch (_: Exception) {}
         try { audioRecord?.stop() } catch (_: Exception) {}
@@ -299,7 +331,9 @@ private class AvRecorder(
         var consecutiveEmpty = 0
         while (true) {
             val info = MediaCodec.BufferInfo()
-            val idx = c.dequeueOutputBuffer(info, 10_000L)
+            // Non-blocking while streaming (never stall the encoder thread on a
+            // waiting dequeue); allow a short wait only while flushing EOS.
+            val idx = c.dequeueOutputBuffer(info, if (eos) 5_000L else 0L)
             when {
                 idx == MediaCodec.INFO_TRY_AGAIN_LATER -> {
                     if (!eos) return
@@ -418,7 +452,7 @@ fun WaveRecordSheet(
             val cardW = with(density) { 360.dp.toPx().toInt().coerceAtMost(720).let { it - (it % 16) } }
             val cardH = with(density) { 250.dp.toPx().toInt().coerceAtMost(500).let { it - (it % 16) } }
             val bps = (4_000_000L * cardW * cardH / (360 * 480)).toInt().coerceIn(3_000_000, 10_000_000)
-            val rec = AvRecorder(cardW, cardH, bitRate = bps, frameRate = 30, mediaProjection = mediaProjection, useSystemAudio = true)
+            val rec = AvRecorder(cardW, cardH, bitRate = bps, frameRate = 60, mediaProjection = mediaProjection, useSystemAudio = true)
 
             if (!rec.startVideo()) { isRecording = false; recordingJob.value = null; return@launch }
             rec.startAudio()
@@ -437,15 +471,18 @@ fun WaveRecordSheet(
             } catch (_: Exception) {}
 
             var lastNs = 0L
-            val intervalNs = 1_000_000_000L / 30 // 30 FPS
+            val intervalNs = 1_000_000_000L / 60 // 60 FPS target
             while (isActive && isRecording) {
                 try {
                     val frameNs = withFrameNanos { it }
                     if (frameNs - lastNs >= intervalNs) {
                         lastNs = frameNs
                         val ptsUs = (frameNs - startNs) / 1000
-                        // Update observed position to trigger recomposition with latest lyrics
+                        // Update observed position to trigger recomposition with latest lyrics.
+                        // (must run on the UI thread — cheap.)
                         observedPosition = currentPosition()
+                        // Snapshot readback happens here (UI thread) but the heavy
+                        // Surface→MediaCodec→muxer work is handed off by rec.frame().
                         rec.frame(graphicsLayer.toImageBitmap(), ptsUs)
                     }
                 } catch (_: Exception) { break }
@@ -453,7 +490,9 @@ fun WaveRecordSheet(
 
             // Bagian ini sekarang SELALU jalan sampai selesai, gak lagi ke-cancel
             // duluan oleh recomposition/key change dari isRecording.
-            rec.stop()
+            // rec.stop() blocks briefly while flushing the encoder → keep it off
+            // the UI thread so the sheet stays responsive.
+            withContext(Dispatchers.Default) { rec.stop() }
             context.stopService(Intent(context, WaveProjectionService::class.java))
             val muxerWasStarted = rec.isMuxerStarted
             recorderRef.value = null
@@ -555,7 +594,7 @@ fun WaveRecordSheet(
                         },
                         modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color.White)
                     ) {
-                        Icon(Icons.Filled.FiberManualRecord, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Record")
+                        Icon(Icons.Rounded.FiberManualRecord, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Record")
                     }
                 } else {
                     Button(

@@ -9,7 +9,7 @@ package com.ianocent.musicplayer.data
 object SongTags {
 
     /** Audio container families this app knows how to tag or scan. */
-    enum class Container { MP3, MP4, WEBM, UNKNOWN }
+    enum class Container { MP3, MP4, FLAC, WEBM, UNKNOWN }
 
     /**
      * Sniffs the container from magic bytes. YouTube audio arrives as AAC in
@@ -33,12 +33,19 @@ object SongTags {
         ) {
             return Container.WEBM // EBML
         }
+        if (header.size >= 4 && header[0] == 0x66.toByte() && header[1] == 0x4C.toByte() &&
+            header[2] == 0x61.toByte() && header[3] == 0x43.toByte()
+        ) {
+            return Container.FLAC // "fLaC"
+        }
         return Container.UNKNOWN
     }
 
     /**
      * Picks a file extension from a resolved stream URL by reading its
      * `mime=` query parameter (googlevideo URLs carry it percent-encoded).
+     * Falls back to the URL path's own extension for direct/lossless sources
+     * that don't set a mime param (Tidal/other CDNs).
      */
     fun extensionForUrl(url: String): String {
         val mime = Regex("mime=(audio%2F|audio/)([a-z0-9]+)", RegexOption.IGNORE_CASE)
@@ -47,6 +54,22 @@ object SongTags {
             "mp4" -> "m4a"
             "webm" -> "webm"
             "mpeg", "mp3" -> "mp3"
+            "flac", "x-flac" -> "flac"
+            "opus", "ogg" -> "opus"
+            else -> extensionFromPath(url)
+        }
+    }
+
+    /** Last-resort extension from the URL path, ignoring query/fragment. */
+    private fun extensionFromPath(url: String): String {
+        val path = url.substringBefore('?').substringBefore('#')
+        val ext = path.substringAfterLast('.', "").lowercase()
+        return when (ext) {
+            "m4a", "mp4" -> "m4a"
+            "webm" -> "webm"
+            "flac" -> "flac"
+            "opus", "ogg" -> "opus"
+            "mp3", "mpeg" -> "mp3"
             else -> "mp3"
         }
     }
@@ -55,6 +78,7 @@ object SongTags {
     fun mimeForExtension(extension: String?): String = when (extension?.lowercase()) {
         "m4a", "mp4" -> "audio/mp4"
         "webm", "opus" -> "audio/webm"
+        "flac" -> "audio/flac"
         else -> "audio/mpeg"
     }
 
@@ -92,6 +116,11 @@ object SongTags {
      * stored artist is untrustworthy (a channel name like "Ed Sheeran - Topic"
      * or "Unknown Artist"), and cleans both fields up.
      *
+     * When a *trusted* artist is already known, the combined "Song - Artist"
+     * ordering that YouTube re-uploads use ("Without Me - Eminem") is resolved
+     * by stripping the " - Artist" suffix (or "Artist - " prefix) from the
+     * title, never by guessing which side is which.
+     *
      * Returns (title, artist).
      */
     fun resolve(title: String, artist: String): Pair<String, String> {
@@ -102,15 +131,27 @@ object SongTags {
         if (a.endsWith(" - Topic", ignoreCase = true)) a = a.removeSuffix(" - Topic").trim()
         if (a.endsWith("VEVO", ignoreCase = true)) a = a.removeSuffix("VEVO").trim()
 
+        // Known artist appears verbatim in the video title — drop it so the
+        // title keeps only the song name, whichever side the artist sits on.
+        if (a.isNotBlank() && !isJunkArtist(a)) {
+            val suffix = " - $a"
+            if (t.length > suffix.length && t.endsWith(suffix, ignoreCase = true)) {
+                t = t.dropLast(suffix.length).trim()
+            } else {
+                val prefix = "$a - "
+                if (t.length > prefix.length && t.startsWith(prefix, ignoreCase = true)) {
+                    t = t.removePrefix(prefix).trim()
+                }
+            }
+        }
+
         val dash = t.indexOf(" - ")
         if (dash > 0) {
             val leftCandidate = t.substring(0, dash).trim()
             val rightCandidate = t.substring(dash + 3).trim()
             val artistIsJunk = isJunkArtist(a) || a.endsWith(" - Topic", true)
             val leftLooksLikeArtist = leftCandidate.length <= 60 && !leftCandidate.contains('(')
-            val titleStartsWithArtist = a.isNotBlank() &&
-                t.startsWith(a, ignoreCase = true) && t.getOrNull(a.length + 1) == '-'
-            if ((artistIsJunk || titleStartsWithArtist) && rightCandidate.isNotBlank() && leftLooksLikeArtist) {
+            if (artistIsJunk && rightCandidate.isNotBlank() && leftLooksLikeArtist) {
                 return cleanTitle(rightCandidate) to leftCandidate
             }
         }

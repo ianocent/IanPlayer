@@ -39,6 +39,17 @@ object StreamSources {
     fun needsResolution(song: Song): Boolean =
         song.isStream && song.uri.toString().startsWith(PLACEHOLDER_PREFIX)
 
+    /**
+     * True when a signed media URL's `expire` epoch (googlevideo convention) has
+     * already passed. URLs without `expire` are always considered fresh. Lets
+     * the playback path re-resolve stale URLs instead of replaying a dead one.
+     */
+    fun isSignedUrlExpired(url: String): Boolean {
+        val match = Regex("[?&]expire=(\\d+)").find(url) ?: return false
+        val expireEpochSeconds = match.groupValues[1].toLongOrNull() ?: return false
+        return expireEpochSeconds * 1000L < System.currentTimeMillis() + 60_000L
+    }
+
     /** True when the song belongs to the Tidal provider by tag or placeholder scheme. */
     fun isTidalSong(song: Song): Boolean =
         song.source == TIDAL || song.uri.toString().startsWith(TIDAL_PLACEHOLDER_PREFIX)

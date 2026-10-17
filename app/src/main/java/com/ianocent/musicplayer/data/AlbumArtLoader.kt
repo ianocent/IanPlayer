@@ -30,11 +30,10 @@ object AlbumArtLoader {
         return colors.distinct()
     }
     fun getEmbeddedArt(context: Context, uri: Uri, targetSize: Int = 256): Bitmap? {
+        val retriever = MediaMetadataRetriever()
         return try {
-            val retriever = MediaMetadataRetriever()
             retriever.setDataSource(context, uri)
             val art = retriever.embeddedPicture
-            retriever.release()
 
             art?.let { bytes ->
                 val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -45,6 +44,10 @@ object AlbumArtLoader {
             }
         } catch (e: Exception) {
             null
+        } finally {
+            // Always release the native retriever, even when setDataSource throws
+            // (previously it leaked one MediaMetadataRetriever per failed load).
+            try { retriever.release() } catch (_: Exception) {}
         }
     }
 }

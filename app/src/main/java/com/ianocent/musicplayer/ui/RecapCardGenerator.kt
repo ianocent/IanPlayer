@@ -272,7 +272,7 @@ fun RecapCardSheet(
 
     LaunchedEffect(recap.topSongs) {
         recap.topSongs.take(4).forEach { song ->
-            viewModel.getCachedArt(song) { bitmap ->
+            viewModel.getHighResArt(song) { bitmap ->
                 bitmap?.let { topArts.add(it.asImageBitmap()) }
             }
         }

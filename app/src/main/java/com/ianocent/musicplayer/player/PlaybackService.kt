@@ -66,6 +66,7 @@ class PlaybackService : MediaSessionService() {
             .setMediaCodecSelector(mediaCodecSelector)
             .setEnableDecoderFallback(true)
         player = ExoPlayer.Builder(this, renderersFactory)
+            .setMediaSourceFactory(VideoMergeMediaSourceFactory(this))
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .setHandleAudioBecomingNoisy(true)
             .setLoadControl(loadControl)
