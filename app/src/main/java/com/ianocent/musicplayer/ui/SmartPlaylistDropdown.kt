@@ -1,4 +1,11 @@
 package com.ianocent.musicplayer.ui
+import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.Check
+import com.ianocent.musicplayer.ui.glass.nounIcon
+
+import com.ianocent.musicplayer.R
+
+
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -8,12 +15,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Block
-import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.FlashOn
-import androidx.compose.material.icons.rounded.History
-import androidx.compose.material.icons.rounded.Sort
-import androidx.compose.material.icons.rounded.TrendingUp
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -52,7 +53,7 @@ fun SortAndSmartPlaylistRow(
                 modifier = Modifier.size(36.dp)
             ) {
                 Icon(
-                    Icons.Rounded.Sort, "Sort",
+                    nounIcon(R.drawable.noun_sort), "Sort",
                     tint = adaptiveColor,
                     modifier = Modifier.size(20.dp)
                 )
@@ -90,7 +91,7 @@ fun SortAndSmartPlaylistRow(
                 modifier = Modifier.size(36.dp)
             ) {
                 Icon(
-                    Icons.Rounded.FlashOn, "Smart Playlist",
+                    nounIcon(R.drawable.noun_quick), "Smart Playlist",
                     tint = if (selectedSmartPlaylist >= 0) adaptiveColor else Color.Gray,
                     modifier = Modifier.size(20.dp)
                 )
@@ -109,7 +110,7 @@ fun SortAndSmartPlaylistRow(
                     },
                     leadingIcon = {
                         Icon(
-                            if (selectedSmartPlaylist == 0) Icons.Rounded.Check else Icons.Rounded.TrendingUp,
+                            if (selectedSmartPlaylist == 0) Icons.Rounded.Check else nounIcon(R.drawable.noun_quick),
                             null, tint = adaptiveColor
                         )
                     }
@@ -123,7 +124,7 @@ fun SortAndSmartPlaylistRow(
                     },
                     leadingIcon = {
                         Icon(
-                            if (selectedSmartPlaylist == 1) Icons.Rounded.Check else Icons.Rounded.History,
+                            if (selectedSmartPlaylist == 1) Icons.Rounded.Check else nounIcon(R.drawable.noun_quick),
                             null, tint = adaptiveColor
                         )
                     }

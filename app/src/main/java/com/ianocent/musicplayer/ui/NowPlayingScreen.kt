@@ -1,4 +1,13 @@
 package com.ianocent.musicplayer.ui
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.DragHandle
+import androidx.compose.material.icons.rounded.MusicNote
+import com.ianocent.musicplayer.R
+import com.ianocent.musicplayer.ui.glass.glassIconBackdrop
+import com.ianocent.musicplayer.ui.glass.isAppInDark
+import com.ianocent.musicplayer.ui.glass.nounIcon
+
+
 
 import android.view.TextureView
 import com.ianocent.musicplayer.ResponsiveSnapList
@@ -513,8 +522,17 @@ fun NowPlayingScreen(
                                     onClick = { viewModel.toggleFavorite(s.id) },
                                     modifier = Modifier.size(40.dp)
                                 ) {
+                                    Box(
+                                        Modifier
+                                            .matchParentSize()
+                                            .glassIconBackdrop(
+                                                dark = isAppInDark(),
+                                                accent = if (liked) Color(0xFFE91E63) else Color.Gray,
+                                                active = liked
+                                            )
+                                    )
                                     Icon(
-                                        imageVector = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                        imageVector = if (liked) nounIcon(R.drawable.noun_love) else nounIcon(R.drawable.noun_love_outline),
                                         contentDescription = if (liked) "Unlike" else "Like",
                                         tint = if (liked) Color(0xFFE91E63) else Color.Gray,
                                         modifier = Modifier.size(22.dp).align(Alignment.Center)
@@ -526,26 +544,17 @@ fun NowPlayingScreen(
                                     onClick = { showWaveRecordSheet = true },
                                     modifier = Modifier.size(40.dp)
                                 ) {
-                                    androidx.compose.foundation.Canvas(
+                                    Box(
+                                        Modifier
+                                            .matchParentSize()
+                                            .glassIconBackdrop(dark = isAppInDark(), accent = Color(0xFFE91E63))
+                                    )
+                                    Icon(
+                                        imageVector = nounIcon(R.drawable.noun_record),
+                                        contentDescription = "Record",
+                                        tint = Color(0xFFE91E63),
                                         modifier = Modifier.size(22.dp).align(Alignment.Center)
-                                    ) {
-                                        val strokeWidth = 2.dp.toPx()
-                                        val center = Offset(size.width / 2, size.height / 2)
-                                        val radius = (size.width - strokeWidth) / 2
-                                        // Circle outline
-                                        drawCircle(
-                                            color = Color(0xFFE91E63),
-                                            radius = radius,
-                                            center = center,
-                                            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-                                        )
-                                        // Center dot
-                                        drawCircle(
-                                            color = Color(0xFFE91E63),
-                                            radius = radius * 0.35f,
-                                            center = center
-                                        )
-                                    }
+                                    )
                                 }
                             }
                         }
@@ -558,7 +567,7 @@ fun NowPlayingScreen(
                                 .using(SizeTransform(clip = false))
                         },
                         label = "trackInfo"
-                    ) {
+                    ) { _ ->
                         Column {
                             Text(
                                 song?.artist ?: "Unknown Artist",

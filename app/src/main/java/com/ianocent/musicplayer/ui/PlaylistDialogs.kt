@@ -1,4 +1,11 @@
 package com.ianocent.musicplayer.ui
+import androidx.compose.material.icons.rounded.AddPhotoAlternate
+import androidx.compose.material.icons.rounded.Check
+import com.ianocent.musicplayer.ui.glass.nounIcon
+
+import com.ianocent.musicplayer.R
+
+
 
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -23,10 +30,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AddPhotoAlternate
-import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.PlaylistPlay
-import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -180,7 +183,7 @@ fun AddSongsToPlaylistDialog(
                             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Rounded.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        Icon(nounIcon(R.drawable.noun_search), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                     }
                     BasicTextField(
                         value = searchQuery,
@@ -279,7 +282,7 @@ fun CreatePlaylistDialog(
                             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Rounded.PlaylistPlay, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Icon(nounIcon(R.drawable.noun_queue), contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     }
                     BasicTextField(
                         value = name,
@@ -316,7 +319,7 @@ fun CreatePlaylistDialog(
                             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Rounded.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        Icon(nounIcon(R.drawable.noun_search), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                     }
                     BasicTextField(
                         value = searchQuery,

@@ -1,4 +1,32 @@
 package com.ianocent.musicplayer
+import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.VerticalAlignBottom
+import androidx.compose.material.icons.rounded.VerticalAlignTop
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.DragHandle
+import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.MicNone
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.NightsStay
+import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.RecordVoiceOver
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.SelfImprovement
+import androidx.compose.material.icons.rounded.SentimentDissatisfied
+import androidx.compose.material.icons.rounded.SentimentVerySatisfied
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.SlowMotionVideo
+import com.ianocent.musicplayer.ui.glass.glassIconBackdrop
+import com.ianocent.musicplayer.ui.glass.isAppInDark
+import com.ianocent.musicplayer.ui.glass.nounIcon
+
+
 
 import android.Manifest
 import android.content.Intent
@@ -138,13 +166,8 @@ import androidx.compose.ui.graphics.compositeOver
 import kotlin.math.roundToInt
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.material.icons.rounded.CloudOff
-import androidx.compose.material.icons.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.FavoriteBorder
-import androidx.compose.material.icons.rounded.Favorite
 import androidx.activity.compose.BackHandler
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -772,10 +795,10 @@ fun ListingScreen(
                                     .padding(6.dp)
                                     .size(40.dp)
                                     .clip(CircleShape)
-                                    .background(adaptiveColor.copy(alpha = 0.2f)), // Background ngikutin warna dominan
+                                    .glassIconBackdrop(dark = isAppInDark(), accent = adaptiveColor), // Background ngikutin warna dominan
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Rounded.Search, contentDescription = null, tint = adaptiveColor)
+                                Icon(nounIcon(R.drawable.noun_search), contentDescription = null, tint = adaptiveColor)
                             }
 
                             // Input Text Area
@@ -852,7 +875,7 @@ fun ListingScreen(
                                 animationSpec = tween(400), label = "search_tint"
                             )
                             GlassIconButton(
-                                icon = Icons.Rounded.Search,
+                                icon = nounIcon(R.drawable.noun_search),
                                 contentDescription = "Search (long press for admin)",
                                 onClick = { isSearchActive = true },
                                 onLongClick = {
@@ -861,7 +884,8 @@ fun ListingScreen(
                                 },
                                 glassConfig = homeGlassConfig,
                                 state = homeHazeState,
-                                tint = searchIconTint
+                                tint = searchIconTint,
+                                accent = adaptiveColor
                             )
                             var anchorHeightPx by remember { mutableIntStateOf(0) }
                             var startShine by remember { mutableStateOf(false) }
@@ -999,12 +1023,13 @@ fun ListingScreen(
                                 }
                             }
                             GlassIconButton(
-                                icon = Icons.Rounded.Settings,
+                                icon = nounIcon(R.drawable.noun_gear),
                                 contentDescription = "Settings",
                                 onClick = { showSettingsSheet = true },
                                 glassConfig = homeGlassConfig,
                                 state = homeHazeState,
-                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                accent = adaptiveColor
                             )
                         }
                     }
@@ -1203,11 +1228,12 @@ fun ListingScreen(
                 ) {
                     if (page == 1) {
                         GlassIconButton(
-                            icon = Icons.Rounded.ChevronLeft,
+                            icon = nounIcon(R.drawable.noun_arrow_left),
                             contentDescription = "Previous Tabs",
                             onClick = { navState.selectTab(0) },
                             glassConfig = homeGlassConfig,
-                            state = homeHazeState
+                            state = homeHazeState,
+                            accent = adaptiveColor
                         )
                     }
 
@@ -1225,11 +1251,12 @@ fun ListingScreen(
 
                     if (page == 0 && endIdx < parsedTabOrder.size) {
                         GlassIconButton(
-                            icon = Icons.Rounded.ChevronRight,
+                            icon = nounIcon(R.drawable.noun_arrow_right),
                             contentDescription = "More Tabs",
                             onClick = { navState.selectTab(endIdx) },
                             glassConfig = homeGlassConfig,
-                            state = homeHazeState
+                            state = homeHazeState,
+                            accent = adaptiveColor
                         )
                     }
                 }
@@ -1314,7 +1341,7 @@ fun ListingScreen(
                                                 modifier = Modifier.size(36.dp)
                                             ) {
                                                 Icon(
-                                                    Icons.Rounded.Analytics, "Debug Recap",
+                                                    nounIcon(R.drawable.noun_chart), "Debug Recap",
                                                     tint = adaptiveColor,
                                                     modifier = Modifier.size(20.dp)
                                                 )
@@ -1325,7 +1352,7 @@ fun ListingScreen(
                                                 modifier = Modifier.size(36.dp)
                                             ) {
                                                 Icon(
-                                                    imageVector = if (showFavoritesOnly) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                                    imageVector = if (showFavoritesOnly) nounIcon(R.drawable.noun_love) else nounIcon(R.drawable.noun_love_outline),
                                                     contentDescription = "Favorites",
                                                     tint = if (showFavoritesOnly) Color(0xFFE91E63) else adaptiveColor,
                                                     modifier = Modifier.size(20.dp)
@@ -1454,7 +1481,7 @@ fun ListingScreen(
                                                     modifier = Modifier.size(36.dp)
                                                 ) {
                                                     Icon(
-                                                        imageVector = if (navState.showingArtists) Icons.Rounded.Album else Icons.Rounded.Person,
+                                                        imageVector = if (navState.showingArtists) Icons.Rounded.Album else nounIcon(R.drawable.noun_artist),
                                                         contentDescription = if (navState.showingArtists) "Show Albums" else "Show Artists",
                                                         tint = adaptiveColor,
                                                         modifier = Modifier.size(20.dp)
@@ -1538,10 +1565,10 @@ fun ListingScreen(
                                                         )
                                                     )
                                                 }) {
-                                                    Icon(Icons.Rounded.FileOpen, contentDescription = "Import M3U")
+                                                    Icon(nounIcon(R.drawable.noun_import), contentDescription = "Import M3U")
                                                 }
                                                 IconButton(onClick = { showCreateDialog = true }) {
-                                                    Icon(Icons.Rounded.Add, contentDescription = "Create Playlist")
+                                                    Icon(nounIcon(R.drawable.noun_add), contentDescription = "Create Playlist")
                                                 }
                                             }
                                             if (playlists.isEmpty()) {
@@ -2010,8 +2037,11 @@ fun GlassIconButton(
     size: Dp = 44.dp,
     iconSize: Dp = 22.dp,
     fallbackColor: Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+    accent: Color = Color.Unspecified,
+    active: Boolean = false,
     onLongClick: (() -> Unit)? = null
 ) {
+    val dark = isAppInDark()
     IanGlassSurface(
         config = glassConfig.copy(cornerRadius = size.value / 2f),
         state = state,
@@ -2033,18 +2063,34 @@ fun GlassIconButton(
                 }
             )
     ) {
+        // Layered glass slab over the Haze blur (or the fallback): sheen,
+        // accent wash from the album palette, hairline ring, active glow.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .glassIconBackdrop(dark = dark, accent = accent, active = active)
+        )
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription, tint = tint, modifier = Modifier.size(iconSize))
         }
     }
 }
 @Composable
-fun MiniControlButton(icon: ImageVector, onClick: () -> Unit, bg: Color, tint: Color, size: androidx.compose.ui.unit.Dp) {
+fun MiniControlButton(
+    icon: ImageVector,
+    onClick: () -> Unit,
+    bg: Color = Color.Gray,
+    tint: Color = Color.White,
+    size: androidx.compose.ui.unit.Dp,
+    accent: Color = Color.Unspecified,
+    active: Boolean = false
+) {
+    val dark = isAppInDark()
     Box(
         modifier = Modifier
             .size(size) // Size sekarang dinamis
+            .glassIconBackdrop(dark = dark, accent = accent, active = active, shape = CircleShape)
             .clip(CircleShape)
-            .background(bg)
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
@@ -2072,7 +2118,7 @@ fun GroupRow(name: String, count: Int) {
                 .background(MaterialTheme.colorScheme.secondaryContainer),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Rounded.Person, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+            Icon(nounIcon(R.drawable.noun_artist), contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
         }
         Spacer(modifier = Modifier.width(16.dp))
         Column {
@@ -2177,7 +2223,7 @@ fun AlbumDetailView(
                     SmallFloatingActionButton(
                         onClick = onBack,
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ) { Icon(Icons.Rounded.ArrowBackIosNew, contentDescription = "Back") }
+                    ) { Icon(nounIcon(R.drawable.noun_arrow_left), contentDescription = "Back") }
 
                     SmallFloatingActionButton(
                         onClick = {
@@ -2187,13 +2233,13 @@ fun AlbumDetailView(
                             isMenuExpanded = false
                         },
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ) { Icon(Icons.Rounded.PlayArrow, contentDescription = "Play All") }
+                    ) { Icon(nounIcon(R.drawable.noun_play), contentDescription = "Play All") }
 
                     SmallFloatingActionButton(
                         onClick = { onShuffle(); isMenuExpanded = false },
                         containerColor = adaptiveColor,
                         contentColor = minibarTextColor
-                    ) { Icon(Icons.Rounded.Shuffle, contentDescription = "Shuffle") }
+                    ) { Icon(nounIcon(R.drawable.noun_shuffle), contentDescription = "Shuffle") }
                 }
             }
 
@@ -2232,8 +2278,14 @@ fun ArtistDetailView(
                     .padding(top = 24.dp, bottom = 16.dp, start = 4.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.Rounded.ArrowBackIosNew, contentDescription = "Back")
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .glassIconBackdrop(dark = isAppInDark())
+                ) {
+                    Icon(nounIcon(R.drawable.noun_arrow_left), contentDescription = "Back", modifier = Modifier.size(22.dp))
                 }
                 Text(
                     text = artist,
@@ -2244,8 +2296,14 @@ fun ArtistDetailView(
                 )
                 Box {
                     var menuExpanded by remember { mutableStateOf(false) }
-                    IconButton(onClick = { menuExpanded = true }) {
-                        Icon(Icons.Rounded.MoreVert, contentDescription = "Menu")
+                    IconButton(
+                        onClick = { menuExpanded = true },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .glassIconBackdrop(dark = isAppInDark())
+                    ) {
+                        Icon(nounIcon(R.drawable.noun_threedot), contentDescription = "Menu", modifier = Modifier.size(20.dp))
                     }
                     DropdownMenu(
                         expanded = menuExpanded,
@@ -2258,13 +2316,13 @@ fun ArtistDetailView(
                                 menuExpanded = false
                                 if (songs.isNotEmpty()) viewModel.setQueue(songs)
                             },
-                            leadingIcon = { Icon(Icons.Rounded.PlayArrow, null) }
+                            leadingIcon = { Icon(nounIcon(R.drawable.noun_play), null) }
                         )
                         DropdownMenuItem(
                             text = { Text("Shuffle") },
                             modifier = Modifier.padding(vertical = 4.dp),
                             onClick = { menuExpanded = false; onShuffle() },
-                            leadingIcon = { Icon(Icons.Rounded.Shuffle, null) }
+                            leadingIcon = { Icon(nounIcon(R.drawable.noun_shuffle), null) }
                         )
                     }
                 }
@@ -2375,8 +2433,14 @@ fun PlaylistDetailView(
                     .padding(top = 24.dp, bottom = 16.dp, start = 4.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.Rounded.ArrowBackIosNew, contentDescription = "Back")
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .glassIconBackdrop(dark = isAppInDark())
+                ) {
+                    Icon(nounIcon(R.drawable.noun_arrow_left), contentDescription = "Back", modifier = Modifier.size(22.dp))
                 }
                 Text(
                     text = playlist.name,
@@ -2387,8 +2451,14 @@ fun PlaylistDetailView(
                 )
                 Box {
                     var menuExpanded by remember { mutableStateOf(false) }
-                    IconButton(onClick = { menuExpanded = true }) {
-                        Icon(Icons.Rounded.MoreVert, contentDescription = "Menu")
+                    IconButton(
+                        onClick = { menuExpanded = true },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .glassIconBackdrop(dark = isAppInDark())
+                    ) {
+                        Icon(nounIcon(R.drawable.noun_threedot), contentDescription = "Menu", modifier = Modifier.size(20.dp))
                     }
                     DropdownMenu(
                         expanded = menuExpanded,
@@ -2398,7 +2468,7 @@ fun PlaylistDetailView(
                             text = { Text("Add Songs") },
                             modifier = Modifier.padding(vertical = 4.dp),
                             onClick = { menuExpanded = false; showAddDialog = true },
-                            leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, null) }
+                            leadingIcon = { Icon(nounIcon(R.drawable.noun_queue), null) }
                         )
                         DropdownMenuItem(
                             text = { Text("Share") },
@@ -2413,13 +2483,13 @@ fun PlaylistDetailView(
                                 menuExpanded = false
                                 exportLauncher.launch("${playlist.name}.m3u")
                             },
-                            leadingIcon = { Icon(Icons.Rounded.FileUpload, null) }
+                            leadingIcon = { Icon(nounIcon(R.drawable.noun_import), null) }
                         )
                         DropdownMenuItem(
                             text = { Text("Shuffle") },
                             modifier = Modifier.padding(vertical = 4.dp),
                             onClick = { menuExpanded = false; onShuffle() },
-                            leadingIcon = { Icon(Icons.Rounded.Shuffle, null) }
+                            leadingIcon = { Icon(nounIcon(R.drawable.noun_shuffle), null) }
                         )
                     }
                 }
@@ -2489,7 +2559,7 @@ fun PlaylistDetailView(
                                                 },
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Icon(Icons.Rounded.Delete, "Delete", tint = Color.Red, modifier = Modifier.size(24.dp))
+                                            Icon(nounIcon(R.drawable.noun_delete), "Delete", tint = Color.Red, modifier = Modifier.size(24.dp))
                                         }
                                     }
 
@@ -2506,13 +2576,13 @@ fun PlaylistDetailView(
                                                     scaleY = 0.6f + 0.4f * revealProgress
                                                 }
                                                 .clip(RoundedCornerShape(12.dp))
-                                                .background(adaptiveColor.copy(alpha = 0.2f))
+                                                .glassIconBackdrop(dark = isAppInDark(), accent = adaptiveColor)
                                                 .clickable(enabled = isSwipedOpen) {
                                                     songCardTarget = song
                                                 },
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Icon(Icons.Rounded.Photo, "Song Card", tint = adaptiveColor, modifier = Modifier.size(24.dp))
+                                            Icon(nounIcon(R.drawable.noun_image), "Song Card", tint = adaptiveColor, modifier = Modifier.size(24.dp))
                                         }
                                     }
 
@@ -2567,7 +2637,7 @@ fun PlaylistDetailView(
                                                     modifier = Modifier
                                                         .size(24.dp)
                                                         .clip(CircleShape)
-                                                        .background(adaptiveColor.copy(alpha = 0.2f))
+                                                        .glassIconBackdrop(dark = isAppInDark(), accent = adaptiveColor)
                                                         .draggableHandle(),
                                                     contentAlignment = Alignment.Center
                                                 ) {
@@ -2840,7 +2910,7 @@ fun MusicRecapBanner(
                 colors = ButtonDefaults.buttonColors(containerColor = accentColor),
                 shape = RoundedCornerShape(12.dp)
             ) {
-//                Icon(Icons.Rounded.Image, contentDescription = null, modifier = Modifier.size(18.dp))
+//                Icon(nounIcon(R.drawable.noun_image), contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Save to Gallery")
             }
@@ -3150,24 +3220,27 @@ fun MiniLayoutDefault(
                     }
             ) {
                 MiniControlButton(
-                    icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    icon = if (isPlaying) nounIcon(R.drawable.noun_pause) else nounIcon(R.drawable.noun_play),
                     onClick = { viewModel.togglePlayPause() },
-                    bg = adaptiveColor.copy(alpha = 0.2f), tint = adaptiveColor, size = 44.dp
+                    bg = adaptiveColor.copy(alpha = 0.2f), tint = adaptiveColor, size = 44.dp,
+                    accent = adaptiveColor
                 )
-                MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() },
-                    adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 44.dp)
-                MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() },
-                    adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 44.dp)
+                MiniControlButton(nounIcon(R.drawable.noun_prev), { viewModel.playPrevious() },
+                    adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 44.dp, accent = adaptiveColor)
+                MiniControlButton(nounIcon(R.drawable.noun_next), { viewModel.playNext() },
+                    adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 44.dp, accent = adaptiveColor)
                 MiniControlButton(
-                    Icons.Rounded.Shuffle, { viewModel.toggleShuffle() },
+                    nounIcon(R.drawable.noun_shuffle), { viewModel.toggleShuffle() },
                     if (isShuffleOn) activeBg else inactBg,
-                    if (isShuffleOn) adaptiveColor else inactTint, 44.dp
+                    if (isShuffleOn) adaptiveColor else inactTint, 44.dp,
+                    accent = adaptiveColor, active = isShuffleOn
                 )
                 MiniControlButton(
-                    if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                    if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) nounIcon(R.drawable.noun_repeat_one) else nounIcon(R.drawable.noun_repeat),
                     { viewModel.toggleRepeat() },
                     if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else inactBg,
-                    if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, 44.dp
+                    if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, 44.dp,
+                    accent = adaptiveColor, active = repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF
                 )
             }
         }
@@ -3249,16 +3322,17 @@ fun MiniLayoutFloating(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                MiniControlButton(Icons.Rounded.Shuffle, { viewModel.toggleShuffle() },
+                MiniControlButton(nounIcon(R.drawable.noun_shuffle), { viewModel.toggleShuffle() },
                     bg = if (shuffleOn) activeBg else inactBg,
-                    tint = if (shuffleOn) adaptiveColor else inactTint, size = 44.dp)
-                MiniControlButton(Icons.Rounded.SkipPrevious, { viewModel.playPrevious() },
-                    adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 44.dp)
+                    tint = if (shuffleOn) adaptiveColor else inactTint, size = 44.dp,
+                    accent = adaptiveColor, active = shuffleOn)
+                MiniControlButton(nounIcon(R.drawable.noun_prev), { viewModel.playPrevious() },
+                    adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 44.dp, accent = adaptiveColor)
                 Box(
                     modifier = Modifier
                         .size(48.dp)
                         .clip(CircleShape)
-                        .background(adaptiveColor.copy(alpha = 0.2f))
+                        .glassIconBackdrop(dark = isAppInDark(), accent = adaptiveColor)
                         .clickable { viewModel.togglePlayPause() },
                     contentAlignment = Alignment.Center
                 ) {
@@ -3266,18 +3340,19 @@ fun MiniLayoutFloating(
                         CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp, color = adaptiveColor)
                     } else {
                         Icon(
-                            if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                            if (isPlaying) nounIcon(R.drawable.noun_pause) else nounIcon(R.drawable.noun_play),
                             null, tint = adaptiveColor, modifier = Modifier.size(28.dp)
                         )
                     }
                 }
-                MiniControlButton(Icons.Rounded.SkipNext, { viewModel.playNext() },
-                    adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 44.dp)
+                MiniControlButton(nounIcon(R.drawable.noun_next), { viewModel.playNext() },
+                    adaptiveColor.copy(alpha = 0.2f), adaptiveColor, 44.dp, accent = adaptiveColor)
                 MiniControlButton(
-                    if (repeat == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                    if (repeat == androidx.media3.common.Player.REPEAT_MODE_ONE) nounIcon(R.drawable.noun_repeat_one) else nounIcon(R.drawable.noun_repeat),
                     { viewModel.toggleRepeat() },
                     bg = if (repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else inactBg,
-                    tint = if (repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, size = 44.dp)
+                    tint = if (repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, size = 44.dp,
+                    accent = adaptiveColor, active = repeat != androidx.media3.common.Player.REPEAT_MODE_OFF)
             }
         }
     }
@@ -3355,48 +3430,72 @@ fun MiniLayoutQueue(
                 // Left Mode
                 IconButton(
                     onClick = { viewModel.toggleShuffle() },
-                    modifier = Modifier.size(36.dp).clip(CircleShape).background(if (isShuffleOn) activeBg else Color.Transparent)
+                    modifier = Modifier.size(36.dp).clip(CircleShape).glassIconBackdrop(
+                        dark = isAppInDark(), accent = adaptiveColor, active = isShuffleOn
+                    )
                 ) {
-                    Icon(Icons.Rounded.Shuffle, null, tint = if (isShuffleOn) adaptiveColor else inactTint, modifier = Modifier.size(22.dp))
+                    Icon(nounIcon(R.drawable.noun_shuffle), null, tint = if (isShuffleOn) adaptiveColor else inactTint, modifier = Modifier.size(22.dp))
                 }
 
                 // Center Group
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        Icons.Rounded.SkipPrevious, null, tint = adaptiveColor,
-                        modifier = Modifier.size(32.dp).clickable { viewModel.playPrevious() }
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .glassIconBackdrop(dark = isAppInDark(), accent = adaptiveColor)
+                            .clickable { viewModel.playPrevious() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            nounIcon(R.drawable.noun_prev), null, tint = adaptiveColor,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
 
                     Box(
                         modifier = Modifier
                             .size(48.dp)
                             .clip(CircleShape)
-                            .background(adaptiveColor.copy(alpha = 0.2f))
+                            .glassIconBackdrop(dark = isAppInDark(), accent = adaptiveColor)
                             .clickable { viewModel.togglePlayPause() },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                            null, tint = adaptiveColor, modifier = Modifier.size(32.dp)
+                            if (isPlaying) nounIcon(R.drawable.noun_pause) else nounIcon(R.drawable.noun_play),
+                            null, tint = adaptiveColor, modifier = Modifier.size(30.dp)
                         )
                     }
 
-                    Icon(
-                        Icons.Rounded.SkipNext, null, tint = adaptiveColor,
-                        modifier = Modifier.size(32.dp).clickable { viewModel.playNext() }
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .glassIconBackdrop(dark = isAppInDark(), accent = adaptiveColor)
+                            .clickable { viewModel.playNext() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            nounIcon(R.drawable.noun_next), null, tint = adaptiveColor,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                 }
 
                 // Right Mode
                 IconButton(
                     onClick = { viewModel.toggleRepeat() },
-                    modifier = Modifier.size(36.dp).clip(CircleShape).background(if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) activeBg else Color.Transparent)
+                    modifier = Modifier.size(36.dp).clip(CircleShape).glassIconBackdrop(
+                        dark = isAppInDark(),
+                        accent = adaptiveColor,
+                        active = repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF
+                    )
                 ) {
                     Icon(
-                        if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                        if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) nounIcon(R.drawable.noun_repeat_one) else nounIcon(R.drawable.noun_repeat),
                         null, tint = if (repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) adaptiveColor else inactTint, modifier = Modifier.size(22.dp)
                     )
                 }
@@ -3492,7 +3591,7 @@ fun TrendingCard(
                         )
                     } else {
                         Icon(
-                            Icons.Rounded.PlayArrow,
+                            nounIcon(R.drawable.noun_play),
                             null,
                             tint = Color.White,
                             modifier = Modifier.size(20.dp)
@@ -3737,7 +3836,7 @@ fun CategoryCard(
                     "Energetic" -> Icons.Rounded.Bolt
                     "Chill" -> Icons.Rounded.SelfImprovement
                     "Happy" -> Icons.Rounded.SentimentVerySatisfied
-                    "Romantic" -> Icons.Rounded.Favorite
+                    "Romantic" -> nounIcon(R.drawable.noun_love)
                     "Dark" -> Icons.Rounded.NightsStay
                     else -> Icons.Rounded.MusicNote
                 }
@@ -3927,7 +4026,7 @@ private fun SettingsBottomSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    imageVector = Icons.Rounded.Favorite,
+                    imageVector = nounIcon(R.drawable.noun_love),
                     contentDescription = null,
                     tint = Color(0xFFE91E63),
                     modifier = Modifier.size(24.dp)

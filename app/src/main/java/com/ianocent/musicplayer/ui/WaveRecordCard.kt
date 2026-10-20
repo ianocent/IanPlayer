@@ -1,4 +1,9 @@
 package com.ianocent.musicplayer.ui
+import androidx.compose.material.icons.rounded.Stop
+import com.ianocent.musicplayer.R
+import com.ianocent.musicplayer.ui.glass.nounIcon
+
+
 
 import android.Manifest
 import android.content.ContentValues
@@ -27,8 +32,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.FiberManualRecord
-import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -594,7 +597,7 @@ fun WaveRecordSheet(
                         },
                         modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color.White)
                     ) {
-                        Icon(Icons.Rounded.FiberManualRecord, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Record")
+                        Icon(nounIcon(R.drawable.noun_record), null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Record")
                     }
                 } else {
                     Button(

@@ -10,15 +10,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Repeat
-import androidx.compose.material.icons.rounded.RepeatOne
-import androidx.compose.material.icons.rounded.Shuffle
-import androidx.compose.material.icons.rounded.SkipNext
-import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,14 +22,18 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.Player
+import com.ianocent.musicplayer.R
 import com.ianocent.musicplayer.ui.glass.IanGlassConfig
 import com.ianocent.musicplayer.ui.glass.IanGlassSurface
+import com.ianocent.musicplayer.ui.glass.glassIconBackdrop
+import com.ianocent.musicplayer.ui.glass.nounIcon
 import dev.chrisbanes.haze.HazeState
 
-/** Glass transport bar with the 5 primary playback actions. */
+/** Glass transport bar with the 5 primary playback actions in user-preferred order: Pause/Play, Prev, Next, Shuffle, Repeat. */
 @Composable
 fun PlayerControlsBar(
     isPlaying: Boolean,
@@ -60,43 +57,73 @@ fun PlayerControlsBar(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val buttonBg = if (isDarkMode) Color.Black.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.8f)
-            val iconColor = if (isDarkMode) Color.White else Color.Black
+            val dark = isDarkMode
+            val defaultIconTint = if (dark) Color.White else Color(0xFF1A1A1A)
 
+            // 1. Play / Pause
             ControlButton(
-                icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                icon = if (isPlaying) nounIcon(R.drawable.noun_pause) else nounIcon(R.drawable.noun_play),
                 onClick = onPlayPause,
-                bgColor = buttonBg, iconTint = iconColor
+                active = isPlaying,
+                accent = accentColor,
+                dark = dark,
+                tint = if (isPlaying) accentColor else defaultIconTint,
+                buttonSize = 48.dp,
+                iconSize = 24.dp
             )
+
+            // 2. Previous
             ControlButton(
-                icon = Icons.Rounded.SkipPrevious,
+                icon = nounIcon(R.drawable.noun_prev),
                 onClick = onPrevious,
-                bgColor = buttonBg, iconTint = iconColor
+                accent = accentColor,
+                dark = dark,
+                tint = defaultIconTint,
+                buttonSize = 48.dp,
+                iconSize = 24.dp
             )
+
+            // 3. Next
             ControlButton(
-                icon = Icons.Rounded.SkipNext,
+                icon = nounIcon(R.drawable.noun_next),
                 onClick = onNext,
-                bgColor = buttonBg, iconTint = iconColor
+                accent = accentColor,
+                dark = dark,
+                tint = defaultIconTint,
+                buttonSize = 48.dp,
+                iconSize = 24.dp
             )
+
+            // 4. Shuffle
             ControlButton(
-                icon = Icons.Rounded.Shuffle,
+                icon = nounIcon(R.drawable.noun_shuffle),
                 onClick = onToggleShuffle,
                 active = isShuffleOn,
-                bgColor = buttonBg, iconTint = iconColor
+                accent = accentColor,
+                dark = dark,
+                tint = if (isShuffleOn) accentColor else defaultIconTint,
+                buttonSize = 48.dp,
+                iconSize = 24.dp
             )
+
+            // 5. Repeat
             ControlButton(
-                icon = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                icon = if (repeatMode == Player.REPEAT_MODE_ONE) nounIcon(R.drawable.noun_repeat_one) else nounIcon(R.drawable.noun_repeat),
                 onClick = onToggleRepeat,
                 active = repeatMode != Player.REPEAT_MODE_OFF,
-                bgColor = buttonBg, iconTint = iconColor
+                accent = accentColor,
+                dark = dark,
+                tint = if (repeatMode != Player.REPEAT_MODE_OFF) accentColor else defaultIconTint,
+                buttonSize = 48.dp,
+                iconSize = 24.dp
             )
         }
     }
 
     if (glassConfig.enabled) {
         IanGlassSurface(
-            config = glassConfig.copy(cornerRadius = 32f),
-            shape = RoundedCornerShape(32.dp),
+            config = glassConfig.copy(cornerRadius = 28f),
+            shape = RoundedCornerShape(28.dp),
             modifier = modifier.fillMaxWidth(),
             state = state,
             liveBackdrop = liveBackdrop
@@ -106,10 +133,13 @@ fun PlayerControlsBar(
                     .fillMaxWidth()
                     .background(
                         Brush.verticalGradient(
-                            listOf(accentColor.copy(alpha = 0.35f), accentColor.copy(alpha = 0.12f))
+                            listOf(
+                                accentColor.copy(alpha = 0.22f),
+                                accentColor.copy(alpha = 0.08f)
+                            )
                         )
                     )
-                    .padding(vertical = 16.dp)
+                    .padding(horizontal = 12.dp, vertical = 14.dp)
             ) {
                 buttons()
             }
@@ -118,13 +148,13 @@ fun PlayerControlsBar(
         Box(
             modifier = modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(32.dp))
+                .clip(RoundedCornerShape(28.dp))
                 .background(
                     Brush.verticalGradient(
-                        listOf(accentColor, accentColor.copy(alpha = 0.5f))
+                        listOf(accentColor.copy(alpha = 0.8f), accentColor.copy(alpha = 0.4f))
                     )
                 )
-                .padding(vertical = 16.dp)
+                .padding(horizontal = 12.dp, vertical = 14.dp)
         ) {
             buttons()
         }
@@ -135,26 +165,43 @@ fun PlayerControlsBar(
 fun ControlButton(
     icon: ImageVector,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     active: Boolean = false,
     badge: String? = null,
-    iconTint: Color = Color.Black,
-    bgColor: Color = Color.White
+    accent: Color = Color.Unspecified,
+    dark: Boolean = false,
+    tint: Color = Color.Unspecified,
+    buttonSize: Dp = 48.dp,
+    iconSize: Dp = 24.dp
 ) {
+    val defaultTint = if (dark) Color.White else Color(0xFF1A1A1A)
+    val effectiveTint = if (tint != Color.Unspecified) tint else defaultTint
+
     Box(
-        modifier = Modifier
-            .size(48.dp)
-            .clip(RoundedCornerShape(50))
-            .background(if (active) bgColor.copy(alpha = 0.7f) else bgColor)
+        modifier = modifier
+            .size(buttonSize)
+            .glassIconBackdrop(
+                dark = dark,
+                accent = accent,
+                active = active,
+                shape = CircleShape
+            )
+            .clip(CircleShape)
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
-        Icon(icon, contentDescription = null, tint = iconTint)
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = effectiveTint,
+            modifier = Modifier.size(iconSize)
+        )
         if (badge != null) {
             Text(
-                badge,
+                text = badge,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Black,
-                color = if (active) iconTint else iconTint.copy(alpha = 0.5f),
+                color = if (active) effectiveTint else effectiveTint.copy(alpha = 0.5f),
                 modifier = Modifier.offset(x = 1.dp, y = 1.dp)
             )
         }

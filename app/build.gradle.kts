@@ -41,8 +41,8 @@ android {
         applicationId = "com.ianocent.musicplayer"
         minSdk = 24
         targetSdk = 36
-        versionCode = 41
-        versionName = "6.2.5"
+        versionCode = 42
+        versionName = "6.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

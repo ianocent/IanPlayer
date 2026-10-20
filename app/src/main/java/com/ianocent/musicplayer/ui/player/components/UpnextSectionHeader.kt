@@ -6,9 +6,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ExpandLess
-import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -19,6 +16,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.ianocent.musicplayer.ui.glass.isAppInDark
+import com.ianocent.musicplayer.ui.glass.nounIcon
+import androidx.compose.ui.res.vectorResource
 
 /** Collapsible up-next section header. */
 @Composable
@@ -38,9 +38,9 @@ fun UpnextSectionHeader(
     ) {
         Text("Upnext :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
         Icon(
-            imageVector = if (isExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+            imageVector = nounIcon(com.ianocent.musicplayer.R.drawable.noun_collapse_expand),
             contentDescription = "Toggle Upnext",
-            tint = Color.Gray
+            tint = if (isExpanded) Color.Gray else MaterialTheme.colorScheme.primary
         )
     }
 }

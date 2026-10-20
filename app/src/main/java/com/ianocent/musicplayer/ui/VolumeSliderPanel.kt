@@ -1,4 +1,12 @@
 package com.ianocent.musicplayer.ui
+import androidx.compose.material.icons.rounded.VolumeUp
+import com.ianocent.musicplayer.ui.glass.glassIconBackdrop
+import com.ianocent.musicplayer.ui.glass.isAppInDark
+import com.ianocent.musicplayer.ui.glass.nounIcon
+
+import com.ianocent.musicplayer.R
+
+
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -10,8 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ChevronLeft
-import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -42,12 +48,12 @@ fun VolumeSliderPanel(
                 .padding(end = 8.dp)
                 .size(32.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                .glassIconBackdrop(dark = isAppInDark(), accent = adaptiveColor)
                 .clickable { onCollapse() },
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                Icons.Rounded.ChevronLeft,
+                nounIcon(R.drawable.noun_arrow_left),
                 contentDescription = "Back",
                 tint = Color.Gray,
                 modifier = Modifier.size(20.dp)

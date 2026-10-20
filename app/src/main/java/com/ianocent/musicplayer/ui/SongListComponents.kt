@@ -1,4 +1,13 @@
 package com.ianocent.musicplayer.ui
+import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.MusicNote
+import com.ianocent.musicplayer.R
+import com.ianocent.musicplayer.ui.glass.glassIconBackdrop
+import com.ianocent.musicplayer.ui.glass.isAppInDark
+import com.ianocent.musicplayer.ui.glass.nounIcon
+
+
 
 import android.graphics.Bitmap
 import android.net.Uri
@@ -31,17 +40,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Album
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material.icons.rounded.Photo
-import androidx.compose.material.icons.rounded.PlaylistAdd
-import androidx.compose.material.icons.rounded.PlaylistPlay
-import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -280,7 +278,7 @@ fun SwipeablePlaylistCard(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    Icons.Rounded.MoreVert,
+                    nounIcon(R.drawable.noun_threedot),
                     contentDescription = "Menu",
                     tint = accentColor,
                     modifier = Modifier.size(24.dp)
@@ -366,7 +364,7 @@ fun SwipeablePlaylistCard(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(
-                            Icons.Rounded.Photo,
+                            nounIcon(R.drawable.noun_image),
                             contentDescription = null,
                             tint = accentColor,
                             modifier = Modifier.size(20.dp)
@@ -383,7 +381,7 @@ fun SwipeablePlaylistCard(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(
-                            Icons.Rounded.Edit,
+                            nounIcon(R.drawable.noun_edit),
                             contentDescription = null,
                             tint = accentColor,
                             modifier = Modifier.size(20.dp)
@@ -400,7 +398,7 @@ fun SwipeablePlaylistCard(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(
-                            Icons.Rounded.Delete,
+                            nounIcon(R.drawable.noun_delete),
                             contentDescription = null,
                             tint = Color.Red.copy(alpha = 0.8f),
                             modifier = Modifier.size(20.dp)
@@ -519,7 +517,7 @@ fun ArtistRow(artist: String, songs: List<Song>, viewModel: MusicViewModel, coun
                     contentScale = ContentScale.Crop
                 )
             } else {
-                Icon(Icons.Rounded.Person, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                Icon(nounIcon(R.drawable.noun_artist), contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
             }
         }
         Spacer(modifier = Modifier.width(16.dp))
@@ -618,14 +616,14 @@ fun SwipeableSongRow(
                         scaleY = 0.6f + 0.4f * revealProgress
                     }
                     .clip(RoundedCornerShape(12.dp))
-                    .background(adaptiveColor.copy(alpha = 0.2f))
+                    .glassIconBackdrop(dark = isAppInDark(), accent = adaptiveColor)
                     .clickable(enabled = isSwipedOpen) {
                         showActionDialog = true
                     },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    Icons.Rounded.MoreVert,
+                    nounIcon(R.drawable.noun_threedot),
                     contentDescription = "Menu",
                     tint = adaptiveColor,
                     modifier = Modifier.size(24.dp)
@@ -709,7 +707,7 @@ fun SwipeableSongRow(
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Rounded.Photo, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                        Icon(nounIcon(R.drawable.noun_image), contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(12.dp))
                         Text("Song Card", fontWeight = FontWeight.SemiBold)
                     }
@@ -721,7 +719,7 @@ fun SwipeableSongRow(
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Rounded.SkipNext, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                        Icon(nounIcon(R.drawable.noun_next), contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(12.dp))
                         Text("Play Next", fontWeight = FontWeight.SemiBold)
                     }
@@ -733,7 +731,7 @@ fun SwipeableSongRow(
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Rounded.PlaylistAdd, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                        Icon(nounIcon(R.drawable.noun_queue), contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(12.dp))
                         Text("Add to Queue", fontWeight = FontWeight.SemiBold)
                     }
@@ -745,7 +743,7 @@ fun SwipeableSongRow(
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Rounded.PlaylistPlay, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                        Icon(nounIcon(R.drawable.noun_queue), contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(12.dp))
                         Text("Add to Playlist", fontWeight = FontWeight.SemiBold)
                     }
@@ -756,7 +754,7 @@ fun SwipeableSongRow(
                             onClick = { showActionDialog = false; onGoToArtist(song) },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Rounded.Person, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                            Icon(nounIcon(R.drawable.noun_artist), contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(12.dp))
                             Text("Go to Artist", fontWeight = FontWeight.SemiBold)
                         }
@@ -799,7 +797,7 @@ fun SwipeableSongRow(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Rounded.Edit, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                            Icon(nounIcon(R.drawable.noun_edit), contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(12.dp))
                             Text("Edit Song Info", fontWeight = FontWeight.SemiBold)
                         }
@@ -811,7 +809,7 @@ fun SwipeableSongRow(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Rounded.Delete, contentDescription = null, tint = Color.Red.copy(alpha = 0.8f), modifier = Modifier.size(20.dp))
+                            Icon(nounIcon(R.drawable.noun_delete), contentDescription = null, tint = Color.Red.copy(alpha = 0.8f), modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(12.dp))
                             Text("Delete Song", fontWeight = FontWeight.SemiBold, color = Color.Red.copy(alpha = 0.8f))
                         }
@@ -1009,7 +1007,7 @@ fun EditSongDialog(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                Icons.Rounded.Edit,
+                                nounIcon(R.drawable.noun_edit),
                                 contentDescription = "Change album art",
                                 modifier = Modifier.size(16.dp),
                                 tint = Color.White
@@ -1074,7 +1072,7 @@ fun EditSongDialog(
                             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Rounded.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Icon(nounIcon(R.drawable.noun_artist), contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     }
                     BasicTextField(
                         value = artist,
@@ -1127,7 +1125,7 @@ fun PlaylistSelectionDialog(
                             onClick = { onSelect(playlist) },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Rounded.PlaylistPlay, null, tint = MaterialTheme.colorScheme.primary)
+                            Icon(nounIcon(R.drawable.noun_queue), null, tint = MaterialTheme.colorScheme.primary)
                             Spacer(Modifier.width(12.dp))
                             Text(playlist.name, fontWeight = FontWeight.SemiBold)
                         }

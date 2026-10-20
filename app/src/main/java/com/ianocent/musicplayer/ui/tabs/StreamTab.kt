@@ -1,5 +1,10 @@
 package com.ianocent.musicplayer.ui.tabs
 
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.CloudOff
+import com.ianocent.musicplayer.R
+import com.ianocent.musicplayer.ui.glass.nounIcon
+
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -120,13 +125,8 @@ import androidx.compose.ui.graphics.compositeOver
 import kotlin.math.roundToInt
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.material.icons.rounded.CloudOff
-import androidx.compose.material.icons.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.FavoriteBorder
-import androidx.compose.material.icons.rounded.Favorite
 import androidx.activity.compose.BackHandler
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -206,7 +206,7 @@ fun StreamTabContent(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         IconButton(onClick = clearFilter) {
-                                            Icon(Icons.Rounded.ArrowBack, null, tint = adaptiveColor)
+                                            Icon(nounIcon(R.drawable.noun_arrow_left), null, tint = adaptiveColor)
                                         }
                                         Text(
                                             filterLabel,
@@ -264,7 +264,7 @@ fun StreamTabContent(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             IconButton(onClick = { viewModel.clearGenre() }) {
-                                                Icon(Icons.Rounded.ArrowBack, null, tint = adaptiveColor)
+                                                Icon(nounIcon(R.drawable.noun_arrow_left), null, tint = adaptiveColor)
                                             }
                                             Text(
                                                 selectedGenre ?: "",
