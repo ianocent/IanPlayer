@@ -609,6 +609,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     // Fungsi khusus buat search di Tab Stream dengan sistem Debounce (Anti-lag)
     fun searchRemoteSongs(query: String) = streamSearch.query(query)
 
+    /**
+     * Deep link entry point: resolves a shared YouTube video id into a Song
+     * (metadata via oEmbed) and caches it so playlists/queue restore can find it.
+     */
+    suspend fun resolveDeepLinkSong(videoId: String, preferVideo: Boolean): Song? {
+        val song = ytMusicRepository.fetchSongByVideoId(videoId, preferVideo) ?: return null
+        songStore.addToStreamSongsCache(listOf(song))
+        return song
+    }
+
     fun loadMoreStreamSongs() = streamSearch.loadMore()
 
     private val _playlists = MutableStateFlow(songStore.loadPlaylists())
@@ -1324,19 +1334,64 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _isDownloading.value = true
         _isDownloaded.value = false
 
-        val downloadId = UpdateManager.startDownload(context, info)
-        downloadReceiver = UpdateManager.registerDownloadReceiver(context, downloadId) {
+        try {
+            val downloadId = UpdateManager.startDownload(context, info)
+            downloadReceiver = UpdateManager.registerDownloadReceiver(context, downloadId) { success ->
+                _isDownloading.value = false
+                _isDownloaded.value = success
+                if (!success) {
+                    android.widget.Toast.makeText(
+                        appContext,
+                        "Update download failed. Try again.",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to start update download")
             _isDownloading.value = false
-            _isDownloaded.value = true
+            android.widget.Toast.makeText(
+                appContext,
+                "Could not start the update download.",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
     fun installUpdate() {
         val context = getApplication<android.app.Application>()
-        UpdateManager.installApk(context)
-        _isDownloaded.value = false
-        _isUpdateAvailable.value = false
-        _updateInfo.value = null
+        when (UpdateManager.installApk(context)) {
+            UpdateManager.InstallResult.STARTED -> {
+                _isDownloaded.value = false
+                _isUpdateAvailable.value = false
+                _updateInfo.value = null
+            }
+
+            UpdateManager.InstallResult.NEEDS_PERMISSION -> {
+                android.widget.Toast.makeText(
+                    appContext,
+                    "Allow \"Install unknown apps\" for IanPlayer, then tap Install again.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+
+            UpdateManager.InstallResult.MISSING_FILE -> {
+                _isDownloaded.value = false
+                android.widget.Toast.makeText(
+                    appContext,
+                    "Update file not found. Please download it again.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+
+            UpdateManager.InstallResult.FAILED -> {
+                android.widget.Toast.makeText(
+                    appContext,
+                    "Could not open the installer. Try again.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
     fun getAudioFormats(song: Song, onResult: (List<AudioFormat>) -> Unit) =

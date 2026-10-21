@@ -25,6 +25,7 @@ import androidx.compose.material.icons.rounded.SlowMotionVideo
 import com.ianocent.musicplayer.ui.glass.glassIconBackdrop
 import com.ianocent.musicplayer.ui.glass.isAppInDark
 import com.ianocent.musicplayer.ui.glass.nounIcon
+import com.ianocent.musicplayer.data.IanDeepLinks
 
 
 
@@ -225,8 +226,14 @@ private fun TikTokIcon(modifier: Modifier = Modifier, tint: Color = Color.White)
 }
 
 class MainActivity : ComponentActivity() {
+    /** Raw deep-link URI waiting to be consumed by the Compose tree. */
+    private val pendingDeepLink = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Only consume the launch link on a fresh start; config changes (rotation)
+        // recreate the activity with the same intent and must not replay it.
+        if (savedInstanceState == null) pendingDeepLink.value = intent?.dataString
         enableEdgeToEdge()
         setContent {
             val viewModel: MusicViewModel = viewModel()
@@ -258,11 +265,21 @@ class MainActivity : ComponentActivity() {
                     AppNavHost(
                         viewModel = viewModel,
                         innerPadding = innerPadding,
-                        snackbarHostState = snackbarHostState
+                        snackbarHostState = snackbarHostState,
+                        deepLink = pendingDeepLink.value,
+                        onDeepLinkHandled = { pendingDeepLink.value = null }
                     )
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // Only replace the pending link when this intent actually carries one;
+        // otherwise launcher taps would wipe a link that is still being handled.
+        intent.dataString?.let { pendingDeepLink.value = it }
     }
 }
 
@@ -367,10 +384,33 @@ fun FastScroller(
 fun AppNavHost(
     viewModel: MusicViewModel,
     innerPadding: PaddingValues,
-    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() }
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
+    deepLink: String? = null,
+    onDeepLinkHandled: () -> Unit = {}
 ) {
     var showNowPlaying by remember { mutableStateOf(false) }
     var miniAlbumArtRect by remember { mutableStateOf<ElementRect?>(null) }
+
+    LaunchedEffect(deepLink) {
+        val raw = deepLink ?: return@LaunchedEffect
+        onDeepLinkHandled()
+
+        val uri = runCatching { Uri.parse(raw) }.getOrNull()
+        val request = uri?.let { IanDeepLinks.parse(it) }
+        if (request == null) {
+            snackbarHostState.showSnackbar("Link IanPlayer tidak dikenali")
+            return@LaunchedEffect
+        }
+
+        val song = viewModel.resolveDeepLinkSong(request.videoId, request.preferVideo)
+        if (song == null) {
+            snackbarHostState.showSnackbar("Gagal membuka link. Cek koneksi lalu coba lagi.")
+            return@LaunchedEffect
+        }
+
+        viewModel.setQueue(listOf(song), startSong = song)
+        showNowPlaying = true
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         ListingScreen(
@@ -2430,7 +2470,7 @@ fun PlaylistDetailView(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 24.dp, bottom = 16.dp, start = 4.dp, end = 4.dp),
+                    .padding(top = 24.dp, bottom = 16.dp, start = 16.dp, end = 16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(

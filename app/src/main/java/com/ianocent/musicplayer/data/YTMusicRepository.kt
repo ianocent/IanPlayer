@@ -1163,9 +1163,47 @@ class YTMusicRepository(context: Context) {
     }
 
     /**
-     * Fetch actual stream URL for a song with placeholder URI.
-     * Called on-demand when song is about to be played.
+     * Builds a playable [Song] from a bare YouTube video id (deep link / share).
+     * Metadata comes from the public oEmbed endpoint (title, channel, art);
+     * duration stays 0 because the player resolves it when the stream starts.
      */
+    suspend fun fetchSongByVideoId(videoId: String, preferVideo: Boolean): Song? = withContext(Dispatchers.IO) {
+        if (!videoId.matches(Regex("^[A-Za-z0-9_-]{11}$"))) return@withContext null
+
+        val watchUrl = "https://www.youtube.com/watch?v=$videoId"
+        val oEmbedUrl = "https://www.youtube.com/oembed?url=${Uri.encode(watchUrl)}&format=json"
+        val raw = get(URL(oEmbedUrl))
+
+        var title = "YouTube video"
+        var artist = "Unknown Artist"
+        var thumb: String = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
+
+        if (raw != null) {
+            try {
+                val json = JSONObject(raw)
+                title = json.optString("title", title).ifBlank { title }
+                artist = json.optString("author_name", artist).ifBlank { artist }
+                thumb = json.optString("thumbnail_url", thumb).ifBlank { thumb }
+            } catch (e: Exception) {
+                Timber.w("YTMusicRepo oEmbed parse failed for $videoId: ${e.message}")
+            }
+        }
+
+        Song(
+            id = videoId.hashCode().toLong(),
+            title = title,
+            artist = artist,
+            album = if (preferVideo) "YouTube" else "YouTube Music",
+            duration = 0L,
+            uri = StreamSources.placeholderUri(videoId),
+            source = StreamSources.YOUTUBE,
+            isStream = true,
+            remoteArtUrl = thumb,
+            remoteId = videoId,
+            isVideo = preferVideo
+        )
+    }
+
     suspend fun resolveStreamUrl(song: Song, highPriority: Boolean = false): String? = withContext(Dispatchers.IO) {
         val videoId = song.remoteId ?: return@withContext null
 

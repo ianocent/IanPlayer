@@ -11,6 +11,18 @@ class NotificationButtonReceiver : BroadcastReceiver() {
         val player = PlaybackService.playerInstance ?: return
 
         when (action) {
+            ACTION_PREV -> player.seekToPrevious()
+            ACTION_PLAY_PAUSE -> {
+                if (player.isPlaying) {
+                    player.pause()
+                } else {
+                    if (player.playbackState == Player.STATE_ENDED) {
+                        player.seekToDefaultPosition()
+                    }
+                    player.play()
+                }
+            }
+            ACTION_NEXT -> player.seekToNext()
             ACTION_SHUFFLE -> {
                 player.shuffleModeEnabled = !player.shuffleModeEnabled
             }
@@ -27,6 +39,9 @@ class NotificationButtonReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_NOTIFICATION_BUTTON = "com.ianocent.musicplayer.NOTIFICATION_BUTTON"
         const val EXTRA_ACTION = "action"
+        const val ACTION_PREV = "prev"
+        const val ACTION_PLAY_PAUSE = "play_pause"
+        const val ACTION_NEXT = "next"
         const val ACTION_SHUFFLE = "shuffle"
         const val ACTION_REPEAT = "repeat"
     }

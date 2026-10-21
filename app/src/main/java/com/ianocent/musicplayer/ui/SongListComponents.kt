@@ -2,6 +2,7 @@ package com.ianocent.musicplayer.ui
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Share
 import com.ianocent.musicplayer.R
 import com.ianocent.musicplayer.ui.glass.glassIconBackdrop
 import com.ianocent.musicplayer.ui.glass.isAppInDark
@@ -71,6 +72,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.ianocent.musicplayer.data.AudioFormat
+import com.ianocent.musicplayer.data.IanDeepLinks
 import com.ianocent.musicplayer.data.Playlist
 import com.ianocent.musicplayer.data.Song
 import com.ianocent.musicplayer.viewmodel.MusicViewModel
@@ -561,6 +563,7 @@ fun SwipeableSongRow(
     onGoToAlbum: ((Song) -> Unit)? = null
 ) {
     val density = LocalDensity.current
+    val context = LocalContext.current
     val swipeThresholdPx = with(density) { 72.dp.toPx() }
     val maxSwipePx = with(density) { 88.dp.toPx() }
 
@@ -788,6 +791,18 @@ fun SwipeableSongRow(
                             Icon(Icons.Rounded.Download, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(12.dp))
                             Text("Download", fontWeight = FontWeight.SemiBold)
+                        }
+
+                        RoundedClickableRow(
+                            onClick = {
+                                showActionDialog = false
+                                IanDeepLinks.shareSong(context, song)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.Share, contentDescription = null, tint = adaptiveColor, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text("Share", fontWeight = FontWeight.SemiBold)
                         }
                     } else {
                         RoundedClickableRow(

@@ -69,6 +69,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.lerp
 import com.ianocent.musicplayer.data.LyricSource
+import com.ianocent.musicplayer.data.IanDeepLinks
 import com.ianocent.musicplayer.data.Song
 import com.ianocent.musicplayer.data.StreamSources
 import com.ianocent.musicplayer.data.ElementRect
@@ -555,6 +556,27 @@ fun NowPlayingScreen(
                                         tint = Color(0xFFE91E63),
                                         modifier = Modifier.size(22.dp).align(Alignment.Center)
                                     )
+                                }
+                                if (s.isStream && !s.remoteId.isNullOrBlank()) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    val shareContext = LocalContext.current
+                                    IanGlassButton(
+                                        config = btnConfig,
+                                        onClick = { IanDeepLinks.shareSong(shareContext, s) },
+                                        modifier = Modifier.size(40.dp)
+                                    ) {
+                                        Box(
+                                            Modifier
+                                                .matchParentSize()
+                                                .glassIconBackdrop(dark = isAppInDark(), accent = backdrop.adaptiveColor)
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Rounded.Share,
+                                            contentDescription = "Share",
+                                            tint = backdrop.adaptiveColor,
+                                            modifier = Modifier.size(20.dp).align(Alignment.Center)
+                                        )
+                                    }
                                 }
                             }
                         }
