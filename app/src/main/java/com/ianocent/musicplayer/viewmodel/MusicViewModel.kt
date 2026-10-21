@@ -21,7 +21,6 @@ import com.ianocent.musicplayer.data.MonthlyRecap
 import com.ianocent.musicplayer.data.MusicRepository
 import com.ianocent.musicplayer.data.Song
 import com.ianocent.musicplayer.data.SongStore
-import com.ianocent.musicplayer.data.SocialSignalListener
 import com.ianocent.musicplayer.player.IanVoiceAssistantService
 import com.ianocent.musicplayer.player.PlaybackService
 import com.ianocent.musicplayer.player.PlayerGateway
@@ -65,9 +64,6 @@ import kotlinx.coroutines.flow.collect
 import android.content.IntentSender
 import android.app.RecoverableSecurityException
 import com.ianocent.musicplayer.data.TidalRepository
-import com.ianocent.musicplayer.data.LocationTracker
-import com.ianocent.musicplayer.data.LocationData
-import com.ianocent.musicplayer.data.FirebaseLocationSync
 import kotlinx.coroutines.*
 import java.util.concurrent.ConcurrentHashMap
 import java.io.InputStream
@@ -82,8 +78,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val ytMusicRepository = YTMusicRepository(application.applicationContext)
     private val tidalRepository = TidalRepository()
     private val songDownloader = SongDownloader(appContext)
-    private val locationTracker = LocationTracker(application.applicationContext)
-    private val firebaseLocationSync = FirebaseLocationSync()
     private val streamResolvers = StreamResolvers(listOf(
         YouTubeStreamResolver(ytMusicRepository),
         TidalStreamResolver(YouTubeStreamResolver(ytMusicRepository)) { query ->
@@ -256,15 +250,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var trendingLoadAttempted = false
     private val preResolvedIds = ConcurrentHashMap.newKeySet<Long>()
 
-    // ---- Location-based features ----
-    val locationData: StateFlow<LocationData?> = locationTracker.location
-    private val _locationCity = MutableStateFlow<String?>(null)
-    val locationCity: StateFlow<String?> = _locationCity
-
-    // Pending location sync — holds song info while waiting for location fix
-    private data class PendingLocationSync(val songTitle: String, val artist: String)
-    private val pendingLocationSync = MutableStateFlow<PendingLocationSync?>(null)
-
     // == Stream songs cache (persist stream song metadata for playlists) ==
     // Owned by SongStore; loaded synchronously at its construction.
     val streamSongsCache: StateFlow<Map<Long, Song>> = songStore.streamSongsCache
@@ -284,8 +269,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 // Mix trending songs with contextual personalized songs
                 val contextualQuery = getContextualQuery()
-                val countryCode = locationData.value?.countryCode ?: "US"
-                _locationCity.value = locationData.value?.city
+                val countryCode = "US"
 
                 val result = ytMusicRepository.fetchHomeSongs({ newSongs ->
                     addToStreamSongsCache(newSongs)
@@ -293,7 +277,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     _trendingSongs.value = merged
                 }, countryCode = countryCode)
 
-                // Add contextual personalization songs (time-based, using location region)
+                // Add contextual personalization songs (time-based)
                 ytMusicRepository.searchSongs(contextualQuery, { contextualSongs ->
                     addToStreamSongsCache(contextualSongs)
                     val merged = mergeById(_trendingSongs.value, contextualSongs)
@@ -316,133 +300,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshTrending() {
         trendingLoadAttempted = false
         fetchTrending(force = true)
-    }
-
-    // ---- Location tracking ----
-    fun startLocationTracking() {
-        locationTracker.startTracking()
-    }
-
-    fun stopLocationTracking() {
-        locationTracker.stopTracking()
-    }
-
-    fun syncLocationToFirebase(songTitle: String, artist: String) {
-        val loc = locationData.value
-        if (loc == null) {
-            Timber.d("syncLocationToFirebase: locationData null, queuing sync for: $songTitle")
-            pendingLocationSync.value = PendingLocationSync(songTitle, artist)
-            return
-        }
-        firebaseLocationSync.syncLocation(loc, songTitle, artist, _userName.value)
-    }
-
-    // ---- For You: personalization from social-media feed signals ----
-    // Signals collected on-device by SocialSignalListener (system notification access:
-    // no mic, no camera, no screen recording, no foreground service). Stored only in
-    // SharedPreferences on this device, pruned after 72h. Opt-in, default off.
-    private val _socialSignalsEnabled = MutableStateFlow(
-        settingsStore.isSocialSignalsEnabled
-    )
-    val socialSignalsEnabled: StateFlow<Boolean> = _socialSignalsEnabled
-
-    private val _socialAccessGranted = MutableStateFlow(false)
-    val socialAccessGranted: StateFlow<Boolean> = _socialAccessGranted
-
-    private val _forYouSignals = MutableStateFlow<List<Pair<String, Long>>>(emptyList())
-    val forYouSignals: StateFlow<List<Pair<String, Long>>> = _forYouSignals
-
-    private val _forYouSongs = MutableStateFlow<List<Song>>(emptyList())
-    val forYouSongs: StateFlow<List<Song>> = _forYouSongs
-
-    private val _isForYouLoading = MutableStateFlow(false)
-    val isForYouLoading: StateFlow<Boolean> = _isForYouLoading
-
-    private var forYouJob: Job? = null
-    private var forYouLoadAttempted = false
-
-    fun setSocialSignalsEnabled(enabled: Boolean) {
-        _socialSignalsEnabled.value = enabled
-        settingsStore.isSocialSignalsEnabled = enabled
-        if (enabled) {
-            refreshSocialAccess()
-            refreshForYou(force = true)
-        } else {
-            forYouJob?.cancel()
-            _forYouSongs.value = emptyList()
-            _forYouSignals.value = emptyList()
-        }
-    }
-
-    fun refreshSocialAccess() {
-        _socialAccessGranted.value = SocialSignalListener.isAccessGranted(appContext)
-    }
-
-    fun clearSocialSignals() {
-        songStore.clearSocialSignals()
-        _forYouSignals.value = emptyList()
-        _forYouSongs.value = emptyList()
-        saveListToPrefs("cached_foryou", emptyList())
-    }
-
-    private fun loadSocialSignals(): List<Pair<String, Long>> = songStore.loadSocialSignals()
-
-    fun refreshForYou(force: Boolean = false) {
-        if (!_socialSignalsEnabled.value) return
-        if (!force && forYouLoadAttempted) return
-        forYouLoadAttempted = true
-
-        forYouJob?.cancel()
-        _isForYouLoading.value = true
-        val stored = loadSocialSignals()
-        _forYouSignals.value = stored
-
-        forYouJob = viewModelScope.launch {
-            // Wait for local songs to load if we're falling back to play counts
-            if (stored.isEmpty() && _songs.value.isEmpty()) {
-                withTimeoutOrNull(2000) {
-                    while (_songs.value.isEmpty() && isActive) delay(100)
-                }
-            }
-
-            val signals = if (stored.isNotEmpty()) stored.take(8) else {
-                _playCounts.value.entries
-                    .sortedByDescending { it.value }
-                    .take(5)
-                    .mapNotNull { (id, _) -> _songs.value.find { it.id == id }?.artist }
-                    .filter { it.isNotBlank() && it != "Unknown Artist" }
-                    .distinct()
-                    .map { it to System.currentTimeMillis() }
-            }
-
-            if (signals.isEmpty() && _forYouSongs.value.isNotEmpty()) {
-                // Don't overwrite existing cache with empty results if we have no signals
-                _isForYouLoading.value = false
-                return@launch
-            }
-
-            val results = mutableListOf<Song>()
-            val seen = mutableSetOf<Long>()
-            for ((signal, _) in signals) {
-                if (!isActive) break
-                try {
-                    val res = ytMusicRepository.searchSongs(signal, {}, gl = "US")
-                    if (res is StreamSearchResult.Success) {
-                        for (s in res.songs) {
-                            if (seen.add(s.id)) results.add(s)
-                            if (results.size >= 24) break
-                        }
-                    }
-                } catch (_: Exception) {}
-                if (results.size >= 24) break
-            }
-
-            if (results.isNotEmpty() || !force) {
-                _forYouSongs.value = results
-                saveListToPrefs("cached_foryou", results)
-            }
-            _isForYouLoading.value = false
-        }
     }
 
     private var preResolveJob: Job? = null
@@ -824,6 +681,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         settingsStore.avatarUri = uri
     }
 
+    private val _bannerUri = MutableStateFlow(settingsStore.bannerUri)
+    val bannerUri: StateFlow<String?> = _bannerUri
+
+    fun setBannerUri(uri: String?) {
+        _bannerUri.value = uri
+        settingsStore.bannerUri = uri
+    }
+
     private val _tabOrder = MutableStateFlow(settingsStore.tabOrder)
     val tabOrder: StateFlow<String> = _tabOrder
 
@@ -987,7 +852,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         // Load cached stream content
         _trendingSongs.value = loadListFromPrefs("cached_trending")
-        _forYouSongs.value = loadListFromPrefs("cached_foryou")
         val cachedGenres = mutableMapOf<String, List<Song>>()
         (genres + moods).forEach { cat ->
             val songs = loadListFromPrefs("cached_genre_${cat.name}")
@@ -1007,7 +871,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         fetchTrending()
-        refreshSocialAccess()
 
         playbackGateway = PlayerGateway(
             context = appContext,
@@ -1026,7 +889,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 _videoMode.value = song.isVideo && song.id !in droppedVideoIds
                 loadArt(song)
                 loadLyric(song)
-                syncLocationToFirebase(song.title, song.artist)
             },
             onBufferingChange = { },
             onIsPlayingChange = { isPlaying ->
@@ -1085,20 +947,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-
-        // Watch for location fix and sync any pending location data
-        viewModelScope.launch {
-            locationData.collect { loc ->
-                if (loc != null) {
-                    val pending = pendingLocationSync.value
-                    if (pending != null) {
-                        Timber.d("Location now available, syncing pending: ${pending.songTitle}")
-                        firebaseLocationSync.syncLocation(loc, pending.songTitle, pending.artist, _userName.value)
-                        pendingLocationSync.value = null
-                    }
-                }
-            }
-        }
     }
 
 
@@ -1119,8 +967,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setQueue(newQueue: List<Song>, startSong: Song? = null) {
         playbackGateway.setQueue(newQueue, startSong)
-        val song = startSong ?: newQueue.firstOrNull()
-        song?.let { syncLocationToFirebase(it.title, it.artist) }
     }
     fun toggleRepeat() = playbackGateway.toggleRepeat()
 
@@ -1128,20 +974,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         Timber.d("MusicViewModel.playSong: ${song.title} - ${song.artist}")
         preResolveJob?.cancel() // Prioritaskan jalur jaringan untuk lagu yang diklik
         playbackGateway.playSong(song)
-        // Sync location to Firebase for admin map
-        syncLocationToFirebase(song.title, song.artist)
     }
 
     fun playNext() {
         playbackGateway.playNext()
-        val song = playbackGateway.currentSong.value
-        song?.let { syncLocationToFirebase(it.title, it.artist) }
     }
 
     fun playPrevious() {
         playbackGateway.playPrevious()
-        val song = playbackGateway.currentSong.value
-        song?.let { syncLocationToFirebase(it.title, it.artist) }
     }
 
     fun playNext(song: Song) {
@@ -1152,7 +992,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             },
             genre = _selectedGenre.value
         ))
-        syncLocationToFirebase(song.title, song.artist)
     }
 
     fun addToQueue(song: Song) = playbackGateway.addToQueue(song)
@@ -1272,7 +1111,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             appContext.unregisterReceiver(receiver)
         }
         playbackGateway.release()
-        locationTracker.stopTracking()
     }
 
     fun reorderPlaylistSongs(playlist: Playlist, fromIndex: Int, toIndex: Int) {

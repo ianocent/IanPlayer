@@ -18,10 +18,6 @@ class SettingsStore(private val prefs: SharedPreferences) {
         get() = prefs.getBoolean(KEY_VOICE_ASSISTANT, false)
         set(value) = prefs.edit().putBoolean(KEY_VOICE_ASSISTANT, value).apply()
 
-    var isSocialSignalsEnabled: Boolean
-        get() = prefs.getBoolean(KEY_SOCIAL_SIGNALS_ENABLED, false)
-        set(value) = prefs.edit().putBoolean(KEY_SOCIAL_SIGNALS_ENABLED, value).apply()
-
     var isPillAtBottom: Boolean
         get() = prefs.getBoolean(KEY_PILL_AT_BOTTOM, false)
         set(value) = prefs.edit().putBoolean(KEY_PILL_AT_BOTTOM, value).apply()
@@ -45,6 +41,10 @@ class SettingsStore(private val prefs: SharedPreferences) {
     var avatarUri: String?
         get() = prefs.getString(KEY_AVATAR_URI, null)
         set(value) = prefs.edit().putString(KEY_AVATAR_URI, value).apply()
+
+    var bannerUri: String?
+        get() = prefs.getString(KEY_BANNER_URI, null)
+        set(value) = prefs.edit().putString(KEY_BANNER_URI, value).apply()
 
     var tabOrder: String
         get() = prefs.getString(KEY_TAB_ORDER, DEFAULT_TAB_ORDER) ?: DEFAULT_TAB_ORDER
@@ -138,13 +138,13 @@ class SettingsStore(private val prefs: SharedPreferences) {
     companion object {
         private const val KEY_DARK_MODE = "is_dark_mode"
         private const val KEY_VOICE_ASSISTANT = "voice_assistant_enabled"
-        private const val KEY_SOCIAL_SIGNALS_ENABLED = "social_signals_enabled"
         private const val KEY_PILL_AT_BOTTOM = "is_pill_at_bottom"
         private const val KEY_MINI_LAYOUT_INDEX = "mini_layout_index"
         private const val KEY_SORT_MODE = "sort_mode"
         private const val KEY_LAST_RECAP_CHECK_TS = "last_recap_check_ts"
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_AVATAR_URI = "avatar_uri"
+        private const val KEY_BANNER_URI = "banner_uri"
         private const val KEY_TAB_ORDER = "tab_order"
         private const val KEY_DONT_SHOW_UPDATE = "dont_show_update"
         private const val KEY_CANVAS_MODE = "canvas_mode"

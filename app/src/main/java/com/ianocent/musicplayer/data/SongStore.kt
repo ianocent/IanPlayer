@@ -198,22 +198,6 @@ class SongStore(
         }
     }
 
-    // == Social signals ==
-    //
-    // Schema shared with SocialSignalListener (NotificationListenerService, cannot
-    // receive constructor injection). Both sides go through the companion functions
-    // below so the {"s","t"} JSON contract has exactly one definition.
-
-    /** Signals within the 72-hour window, newest first. */
-    fun loadSocialSignals(): List<Pair<String, Long>> {
-        val cutoff = System.currentTimeMillis() - SOCIAL_SIGNAL_WINDOW_MS
-        return readSocialSignals(prefs).filter { it.second > cutoff }.sortedByDescending { it.second }
-    }
-
-    fun clearSocialSignals() {
-        prefs.edit().remove(KEY_SOCIAL_SIGNALS).apply()
-    }
-
     companion object {
         const val PREFS_NAME = "ian_player_prefs"
 
@@ -222,7 +206,6 @@ class SongStore(
         private const val KEY_PLAY_COUNTS = "play_counts"
         private const val KEY_PLAY_HISTORY = "play_history"
         private const val KEY_PLAYLISTS = "playlists"
-        private const val KEY_SOCIAL_SIGNALS = "social_signals"
 
         const val KEY_LAST_QUEUE = "last_queue"
         const val KEY_LAST_SONG_ID = "last_song_id"
@@ -262,29 +245,6 @@ class SongStore(
             } catch (_: Exception) { null }
         }
 
-        // == Shared social-signal schema (see loadSocialSignals) ==
-
-        fun readSocialSignals(prefs: SharedPreferences): List<Pair<String, Long>> {
-            val raw = prefs.getString(KEY_SOCIAL_SIGNALS, null) ?: return emptyList()
-            return try {
-                val arr = JSONArray(raw)
-                val list = mutableListOf<Pair<String, Long>>()
-                for (i in 0 until arr.length()) {
-                    val obj = arr.optJSONObject(i) ?: continue
-                    val s = obj.optString("s", "")
-                    if (s.isNotBlank()) list.add(Pair(s, obj.optLong("t", 0L)))
-                }
-                list
-            } catch (_: Exception) { emptyList() }
-        }
-
-        fun writeSocialSignals(prefs: SharedPreferences, signals: List<Pair<String, Long>>) {
-            val arr = JSONArray()
-            signals.forEach { (s, t) ->
-                arr.put(JSONObject().put("s", s).put("t", t))
-            }
-            prefs.edit().putString(KEY_SOCIAL_SIGNALS, arr.toString()).apply()
-        }
 
         // == The one Song codec ==
 

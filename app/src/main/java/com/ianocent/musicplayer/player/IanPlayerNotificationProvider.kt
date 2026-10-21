@@ -57,8 +57,21 @@ class IanPlayerNotificationProvider(context: Context) : MediaNotification.Provid
             .setShowWhen(false)
             .setOngoing(isPlaying)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            // Compact view on Samsung: 0/1/2 → prev, play-pause, next. Expanded adds 3/4.
-            .addAction(notificationButton(NotificationButtonReceiver.ACTION_PREV, "Previous", R.drawable.noun_prev))
+            // Action order: Shuffle - Prev - Pause/Play - Next - Repeat (5-button deck)
+            .addAction(
+                notificationButton(
+                    NotificationButtonReceiver.ACTION_SHUFFLE,
+                    "Shuffle",
+                    R.drawable.noun_shuffle
+                )
+            )
+            .addAction(
+                notificationButton(
+                    NotificationButtonReceiver.ACTION_PREV,
+                    "Previous",
+                    R.drawable.noun_prev
+                )
+            )
             .addAction(
                 notificationButton(
                     NotificationButtonReceiver.ACTION_PLAY_PAUSE,
@@ -66,15 +79,17 @@ class IanPlayerNotificationProvider(context: Context) : MediaNotification.Provid
                     if (isPlaying) R.drawable.noun_pause else R.drawable.noun_play
                 )
             )
-            .addAction(notificationButton(NotificationButtonReceiver.ACTION_NEXT, "Next", R.drawable.noun_next))
             .addAction(
                 notificationButton(
-                    NotificationButtonReceiver.ACTION_SHUFFLE, "Shuffle", R.drawable.noun_shuffle
+                    NotificationButtonReceiver.ACTION_NEXT,
+                    "Next",
+                    R.drawable.noun_next
                 )
             )
             .addAction(
                 notificationButton(
-                    NotificationButtonReceiver.ACTION_REPEAT, "Repeat",
+                    NotificationButtonReceiver.ACTION_REPEAT,
+                    "Repeat",
                     when (repeatMode) {
                         androidx.media3.common.Player.REPEAT_MODE_ONE -> R.drawable.noun_repeat_one
                         androidx.media3.common.Player.REPEAT_MODE_ALL -> R.drawable.noun_repeat_on
@@ -84,7 +99,7 @@ class IanPlayerNotificationProvider(context: Context) : MediaNotification.Provid
             )
             .setStyle(
                 MediaStyleNotificationHelper.MediaStyle(session)
-                    .setShowActionsInCompactView(0, 1, 2)
+                    .setShowActionsInCompactView(0, 1, 2, 3, 4)
             )
 
         return MediaNotification(NOTIFICATION_ID, builder.build())

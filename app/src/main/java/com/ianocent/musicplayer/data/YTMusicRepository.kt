@@ -932,8 +932,41 @@ class YTMusicRepository(context: Context) {
         return result
     }
 
+    private val INDIAN_KEYWORD_REGEX = Regex(
+        "\\b(t-series|tseries|zee music|speed records|yrf music|yrf|sony music india|saregama|tips official|desi music|bollywood|punjabi|hindi|tamil|telugu|bhojpuri|marathi|gujarati|kannada|malayalam|bhangra|garba|qawwali|bhajan|kirtan|mantra|aarti|ghazal|tollywood|kollywood|sandalwood|mollywood|lofi hindi|sad hindi|bollywood lofi|lofi bollywood|punjabi lofi|slowed reverb hindi|desibeats|desihits|indian music|indian pop|indian song|indian songs|badshah|arijit|diljit|neha kakkar|yo yo honey singh|jubin nautiyal|shreya ghoshal|lata mangeshkar|kishore kumar|alka yagnik|udit narayan|kumar sanu|sonu nigam|a.r. rahman|ar rahman|anirudh|pritam|vishal shekhar|mithoon|sachin jigar|guru randhawa|jassie gill|hardy sandhu|sidhu moose wala|karan aujla|amrit maan|parmish verma|garry sandhu|mankirt aulakh|jass manak|tony kakkar|tulsi kumar|dhvani bhanushali|payal dev|asees kaur|jasleen royal|palak muchhal|kanika kapoor|neeti mohan|sunidhi chauhan|monali thakur|shalmali kholgade|shirley setia|jonita gandhi|stebin ben|darshan raval|arman malik|amal mallik|zack knight|divine|raftaar|emiway|mc stan|king|srishti bhandari)\\b",
+        RegexOption.IGNORE_CASE
+    )
+
+    private fun containsIndicScript(text: String): Boolean {
+        for (ch in text) {
+            val code = ch.code
+            if (code in 0x0900..0x097F || // Devanagari
+                code in 0x0980..0x09FF || // Bengali
+                code in 0x0A00..0x0A7F || // Gurmukhi (Punjabi)
+                code in 0x0A80..0x0AFF || // Gujarati
+                code in 0x0B00..0x0B7F || // Oriya
+                code in 0x0B80..0x0BFF || // Tamil
+                code in 0x0C00..0x0C7F || // Telugu
+                code in 0x0C80..0x0CFF || // Kannada
+                code in 0x0D00..0x0D7F || // Malayalam
+                code in 0x0D80..0x0DFF    // Sinhala
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun isIndianContent(title: String, artist: String): Boolean {
+        if (containsIndicScript(title) || containsIndicScript(artist)) return true
+        val combined = "$title $artist".lowercase()
+        if (INDIAN_KEYWORD_REGEX.containsMatchIn(combined)) return true
+        return false
+    }
+
     private fun isCompilation(title: String, artist: String): Boolean {
         if (title.startsWith("Unknown")) return true // unparsed playlist cards (no flexColumns)
+        if (isIndianContent(title, artist)) return true
 
         val combined = "$title $artist".lowercase()
 
@@ -1072,6 +1105,9 @@ class YTMusicRepository(context: Context) {
                 val artist = item.optJSONObject("longBylineText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
                     ?: item.optJSONObject("shortBylineText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
                     ?: "Unknown Artist"
+
+                // No Indian content in the queue, ever
+                if (isIndianContent(title, artist)) continue
 
                 results.add(Song(
                     id = vId.hashCode().toLong(),

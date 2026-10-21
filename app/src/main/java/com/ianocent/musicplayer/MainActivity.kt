@@ -14,7 +14,6 @@ import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.MicNone
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.NightsStay
-import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.RecordVoiceOver
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SelfImprovement
@@ -456,10 +455,9 @@ fun ListingScreen(
     else
         Manifest.permission.READ_EXTERNAL_STORAGE
 
-    // Unified permission request — storage + location + notifications
+    // Unified permission request — storage + notifications
     val requiredPermissions = buildList {
         add(storagePermission)
-        add(Manifest.permission.ACCESS_FINE_LOCATION)
         if (Build.VERSION.SDK_INT >= 33) {
             add(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -469,13 +467,11 @@ fun ListingScreen(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         val storageGranted = results[storagePermission] == true
-        val locationGranted = results[Manifest.permission.ACCESS_FINE_LOCATION] == true
         val notifGranted = results[Manifest.permission.POST_NOTIFICATIONS] != false
 
-        Timber.d("Permissions: storage=$storageGranted, location=$locationGranted, notifications=$notifGranted")
+        Timber.d("Permissions: storage=$storageGranted, notifications=$notifGranted")
         hasPermission = storageGranted
         if (storageGranted) viewModel.loadSongs()
-        if (locationGranted) viewModel.startLocationTracking()
     }
 
     LaunchedEffect(Unit) {
@@ -487,7 +483,6 @@ fun ListingScreen(
             Timber.d("All permissions already granted")
             hasPermission = true
             viewModel.loadSongs()
-            viewModel.startLocationTracking()
         } else {
             Timber.d("Requesting permissions")
             permissionLauncher.launch(requiredPermissions)
@@ -518,9 +513,9 @@ fun ListingScreen(
     val miniLayoutIndex = viewModel.miniLayoutIndex.collectAsState().value
     val isPillAtBottom = viewModel.isPillAtBottom.collectAsState().value
     val isVoiceAssistantEnabled by viewModel.isVoiceAssistantEnabled.collectAsState()
-    val socialSignalsEnabled by viewModel.socialSignalsEnabled.collectAsState()
     val userName by viewModel.userName.collectAsState()
     val avatarUri by viewModel.avatarUri.collectAsState()
+    val bannerUri by viewModel.bannerUri.collectAsState()
     val tabOrder by viewModel.tabOrder.collectAsState()
     val reduceMotion by viewModel.reduceMotion.collectAsState()
     val motionScale by viewModel.motionScale.collectAsState()
@@ -916,12 +911,8 @@ fun ListingScreen(
                             )
                             GlassIconButton(
                                 icon = nounIcon(R.drawable.noun_search),
-                                contentDescription = "Search (long press for admin)",
+                                contentDescription = "Search",
                                 onClick = { isSearchActive = true },
-                                onLongClick = {
-                                    val intent = Intent(ctx, com.ianocent.musicplayer.ui.AdminMapActivity::class.java)
-                                    ctx.startActivity(intent)
-                                },
                                 glassConfig = homeGlassConfig,
                                 state = homeHazeState,
                                 tint = searchIconTint,
@@ -1902,12 +1893,12 @@ fun ListingScreen(
             onPillPositionChange = { viewModel.setPillAtBottom(it) },
             isVoiceAssistantEnabled = isVoiceAssistantEnabled,
             onVoiceAssistantToggle = { viewModel.toggleVoiceAssistant() },
-            socialSignalsEnabled = socialSignalsEnabled,
-            onSocialSignalsToggle = { viewModel.setSocialSignalsEnabled(!socialSignalsEnabled) },
             userName = userName,
             onUserNameChange = { viewModel.setUserName(it) },
             avatarUri = avatarUri,
             onAvatarChange = { viewModel.setAvatarUri(it) },
+            bannerUri = bannerUri,
+            onBannerChange = { viewModel.setBannerUri(it) },
             tabOrder = tabOrder,
             onTabOrderChange = { viewModel.setTabOrder(it) },
             reduceMotion = reduceMotion,
@@ -3692,80 +3683,6 @@ fun TrendingCard(
 }
 
 @Composable
-fun ForYouSongCard(
-    song: com.ianocent.musicplayer.data.Song,
-    queueSongs: List<com.ianocent.musicplayer.data.Song>,
-    viewModel: MusicViewModel,
-    adaptiveColor: Color,
-    modifier: Modifier = Modifier
-) {
-    var art by remember(song.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
-    LaunchedEffect(song.id) {
-        viewModel.getHighResArt(song) { b -> art = b }
-    }
-
-    Card(
-        modifier = modifier
-            .width(135.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .clickable { viewModel.setQueue(queueSongs, startSong = song) },
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
-        ),
-        shape = RoundedCornerShape(24.dp)
-    ) {
-        Column {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
-                    .clip(RoundedCornerShape(24.dp))
-            ) {
-                if (art != null) {
-                    Image(
-                        bitmap = art!!.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(adaptiveColor.copy(alpha = 0.1f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Rounded.MusicNote,
-                            null,
-                            tint = adaptiveColor.copy(alpha = 0.4f),
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-                }
-            }
-            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-                Text(
-                    song.title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    song.artist,
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                )
-            }
-        }
-    }
-}
-
-@Composable
 fun CategoryCard(
     category: MusicViewModel.Category,
     isLoading: Boolean,
@@ -3989,12 +3906,12 @@ private fun SettingsBottomSheet(
     onPillPositionChange: (Boolean) -> Unit,
     isVoiceAssistantEnabled: Boolean,
     onVoiceAssistantToggle: () -> Unit,
-    socialSignalsEnabled: Boolean,
-    onSocialSignalsToggle: () -> Unit,
     userName: String,
     onUserNameChange: (String) -> Unit,
     avatarUri: String?,
     onAvatarChange: (String?) -> Unit,
+    bannerUri: String?,
+    onBannerChange: (String?) -> Unit,
     tabOrder: String,
     onTabOrderChange: (String) -> Unit,
     reduceMotion: Boolean,
@@ -4019,6 +3936,7 @@ private fun SettingsBottomSheet(
     val layoutNames = listOf("Default", "Floating", "Compact")
     var editingName by remember { mutableStateOf(userName) }
     var pickedAvatarUri by remember { mutableStateOf(avatarUri) }
+    var pickedBannerUri by remember { mutableStateOf(bannerUri) }
     val focusManager = LocalFocusManager.current
     val tabIds = listOf("songs" to "Songs", "albums" to "Albums", "stream" to "Stream", "playlists" to "Playlists")
     var currentTabOrder by remember { mutableStateOf(tabOrder.split(",")) }
@@ -4034,6 +3952,20 @@ private fun SettingsBottomSheet(
             } catch (_: Exception) {}
             pickedAvatarUri = it.toString()
             onAvatarChange(it.toString())
+        }
+    }
+
+    val bannerPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    it, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
+            pickedBannerUri = it.toString()
+            onBannerChange(it.toString())
         }
     }
 
@@ -4080,77 +4012,131 @@ private fun SettingsBottomSheet(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-            // User Profile Section (One UI style)
-            Row(
+            // User Profile Section (Banner + Avatar + Username)
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 24.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(bottom = 24.dp)
             ) {
-                // Avatar circle with image or first letter
+                Text(
+                    text = "Your Profile",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(bottom = 10.dp)
+                )
+
+                // Banner Card
                 Box(
                     modifier = Modifier
-                        .size(64.dp)
+                        .fillMaxWidth()
+                        .height(110.dp)
                         .clip(RoundedCornerShape(20.dp))
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
-                        .clickable { avatarPicker.launch("image/*") },
-                    contentAlignment = Alignment.Center
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+                                    MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f)
+                                )
+                            )
+                        )
+                        .clickable { bannerPicker.launch("image/*") }
                 ) {
-                    if (pickedAvatarUri != null) {
+                    if (pickedBannerUri != null) {
                         coil.compose.AsyncImage(
-                            model = pickedAvatarUri,
-                            contentDescription = "Avatar",
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clip(RoundedCornerShape(20.dp)),
+                            model = pickedBannerUri,
+                            contentDescription = "Profile Banner",
+                            modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Crop
                         )
-                    } else {
-                        Text(
-                            text = editingName.firstOrNull()?.uppercase() ?: "?",
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                    }
+                    // Overlay tint & banner edit prompt
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.25f)),
+                        contentAlignment = Alignment.TopEnd
+                    ) {
+                        IconButton(
+                            onClick = { bannerPicker.launch("image/*") },
+                            modifier = Modifier
+                                .padding(8.dp)
+                                .size(32.dp)
+                                .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = nounIcon(R.drawable.noun_image),
+                                contentDescription = "Change Banner",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+
+                    // Avatar positioned over banner bottom-left
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(start = 16.dp, bottom = 12.dp)
+                            .size(60.dp)
+                            .clip(CircleShape)
+                            .border(2.5.dp, Color.White, CircleShape)
+                            .background(MaterialTheme.colorScheme.primaryContainer)
+                            .clickable { avatarPicker.launch("image/*") },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (pickedAvatarUri != null) {
+                            coil.compose.AsyncImage(
+                                model = pickedAvatarUri,
+                                contentDescription = "Avatar",
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(CircleShape),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Text(
+                                text = editingName.firstOrNull()?.uppercase() ?: "?",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
                     }
                 }
-                Spacer(modifier = Modifier.width(16.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Your Profile",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    BasicTextField(
-                        value = editingName,
-                        onValueChange = { editingName = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        textStyle = MaterialTheme.typography.bodyLarge.copy(
-                            color = MaterialTheme.colorScheme.onSurface
-                        ),
-                        singleLine = true,
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = {
-                            onUserNameChange(editingName)
-                            focusManager.clearFocus()
-                        }),
-                        decorationBox = { innerTextField ->
-                            if (editingName.isEmpty()) {
-                                Text(
-                                    "Set your name",
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                                )
-                            }
-                            innerTextField()
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Username Input
+                BasicTextField(
+                    value = editingName,
+                    onValueChange = { editingName = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    singleLine = true,
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = {
+                        onUserNameChange(editingName)
+                        focusManager.clearFocus()
+                    }),
+                    decorationBox = { innerTextField ->
+                        if (editingName.isEmpty()) {
+                            Text(
+                                "Set your username",
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                            )
                         }
-                    )
-                }
+                        innerTextField()
+                    }
+                )
             }
 
             HorizontalDivider(modifier = Modifier.padding(bottom = 16.dp))
@@ -4298,43 +4284,6 @@ private fun SettingsBottomSheet(
                 Switch(
                     checked = isVoiceAssistantEnabled,
                     onCheckedChange = { onVoiceAssistantToggle() }
-                )
-            }
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-            // Social Signals
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable { onSocialSignalsToggle() }
-                    .padding(vertical = 14.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Rounded.NotificationsActive,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "Social Signals",
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                        Text(
-                            text = "Recommendations from your social feed",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                    }
-                }
-                Switch(
-                    checked = socialSignalsEnabled,
-                    onCheckedChange = { onSocialSignalsToggle() }
                 )
             }
 

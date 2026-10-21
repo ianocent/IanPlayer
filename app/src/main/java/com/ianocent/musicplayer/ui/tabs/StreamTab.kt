@@ -138,7 +138,6 @@ import com.ianocent.musicplayer.ResponsiveSnapList
 import com.ianocent.musicplayer.DraggableScrollbar
 import com.ianocent.musicplayer.TrendingCard
 import com.ianocent.musicplayer.CategoryCard
-import com.ianocent.musicplayer.ForYouSongCard
 
 /** Small labelled divider for the grouped stream-search results. */
 @Composable
@@ -168,7 +167,6 @@ fun StreamTabContent(
                         val streamGridScrollState = rememberScrollState()
                         // Keep these states outside of conditional blocks but within tab scope,
                         // or better yet, use rememberSaveable to survive tab switching.
-                        val forYouLazyListState = rememberLazyListState()
                         val moodsLazyListState = rememberLazyListState()
 
                         val filterActive = streamFilterArtist != null || streamFilterAlbum != null
@@ -321,32 +319,10 @@ fun StreamTabContent(
                                     ) {
                                         Spacer(Modifier.height(12.dp))
 
-                                        // For You — personalization from social feed signals
-                                        val forYouSongs by viewModel.forYouSongs.collectAsState()
-                                        val isForYouLoading by viewModel.isForYouLoading.collectAsState()
-                                        val socialSignalsEnabled by viewModel.socialSignalsEnabled.collectAsState()
-                                        val socialAccessGranted by viewModel.socialAccessGranted.collectAsState()
-                                        val forYouSignals by viewModel.forYouSignals.collectAsState()
-
-                                        val lifecycleOwner = LocalLifecycleOwner.current
-                                        val appContext = LocalContext.current
-
-                                        LaunchedEffect(Unit) {
-                                            viewModel.refreshSocialAccess()
-                                            viewModel.refreshForYou()
-                                        }
-
-                                        DisposableEffect(lifecycleOwner) {
-                                            val observer = LifecycleEventObserver { _, event ->
-                                                if (event == Lifecycle.Event.ON_RESUME) {
-                                                    viewModel.refreshSocialAccess()
-                                                    viewModel.refreshForYou(force = true)
-                                                    viewModel.refreshTrending()
-                                                }
-                                            }
-                                            lifecycleOwner.lifecycle.addObserver(observer)
-                                            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-                                        }
+                                        // User Profile Header
+                                        val userName by viewModel.userName.collectAsState()
+                                        val avatarUri by viewModel.avatarUri.collectAsState()
+                                        val bannerUri by viewModel.bannerUri.collectAsState()
 
                                         Card(
                                             modifier = Modifier
@@ -358,82 +334,84 @@ fun StreamTabContent(
                                             ),
                                             shape = RoundedCornerShape(20.dp)
                                         ) {
-                                            Column(Modifier.padding(14.dp)) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Icon(Icons.Rounded.AutoAwesome, null, tint = adaptiveColor, modifier = Modifier.size(18.dp))
-                                                    Spacer(Modifier.width(8.dp))
-                                                    Text(
-                                                        "For You",
-                                                        style = MaterialTheme.typography.titleMedium,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = adaptiveColor
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(130.dp)
+                                                    .clip(RoundedCornerShape(20.dp))
+                                                    .background(
+                                                        Brush.horizontalGradient(
+                                                            listOf(
+                                                                adaptiveColor.copy(alpha = 0.8f),
+                                                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                                            )
+                                                        )
                                                     )
-                                                    Spacer(Modifier.weight(1f))
-                                                    if (socialSignalsEnabled && socialAccessGranted && forYouSignals.isNotEmpty()) {
-                                                        TextButton(onClick = { viewModel.clearSocialSignals() }) {
-                                                            Text("Clear", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                                                        }
-                                                    }
+                                            ) {
+                                                if (bannerUri != null) {
+                                                    coil.compose.AsyncImage(
+                                                        model = bannerUri,
+                                                        contentDescription = "Profile Banner",
+                                                        modifier = Modifier.fillMaxSize(),
+                                                        contentScale = ContentScale.Crop
+                                                    )
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .background(Color.Black.copy(alpha = 0.3f))
+                                                    )
                                                 }
-//                                                Spacer(Modifier.height(2.dp))
-//                                                Text(
-//                                                    "Music from what you scroll past on social media. Stays on your phone. No mic.",
-//                                                    style = MaterialTheme.typography.bodySmall,
-//                                                    color = Color.Gray
-//                                                )
-                                                Spacer(Modifier.height(10.dp))
 
-                                                if (!socialSignalsEnabled) {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        Text(
-                                                            "Match songs to artists you see on your feed",
-                                                            modifier = Modifier.weight(1f),
-                                                            style = MaterialTheme.typography.bodyMedium,
-                                                            color = adaptiveColor.copy(alpha = 0.85f)
-                                                        )
-                                                        Button(
-                                                            onClick = { viewModel.setSocialSignalsEnabled(true) },
-                                                            colors = ButtonDefaults.buttonColors(containerColor = adaptiveColor.copy(alpha = 0.2f), contentColor = adaptiveColor)
-                                                        ) { Text("Enable") }
-                                                    }
-                                                } else if (!socialAccessGranted) {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        Text(
-                                                            "One-time system grant needed to read your feed",
-                                                            modifier = Modifier.weight(1f),
-                                                            style = MaterialTheme.typography.bodyMedium,
-                                                            color = adaptiveColor.copy(alpha = 0.85f)
-                                                        )
-                                                        Button(
-                                                            onClick = { appContext.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
-                                                            colors = ButtonDefaults.buttonColors(containerColor = adaptiveColor.copy(alpha = 0.2f), contentColor = adaptiveColor)
-                                                        ) { Text("Connect") }
-                                                    }
-                                                } else if (isForYouLoading && forYouSongs.isEmpty()) {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = adaptiveColor)
-                                                        Spacer(Modifier.width(10.dp))
-                                                        Text("Reading your feed…", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
-                                                    }
-                                                } else if (forYouSongs.isEmpty()) {
-                                                    Text(
-                                                        "Nothing yet. Songs you see on social media will show up here.",
-                                                        style = MaterialTheme.typography.bodyMedium,
-                                                        color = Color.Gray
-                                                    )
-                                                } else {
-                                                    LazyRow(
-                                                        state = forYouLazyListState,
-                                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .padding(16.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(64.dp)
+                                                            .clip(CircleShape)
+                                                            .border(2.dp, Color.White.copy(alpha = 0.8f), CircleShape)
+                                                            .background(MaterialTheme.colorScheme.primaryContainer),
+                                                        contentAlignment = Alignment.Center
                                                     ) {
-                                                        items(forYouSongs) { song ->
-                                                            ForYouSongCard(
-                                                                song = song,
-                                                                queueSongs = forYouSongs,
-                                                                viewModel = viewModel,
-                                                                adaptiveColor = adaptiveColor
+                                                        if (avatarUri != null) {
+                                                            coil.compose.AsyncImage(
+                                                                model = avatarUri,
+                                                                contentDescription = "Avatar",
+                                                                modifier = Modifier
+                                                                    .fillMaxSize()
+                                                                    .clip(CircleShape),
+                                                                contentScale = ContentScale.Crop
+                                                            )
+                                                        } else {
+                                                            Text(
+                                                                text = userName.firstOrNull()?.uppercase() ?: "I",
+                                                                style = MaterialTheme.typography.headlineMedium,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = MaterialTheme.colorScheme.onPrimaryContainer
                                                             )
                                                         }
+                                                    }
+
+                                                    Spacer(Modifier.width(16.dp))
+
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = if (userName.isNotBlank()) userName else "Ian Listener",
+                                                            style = MaterialTheme.typography.titleLarge,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color.White,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        Spacer(Modifier.height(2.dp))
+                                                        Text(
+                                                            text = "Explore & Stream Music",
+                                                            style = MaterialTheme.typography.bodyMedium,
+                                                            color = Color.White.copy(alpha = 0.8f)
+                                                        )
                                                     }
                                                 }
                                             }
@@ -512,33 +490,6 @@ fun StreamTabContent(
 
                                         Spacer(Modifier.height(20.dp))
 
-                                        // Popular Near You section
-                                        val locationCity by viewModel.locationCity.collectAsState()
-                                        if (locationCity != null && trendingSongs.isNotEmpty()) {
-                                            Text(
-                                                "Popular in $locationCity",
-                                                modifier = Modifier.padding(horizontal = 16.dp),
-                                                style = MaterialTheme.typography.titleMedium,
-                                                fontWeight = FontWeight.Bold,
-                                                color = adaptiveColor
-                                            )
-                                            Spacer(Modifier.height(8.dp))
-                                            androidx.compose.foundation.lazy.LazyRow(
-                                                contentPadding = PaddingValues(horizontal = 12.dp),
-                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                            ) {
-                                                items(trendingSongs.take(8)) { song ->
-                                                    com.ianocent.musicplayer.TrendingCard(
-                                                        song = song,
-                                                        viewModel = viewModel,
-                                                        adaptiveColor = adaptiveColor,
-                                                        modifier = Modifier.width(160.dp)
-                                                    )
-                                                }
-                                            }
-                                            Spacer(Modifier.height(20.dp))
-                                        }
-
                                         // Trending section
                                         if (isTrendingLoading && trendingSongs.isEmpty()) {
                                             Box(
@@ -568,7 +519,7 @@ fun StreamTabContent(
                                             )
                                             Spacer(Modifier.height(2.dp))
                                             Text(
-                                                "No account needed — top US/UK chart hits, refreshed daily. For You mixes in songs from your social feed.",
+                                                "No account needed — top US/UK chart hits, refreshed daily.",
                                                 modifier = Modifier.padding(horizontal = 16.dp),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = Color.Gray

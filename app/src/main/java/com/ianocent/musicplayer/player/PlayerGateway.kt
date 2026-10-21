@@ -1285,15 +1285,13 @@ class PlayerGateway(
 
     data class AutoFillContext(
         val source: AutoFillSource = AutoFillSource.Default,
-        val genre: String? = null,
-        val isFromSocialSignal: Boolean = false
+        val genre: String? = null
     )
 
     enum class AutoFillSource {
         Default,
         Playlist,
-        Genre,
-        SocialSignal
+        Genre
     }
 
     companion object {

@@ -32,6 +32,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        setMediaNotificationProvider(IanPlayerNotificationProvider(this))
         registerHeadsetReceiver()
         createNotificationChannel()
         registerNotificationReceiver()
