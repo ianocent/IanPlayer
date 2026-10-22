@@ -78,7 +78,9 @@ fun PlayerControlsBar(
                 onClick = onPrevious,
                 accent = accentColor,
                 dark = dark,
-                tint = defaultIconTint,
+                // Takes the album-art—derived accent like the rest of the bar
+                // so prev/next read as part of the active color beats.
+                tint = accentColor,
                 buttonSize = 48.dp,
                 iconSize = 24.dp
             )
@@ -89,7 +91,7 @@ fun PlayerControlsBar(
                 onClick = onNext,
                 accent = accentColor,
                 dark = dark,
-                tint = defaultIconTint,
+                tint = accentColor,
                 buttonSize = 48.dp,
                 iconSize = 24.dp
             )

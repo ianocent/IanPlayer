@@ -1,0 +1,39 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- Dot of 'i' -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M 30,16 C 33.3,16 36,18.7 36,22 C 36,25.3 33.3,28 30,28 C 26.7,28 24,25.3 24,22 C 24,18.7 26.7,16 30,16 Z" />
+
+    <!-- Main logo wave 'i~n' -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M 10,34 H 20 C 27,34 22,48 22,58 V 68 C 22,78 28,84 36,84 C 44,84 48,76 48,68 V 32 C 48,22 54,16 62,16 C 70,16 74,22 74,32 V 66 C 74,76 78,82 86,82 H 90" />
+
+    <!-- Outer motion accents -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M 32,32 C 38,34 42,40 40,46" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M 76,22 C 82,28 84,36 82,44" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M 32,76 C 36,82 42,84 48,82" />
+</vector>

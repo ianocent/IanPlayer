@@ -24,6 +24,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
@@ -381,7 +382,17 @@ fun NowPlayingScreen(
                                 handleBack()
                             } else {
                                 coroutineScope.launch {
-                                    if (uiState.prefs.reduceMotion) offsetY.snapTo(0f) else offsetY.animateTo(0f, animationSpec = spring())
+                                    // No bounce: the pane presses back down with
+                                    // one smooth stroke, like glass settling into
+                                    // its frame after a push.
+                                    if (uiState.prefs.reduceMotion) offsetY.snapTo(0f)
+                                    else offsetY.animateTo(
+                                        0f,
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioNoBouncy,
+                                            stiffness = Spring.StiffnessMediumLow
+                                        )
+                                    )
                                 }
                             }
                         },
@@ -406,7 +417,34 @@ fun NowPlayingScreen(
                     accentColor = backdrop.adaptiveColor
                 )
             } else {
-            Row(verticalAlignment = Alignment.Top) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Soft ambient glow behind the album art, tinted from the
+                // artwork (effectiveAmbient). Fades in with the hero morph so
+                // the halo never fights the fly-in animation.
+                Box(modifier = Modifier.size(110.dp), contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .size(190.dp)
+                            .graphicsLayer {
+                                alpha = if (initialAlbumArtRect != null) heroAnimProgress.value else 1f
+                            }
+                            .blur(24.dp)
+                            .background(
+                                // Soft ambient light, NOT a hard rim: barely
+                                // visible where the cover edge is, peaking at
+                                // ~35% alpha just outside it, then falling
+                                // through shade stops so it dissolves into
+                                // whatever (canvas/video) sits behind.
+                                Brush.radialGradient(
+                                    0f to Color.Transparent,
+                                    0.50f to Color.Transparent,
+                                    0.58f to effectiveAmbient.copy(alpha = 0.35f),
+                                    0.75f to effectiveAmbient.copy(alpha = 0.12f),
+                                    0.88f to effectiveAmbient.copy(alpha = 0.05f),
+                                    1f to Color.Transparent
+                                )
+                            )
+                    )
                 Box(
                     modifier = Modifier
                         .size(110.dp)
@@ -480,6 +518,7 @@ fun NowPlayingScreen(
                         }
                     }
                 }
+                }
 
                 Spacer(modifier = Modifier.width(16.dp))
 
@@ -493,90 +532,27 @@ fun NowPlayingScreen(
                     ) {
                         Text("Song by :", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                         song?.let { s ->
-                            val liked = uiState.prefs.isFavorite
-                            val btnConfig = glassConfig.copy(
-                                cornerRadius = 20f, blurRadius = 12f, vibrancy = 0.3f
-                            )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                // Canvas mode button hidden for now (no design direction yet).
-                                /*
+                            if (s.isStream && !s.remoteId.isNullOrBlank()) {
+                                val btnConfig = glassConfig.copy(
+                                    cornerRadius = 20f, blurRadius = 12f, vibrancy = 0.3f
+                                )
+                                val shareContext = LocalContext.current
                                 IanGlassButton(
                                     config = btnConfig,
-                                    onClick = {
-                                        viewModel.setCanvasMode(
-                                            if (canvasIsOn) SettingsStore.CANVAS_OFF else preferredLiveMode
-                                        )
-                                    },
-                                    modifier = Modifier.size(40.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.AutoAwesome,
-                                        contentDescription = "Canvas",
-                                        tint = if (uiState.visuals.canvasMode != null) backdrop.adaptiveColor else Color.Gray,
-                                        modifier = Modifier.size(22.dp).align(Alignment.Center)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                */
-                                IanGlassButton(
-                                    config = btnConfig,
-                                    onClick = { viewModel.toggleFavorite(s.id) },
+                                    onClick = { IanDeepLinks.shareSong(shareContext, s) },
                                     modifier = Modifier.size(40.dp)
                                 ) {
                                     Box(
                                         Modifier
                                             .matchParentSize()
-                                            .glassIconBackdrop(
-                                                dark = isAppInDark(),
-                                                accent = if (liked) Color(0xFFE91E63) else Color.Gray,
-                                                active = liked
-                                            )
+                                            .glassIconBackdrop(dark = isAppInDark(), accent = backdrop.adaptiveColor)
                                     )
                                     Icon(
-                                        imageVector = if (liked) nounIcon(R.drawable.noun_love) else nounIcon(R.drawable.noun_love_outline),
-                                        contentDescription = if (liked) "Unlike" else "Like",
-                                        tint = if (liked) Color(0xFFE91E63) else Color.Gray,
-                                        modifier = Modifier.size(22.dp).align(Alignment.Center)
+                                        imageVector = Icons.Rounded.Share,
+                                        contentDescription = "Share",
+                                        tint = backdrop.adaptiveColor,
+                                        modifier = Modifier.size(20.dp).align(Alignment.Center)
                                     )
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                IanGlassButton(
-                                    config = btnConfig,
-                                    onClick = { showWaveRecordSheet = true },
-                                    modifier = Modifier.size(40.dp)
-                                ) {
-                                    Box(
-                                        Modifier
-                                            .matchParentSize()
-                                            .glassIconBackdrop(dark = isAppInDark(), accent = Color(0xFFE91E63))
-                                    )
-                                    Icon(
-                                        imageVector = nounIcon(R.drawable.noun_record),
-                                        contentDescription = "Record",
-                                        tint = Color(0xFFE91E63),
-                                        modifier = Modifier.size(22.dp).align(Alignment.Center)
-                                    )
-                                }
-                                if (s.isStream && !s.remoteId.isNullOrBlank()) {
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    val shareContext = LocalContext.current
-                                    IanGlassButton(
-                                        config = btnConfig,
-                                        onClick = { IanDeepLinks.shareSong(shareContext, s) },
-                                        modifier = Modifier.size(40.dp)
-                                    ) {
-                                        Box(
-                                            Modifier
-                                                .matchParentSize()
-                                                .glassIconBackdrop(dark = isAppInDark(), accent = backdrop.adaptiveColor)
-                                        )
-                                        Icon(
-                                            imageVector = Icons.Rounded.Share,
-                                            contentDescription = "Share",
-                                            tint = backdrop.adaptiveColor,
-                                            modifier = Modifier.size(20.dp).align(Alignment.Center)
-                                        )
-                                    }
                                 }
                             }
                         }
@@ -655,7 +631,12 @@ fun NowPlayingScreen(
                     if (lyricWeight > 0.02f) {
                         Box(modifier = Modifier.fillMaxSize()) {
                             when {
-                                isLyricLoading -> SkeletonLyricLoader(adaptiveColor = backdrop.adaptiveColor, reduceMotion = uiState.prefs.reduceMotion)
+                                // Skeleton only when there is nothing stale to
+                                // keep on screen — cycling sources keeps the old
+                                // lyric visible instead of flashing placeholder
+                                // bars until the fetch lands.
+                                isLyricLoading && syncedLyric.isNullOrEmpty() && plainLyric.isNullOrBlank() ->
+                                    SkeletonLyricLoader(adaptiveColor = backdrop.adaptiveColor, reduceMotion = uiState.prefs.reduceMotion)
                                 !syncedLyric.isNullOrEmpty() -> SyncedLyricView(
                                     lines = syncedLyric!!,
                                     positionState = positionState,
@@ -706,7 +687,12 @@ fun NowPlayingScreen(
                 // Upnext toggle
                 UpnextSectionHeader(
                     isExpanded = isUpnextExpanded,
-                    onToggle = { isUpnextExpanded = !isUpnextExpanded }
+                    hasSong = song != null,
+                    isLiked = uiState.prefs.isFavorite,
+                    accentColor = backdrop.adaptiveColor,
+                    onToggle = { isUpnextExpanded = !isUpnextExpanded },
+                    onToggleLike = { song?.let { viewModel.toggleFavorite(it.id) } },
+                    onOpenRecord = { showWaveRecordSheet = true }
                 )
                 Spacer(modifier = Modifier.height(6.dp))
 
@@ -1215,7 +1201,7 @@ private fun AlbumArtTimer(
 @Composable
 fun SkeletonLyricLoader(adaptiveColor: Color, reduceMotion: Boolean = false) {
     if (reduceMotion) {
-        Box(Modifier.fillMaxSize().background(adaptiveColor.copy(alpha = 0.2f)))
+        Box(Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)).background(adaptiveColor.copy(alpha = 0.15f)))
         return
     }
 

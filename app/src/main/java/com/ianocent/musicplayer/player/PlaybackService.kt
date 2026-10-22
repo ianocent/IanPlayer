@@ -16,13 +16,19 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.LoadControl
 import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
+import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.ianocent.musicplayer.MainActivity
+import com.ianocent.musicplayer.R
 
+@OptIn(UnstableApi::class)
 class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private var player: ExoPlayer? = null
@@ -83,15 +89,42 @@ class PlaybackService : MediaSessionService() {
                             audioSessionId = exoPlayer.audioSessionId
                         }
                     }
+
+                    override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+                        updateMediaSessionCustomLayout()
+                    }
+
+                    override fun onRepeatModeChanged(repeatMode: Int) {
+                        updateMediaSessionCustomLayout()
+                    }
                 })
             }
         val sessionIntent = Intent(this, MainActivity::class.java).let {
             PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
+
+        val shuffleCmd = SessionCommand(CUSTOM_CMD_SHUFFLE, Bundle.EMPTY)
+        val repeatCmd = SessionCommand(CUSTOM_CMD_REPEAT, Bundle.EMPTY)
+
         mediaSession = MediaSession.Builder(this, player!!)
             .setSessionActivity(sessionIntent)
             .setId("IanPlayerSession")
             .setCallback(object : MediaSession.Callback {
+                override fun onConnect(
+                    session: MediaSession,
+                    controller: MediaSession.ControllerInfo
+                ): MediaSession.ConnectionResult {
+                    val connectionResult = super.onConnect(session, controller)
+                    val availableSessionCommands = connectionResult.availableSessionCommands.buildUpon()
+                        .add(shuffleCmd)
+                        .add(repeatCmd)
+                        .build()
+                    return MediaSession.ConnectionResult.accept(
+                        availableSessionCommands,
+                        connectionResult.availablePlayerCommands
+                    )
+                }
+
                 override fun onCustomCommand(
                     session: MediaSession,
                     controller: MediaSession.ControllerInfo,
@@ -102,6 +135,7 @@ class PlaybackService : MediaSessionService() {
                         CUSTOM_CMD_SHUFFLE -> {
                             val p = player ?: return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                             p.shuffleModeEnabled = !p.shuffleModeEnabled
+                            updateMediaSessionCustomLayout()
                         }
                         CUSTOM_CMD_REPEAT -> {
                             val p = player ?: return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
@@ -110,12 +144,49 @@ class PlaybackService : MediaSessionService() {
                                 Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
                                 else -> Player.REPEAT_MODE_OFF
                             }
+                            updateMediaSessionCustomLayout()
                         }
                     }
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
             })
             .build()
+
+        updateMediaSessionCustomLayout()
+    }
+
+    private fun updateMediaSessionCustomLayout() {
+        val p = player ?: return
+        val isShuffle = p.shuffleModeEnabled
+        val repeatMode = p.repeatMode
+
+        val shuffleIcon = if (isShuffle) R.drawable.noun_shuffle else R.drawable.noun_shuffle_off
+
+        val shuffleButton = CommandButton.Builder()
+            .setDisplayName(if (isShuffle) "Shuffle On" else "Shuffle Off")
+            .setSessionCommand(SessionCommand(CUSTOM_CMD_SHUFFLE, Bundle.EMPTY))
+            .setIconResId(shuffleIcon)
+            .setEnabled(true)
+            .build()
+
+        val repeatIcon = when (repeatMode) {
+            Player.REPEAT_MODE_ONE -> R.drawable.noun_repeat_one
+            Player.REPEAT_MODE_ALL -> R.drawable.noun_repeat_on
+            else -> R.drawable.noun_repeat_off
+        }
+        val repeatTitle = when (repeatMode) {
+            Player.REPEAT_MODE_ONE -> "Repeat One"
+            Player.REPEAT_MODE_ALL -> "Repeat All"
+            else -> "Repeat Off"
+        }
+        val repeatButton = CommandButton.Builder()
+            .setDisplayName(repeatTitle)
+            .setSessionCommand(SessionCommand(CUSTOM_CMD_REPEAT, Bundle.EMPTY))
+            .setIconResId(repeatIcon)
+            .setEnabled(true)
+            .build()
+
+        mediaSession?.setCustomLayout(ImmutableList.of(shuffleButton, repeatButton))
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {

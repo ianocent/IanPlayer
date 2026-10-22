@@ -19,11 +19,11 @@ class SettingsStore(private val prefs: SharedPreferences) {
         set(value) = prefs.edit().putBoolean(KEY_VOICE_ASSISTANT, value).apply()
 
     var isPillAtBottom: Boolean
-        get() = prefs.getBoolean(KEY_PILL_AT_BOTTOM, false)
+        get() = prefs.getBoolean(KEY_PILL_AT_BOTTOM, true)
         set(value) = prefs.edit().putBoolean(KEY_PILL_AT_BOTTOM, value).apply()
 
     var miniLayoutIndex: Int
-        get() = prefs.getInt(KEY_MINI_LAYOUT_INDEX, 0)
+        get() = prefs.getInt(KEY_MINI_LAYOUT_INDEX, 2)
         set(value) = prefs.edit().putInt(KEY_MINI_LAYOUT_INDEX, value).apply()
 
     var sortMode: Int
@@ -108,7 +108,7 @@ class SettingsStore(private val prefs: SharedPreferences) {
         set(value) = prefs.edit().putBoolean(KEY_REDUCE_MOTION, value).apply()
 
     var glassEnabled: Boolean
-        get() = prefs.getBoolean(KEY_GLASS_ENABLED, false)
+        get() = prefs.getBoolean(KEY_GLASS_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_GLASS_ENABLED, value).apply()
 
     /**
@@ -188,7 +188,7 @@ class SettingsStore(private val prefs: SharedPreferences) {
         private const val KEY_SEEK_BAR_STYLE = "seek_bar_style"
         private const val KEY_LYRICS_STYLE = "lyrics_style"
         private const val KEY_CROSSFADE_DURATION_MS = "crossfade_duration_ms"
-        const val DEFAULT_TAB_ORDER = "songs,albums,stream,playlists"
+        const val DEFAULT_TAB_ORDER = "stream,songs,playlists,albums"
 
         const val CROSSFADE_OFF = 0
         const val CROSSFADE_100 = 100

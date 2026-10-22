@@ -110,6 +110,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -162,6 +163,7 @@ import androidx.compose.ui.layout.positionInWindow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.IntOffset
+import com.ianocent.musicplayer.ui.motion.MotionTokens
 import androidx.compose.ui.graphics.compositeOver
 import kotlin.math.roundToInt
 import androidx.compose.ui.window.Popup
@@ -389,6 +391,10 @@ fun AppNavHost(
 ) {
     var showNowPlaying by remember { mutableStateOf(false) }
     var miniAlbumArtRect by remember { mutableStateOf<ElementRect?>(null) }
+    // Motion prefs toggle with the player transition so accessibility settings
+    // rewire the open/close animation instead of jumping back to the raw one.
+    val reduceMotion by viewModel.reduceMotion.collectAsState()
+    val motionScale by viewModel.motionScale.collectAsState()
 
     LaunchedEffect(deepLink) {
         val raw = deepLink ?: return@LaunchedEffect
@@ -425,8 +431,19 @@ fun AppNavHost(
 
         AnimatedVisibility(
             visible = showNowPlaying,
-            enter = fadeIn(animationSpec = tween(300)),
-            exit = fadeOut(animationSpec = tween(250)),
+            enter = fadeIn(
+                animationSpec = MotionTokens.scaledTween<Float>(MotionTokens.STANDARD, motionScale, reduceMotion)
+            ) + slideInVertically(
+                // The hero morph inside the player carries the artwork; the
+                // host transition only eases the rest of the screen up so the
+                // two read as one continuous gesture, not two competing fades.
+                // T infers from slideInVertically's IntOffset spec position.
+                animationSpec = MotionTokens.scaledTween(MotionTokens.EXPRESSIVE, motionScale, reduceMotion),
+                initialOffsetY = { it / 24 }
+            ),
+            exit = fadeOut(
+                animationSpec = MotionTokens.scaledTween<Float>(MotionTokens.EXPRESSIVE, motionScale, reduceMotion, easing = MotionTokens.easeInOut)
+            ),
             modifier = Modifier.zIndex(1f)
         ) {
             PlayerHost(
@@ -1178,7 +1195,18 @@ fun ListingScreen(
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
                                                 text = "Listening to: ${song.title}",
-                                                style = MaterialTheme.typography.labelLarge,
+                                                style = MaterialTheme.typography.labelLarge.copy(
+                                                    // Center the glyph in its line box —
+                                                    // M3's default parks leading space
+                                                    // below the text, which is why the
+                                                    // text+slider pair drifted low in the
+                                                    // glass pill.
+                                                    lineHeight = 16.sp,
+                                                    lineHeightStyle = LineHeightStyle(
+                                                        alignment = LineHeightStyle.Alignment.Center,
+                                                        trim = LineHeightStyle.Trim.Both
+                                                    )
+                                                ),
                                                 fontWeight = FontWeight.Bold,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
@@ -1341,7 +1369,13 @@ fun ListingScreen(
                     state = homeHazeState,
                     fallbackColor = animatedContainerColor
                 ) {
-                    Crossfade(targetState = navState.tab) { tab ->
+                    Crossfade(
+                        targetState = navState.tab,
+                        // FastOutSlowIn over a fixed beat keeps the glass panels
+                        // from ghost-fading over each other on quick tab taps
+                        // (the default spring alpha dawdles then snaps).
+                        animationSpec = MotionTokens.scaledTween<Float>(MotionTokens.STANDARD, motionScale, reduceMotion)
+                    ) { tab ->
                         val tabContent = parsedTabOrder.getOrElse(tab) { "songs" }
                         when (tabContent) {
                             "songs" -> { // SONGS
@@ -2043,6 +2077,9 @@ fun RowScope.TabItem(text: String, isSelected: Boolean, adaptiveColor: Color, on
         config = glassConfig.copy(tint = selectedTint, cornerRadius = 20f),
         state = state,
         modifier = Modifier
+            // Clip before the clickable so the press ripple takes the pill
+            // shape — a clickable placed before any clip draws a square ripple.
+            .clip(RoundedCornerShape(20.dp))
             .clickable { onClick() }
             .animateContentSize() // Bikin animasi pas ngelebar/ngecil
             .then(if (isSelected) Modifier.weight(1f) else Modifier) // Otomatis ngisi ruang kosong kalo aktif
@@ -3117,7 +3154,16 @@ fun MiniSongInfo(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Listening to: ${song.title}",
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        // M3 lines park the extra leading BELOW the glyphs, which
+                        // is why the text+slider block read slightly low inside
+                        // the glass. Centering in the line box fixes the balance.
+                        lineHeight = 16.sp,
+                        lineHeightStyle = LineHeightStyle(
+                            alignment = LineHeightStyle.Alignment.Center,
+                            trim = LineHeightStyle.Trim.Both
+                        )
+                    ),
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis

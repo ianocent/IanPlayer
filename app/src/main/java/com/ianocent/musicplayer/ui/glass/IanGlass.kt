@@ -1,7 +1,9 @@
 package com.ianocent.musicplayer.ui.glass
 
 import android.os.Build
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -148,11 +150,26 @@ fun IanGlassButton(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val alpha by animateFloatAsState(if (pressed) 0.8f else 1f, label = "glassBtn")
+    // Press feel: the slab settles (scale down) instead of the old flat alpha
+    // dip — glass "pushes in" like a physical pane and springs back on lift.
+    val pressProgress by animateFloatAsState(
+        targetValue = if (pressed) 1f else 0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessHigh
+        ),
+        label = "glassBtnPress"
+    )
+    val alpha = 1f - pressProgress * 0.12f
+    val scale = 1f - pressProgress * 0.05f
     IanGlassSurface(
         config = config,
         modifier = modifier
-            .graphicsLayer { this.alpha = alpha }
+            .graphicsLayer {
+                this.alpha = alpha
+                scaleX = scale
+                scaleY = scale
+            }
             .clickable(
                 interactionSource = interaction,
                 indication = null,

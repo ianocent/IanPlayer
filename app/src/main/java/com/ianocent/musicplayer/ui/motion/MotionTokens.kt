@@ -4,6 +4,7 @@ import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -58,7 +59,7 @@ object MotionTokens {
         motionScale: Float,
         reduceMotion: Boolean,
         easing: Easing = FastOutSlowInEasing
-    ): AnimationSpec<T> =
+    ): FiniteAnimationSpec<T> =
         if (reduceMotion) tween(0, easing = easing)
         else tween((baseDurationMs * motionScale).toInt().coerceAtLeast(0), easing = easing)
 }

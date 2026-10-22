@@ -38,6 +38,7 @@ class IanPlayerNotificationProvider(context: Context) : MediaNotification.Provid
     ): MediaNotification {
         val player = session.player
         val isPlaying = player?.isPlaying == true
+        val isShuffle = player?.shuffleModeEnabled == true
         val metadata = player?.mediaMetadata
         val repeatMode = player?.repeatMode
 
@@ -49,7 +50,7 @@ class IanPlayerNotificationProvider(context: Context) : MediaNotification.Provid
         )
 
         val builder = NotificationCompat.Builder(appContext, PlaybackService.CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_notification_logo)
             .setContentTitle(metadata?.title ?: appContext.getString(R.string.app_name))
             .setContentText(metadata?.artist ?: "")
             .setContentIntent(contentIntent)
@@ -61,8 +62,8 @@ class IanPlayerNotificationProvider(context: Context) : MediaNotification.Provid
             .addAction(
                 notificationButton(
                     NotificationButtonReceiver.ACTION_SHUFFLE,
-                    "Shuffle",
-                    R.drawable.noun_shuffle
+                    if (isShuffle) "Shuffle On" else "Shuffle Off",
+                    if (isShuffle) R.drawable.noun_shuffle else R.drawable.noun_shuffle_off
                 )
             )
             .addAction(
@@ -93,7 +94,7 @@ class IanPlayerNotificationProvider(context: Context) : MediaNotification.Provid
                     when (repeatMode) {
                         androidx.media3.common.Player.REPEAT_MODE_ONE -> R.drawable.noun_repeat_one
                         androidx.media3.common.Player.REPEAT_MODE_ALL -> R.drawable.noun_repeat_on
-                        else -> R.drawable.noun_repeat
+                        else -> R.drawable.noun_repeat_off
                     }
                 )
             )

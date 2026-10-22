@@ -17,10 +17,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.ianocent.musicplayer.R
 import com.ianocent.musicplayer.data.LyricSource
+import com.ianocent.musicplayer.data.cycleNumber
 import com.ianocent.musicplayer.ui.glass.glassIconBackdrop
 import com.ianocent.musicplayer.ui.glass.isAppInDark
 import com.ianocent.musicplayer.ui.glass.nounIcon
@@ -48,7 +54,26 @@ fun LyricSectionHeader(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text("Lyric :", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        // Source is readable from the little superscript after "Lyric" —
+        // LRCLIB GET=1, LRCLIB SEARCH=2, LRCMUX=3 … UNKNOWN shows the default 1.
+        Text(
+            text = buildAnnotatedString {
+                append("Lyric")
+                withStyle(
+                    SpanStyle(
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        baselineShift = BaselineShift.Superscript
+                    )
+                ) {
+                    append((lyricSource?.cycleNumber() ?: 1).toString())
+                }
+                append(" :")
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold
+        )
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -113,15 +138,6 @@ fun LyricSectionHeader(
                     contentDescription = "Ganti Sumber Lirik",
                     tint = if (isLyricLoading) Color.Gray.copy(alpha = 0.5f) else accentColor,
                     modifier = Modifier.size(18.dp)
-                )
-            }
-
-            if (lyricSource != null && lyricSource != LyricSource.UNKNOWN) {
-                Text(
-                    text = lyricSource.name.replace("_", " "),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = accentColor.copy(alpha = 0.85f),
-                    fontWeight = FontWeight.Medium
                 )
             }
         }

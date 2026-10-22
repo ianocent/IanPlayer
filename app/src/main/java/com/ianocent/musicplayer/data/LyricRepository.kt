@@ -34,6 +34,22 @@ enum class LyricSource {
     UNKNOWN
 }
 
+/** Source cycle order — the UI numbers these 1..n as a small superscript. */
+val CYCLE_SOURCES = listOf(
+    LyricSource.LRCLIB_GET,
+    LyricSource.LRCLIB_SEARCH,
+    LyricSource.LRCMUX,
+    LyricSource.GENIUS,
+    LyricSource.MUSIXMATCH,
+    LyricSource.LRCLIB_PLAIN,
+    LyricSource.SOME_RANDOM_API,
+    LyricSource.LYRICS_OVH
+)
+
+/** 1-based cycle position; UNKNOWN/absent sources read as the default slot 1. */
+fun LyricSource.cycleNumber(): Int =
+    (CYCLE_SOURCES.indexOf(this) + 1).coerceIn(1, CYCLE_SOURCES.size)
+
 @Entity(tableName = "lyric_cache")
 data class LyricCacheEntry(
     @PrimaryKey val key: String,
@@ -258,16 +274,7 @@ class LyricRepository(
 
     // Public API for cycling lyric sources
     suspend fun cycleLyricSource(song: Song, currentSource: LyricSource): Pair<LyricResult, LyricSource>? {
-        val sources = listOf(
-            LyricSource.LRCLIB_GET,
-            LyricSource.LRCLIB_SEARCH,
-            LyricSource.LRCMUX,
-            LyricSource.GENIUS,
-            LyricSource.MUSIXMATCH,
-            LyricSource.LRCLIB_PLAIN,
-            LyricSource.SOME_RANDOM_API,
-            LyricSource.LYRICS_OVH
-        )
+        val sources = CYCLE_SOURCES
         val currentIdx = sources.indexOf(currentSource)
         val key = cacheKey(song.title, song.artist)
         val primary = getPrimaryArtist(song.artist)
