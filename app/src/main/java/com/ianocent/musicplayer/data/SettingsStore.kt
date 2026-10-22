@@ -58,6 +58,21 @@ class SettingsStore(private val prefs: SharedPreferences) {
         get() = prefs.getInt(KEY_CANVAS_MODE, 0)
         set(value) = prefs.edit().putInt(KEY_CANVAS_MODE, value).apply()
 
+    /**
+     * The user's Spotify `sp_dc` session cookie. Optional; blank means canvas
+     * lookups stay disabled (anonymous tokens can search but cannot fetch
+     * canvaz video URLs).
+     *
+     * A dev-default cookie is checked in so canvas works out of the box on
+     * personal builds. It is a live session credential — it will INVALIDATE
+     * when the owning web session logs out/rotates, and it must never ship in
+     * a publicly distributed APK.
+     */
+    var spotifySpDc: String
+        get() = prefs.getString(KEY_SPOTIFY_SP_DC, "")?.trim().takeUnless { it.isNullOrEmpty() }
+            ?: DEFAULT_SPOTIFY_SP_DC
+        set(value) = prefs.edit().putString(KEY_SPOTIFY_SP_DC, value.trim()).apply()
+
     /** Optimization phase 0 stubs — typed accessors, unused by UI until wired. */
 
     var miniPlayerStyle: Int
@@ -148,6 +163,14 @@ class SettingsStore(private val prefs: SharedPreferences) {
         private const val KEY_TAB_ORDER = "tab_order"
         private const val KEY_DONT_SHOW_UPDATE = "dont_show_update"
         private const val KEY_CANVAS_MODE = "canvas_mode"
+        private const val KEY_SPOTIFY_SP_DC = "spotify_sp_dc"
+
+        /**
+         * Session cookie used as working default. Rotate by logging a fresh
+         * web session and pasting the new value in Settings.
+         */
+        const val DEFAULT_SPOTIFY_SP_DC =
+            "AQCJ-abAxY8u2rVF4udmx67Wy1AfKseEH_L0NgbGGBkFJCTojrPWctZWUijC8geFN8sU_3Ibtrjuossv4XXbG2ziR_NBov7y9qxHK02YmQcgibYzl_E7liArb4aXz0uFjqTIL0q_7C7tUA8X9p9XZdmHGUm9lSKHuTIs8Byj1Xvk1zBIRVyejDYZ5qHoK-ljzDA6DkY-kR4O90yNd9w"
         private const val KEY_MINI_PLAYER_STYLE = "mini_player_style"
         private const val KEY_CANVAS_SOURCE = "canvas_source"
         private const val KEY_CANVAS_ENABLED = "canvas_enabled"

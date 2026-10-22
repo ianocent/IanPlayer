@@ -91,6 +91,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.viewinterop.AndroidView
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -219,6 +220,7 @@ fun NowPlayingScreen(
         albumArt = albumArt,
         isDarkMode = isDarkMode,
         reduceMotion = uiState.prefs.reduceMotion,
+        remoteCanvasUrl = uiState.visuals.remoteCanvasUrl,
         motionScale = uiState.prefs.motionScale,
         screenWidth = screenWidth,
         screenHeight = screenHeight,
@@ -238,6 +240,13 @@ fun NowPlayingScreen(
     }
     var selectedLyricLines by remember { mutableStateOf(setOf<Int>()) }
     var showLyricCardSheet by remember { mutableStateOf(false) }
+
+    // Canvas banner boundary: video must end exactly above the lyric header
+    // row. Root box + boundary positions are captured toward window coords so
+    // the banner height fraction can be derived at composition.
+    var canvasRootTopY by remember { mutableStateOf(0f) }
+    var canvasRootHeight by remember { mutableStateOf(0f) }
+    var canvasBoundaryY by remember { mutableStateOf(0f) }
     var showWaveRecordSheet by remember { mutableStateOf(false) }
 
     val glassEnabled by viewModel.glassEnabled.collectAsState()
@@ -310,43 +319,45 @@ fun NowPlayingScreen(
                 .matchParentSize()
                 .hazeSource(hazeState)
                 .then(backdrop.contentModifier)
+                .onGloballyPositioned { coords ->
+                    canvasRootTopY = coords.positionInRoot().y
+                    canvasRootHeight = coords.size.height.toFloat()
+                }
         ) {
             if (backdrop.canvasUsesVideo) {
-                // Scoped canvas (opt-in, Settings → "Canvas fade before Up Next"):
-                // the video only fills the top ~62% of the screen — roughly the
-                // album art + "Song by:" + lyric area — then fades to transparent
-                // so the plain ambient gradient (already painted by
-                // `backdrop.contentModifier` just above this Box) takes back over
-                // by the time the layout reaches the Up Next list. When the
-                // setting is off, behavior is unchanged: video covers the whole
-                // screen like before.
-                val scopeToTop = uiState.visuals.canvasFadeBeforeUpnext
-                val videoHeightFraction = if (scopeToTop) 0.62f else 1f
+                // Canvas "banner" design: the video ends exactly at the lyric
+                // header row (Collapse/Expand • Lyric Card • Switch Lyric) —
+                // measured live — and fades out smoothly into the ambient
+                // gradient so lyrics below stay readable. Never full-screen.
+                val boundaryFraction =
+                    if (canvasRootHeight > 0f && canvasBoundaryY > 0f) {
+                        ((canvasBoundaryY - canvasRootTopY) / canvasRootHeight)
+                            .coerceIn(0.35f, 0.75f)
+                    } else 0.5f
                 PlayerCanvasVideoSurface(
                     path = backdrop.canvasVideoPath!!,
                     isPlaying = isPlaying,
                     tint = backdrop.animatedAmbient,
-                    modifier = if (scopeToTop) {
-                        Modifier
-                            .fillMaxWidth()
-                            .fillMaxHeight(videoHeightFraction)
-                            .align(Alignment.TopStart)
-                            .drawWithContent {
-                                drawContent()
-                                // Fade the video's own bottom edge to transparent —
-                                // reveals the ambient gradient behind it smoothly,
-                                // rather than cutting off with a hard edge.
-                                drawRect(
-                                    brush = Brush.verticalGradient(
-                                        0.55f to Color.Black,
-                                        1f to Color.Transparent
-                                    ),
-                                    blendMode = androidx.compose.ui.graphics.BlendMode.DstIn
-                                )
-                            }
-                    } else {
-                        Modifier.fillMaxSize()
-                    }
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(boundaryFraction)
+                        .align(Alignment.TopStart)
+                        .graphicsLayer {
+                            compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+                        }
+                        .drawWithContent {
+                            drawContent()
+                            // Fade the video's bottom edge to transparent —
+                            // reveals the ambient gradient behind it smoothly.
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    0.0f to Color.Black,
+                                    0.35f to Color.Black,
+                                    1.0f to Color.Transparent
+                                ),
+                                blendMode = androidx.compose.ui.graphics.BlendMode.DstIn
+                            )
+                        }
                 )
             }
         }
@@ -384,17 +395,6 @@ fun NowPlayingScreen(
                 },
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Drag handle
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .width(40.dp)
-                    .height(4.dp)
-                    .background(Color.LightGray, RoundedCornerShape(2.dp))
-                    .clickable { handleBack() }
-            )
-
-            Spacer(modifier = Modifier.height(20.dp))
 
             // Album art + song info — swapped for the video stage in video mode.
             if (videoModeActive) {
@@ -582,23 +582,23 @@ fun NowPlayingScreen(
                         }
                     }
                     AnimatedContent(
-                        targetState = song?.id ?: "",
+                        targetState = song,
                         transitionSpec = {
                             (fadeIn(animationSpec = MotionTokens.smallUiChange) togetherWith
                                     fadeOut(animationSpec = MotionTokens.smallUiChange))
                                 .using(SizeTransform(clip = false))
                         },
                         label = "trackInfo"
-                    ) { _ ->
+                    ) { currentSong ->
                         Column {
                             Text(
-                                song?.artist ?: "Unknown Artist",
+                                currentSong?.artist ?: "Unknown Artist",
                                 fontWeight = FontWeight.SemiBold,
                                 style = MaterialTheme.typography.bodyMedium,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                song?.title ?: "No song playing",
+                                currentSong?.title ?: "No song playing",
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.bodyLarge,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis
@@ -626,6 +626,9 @@ fun NowPlayingScreen(
             ) {
                 if (showLyrics) {
                 // Lyric toggle
+                Box(Modifier.onGloballyPositioned { coords ->
+                    (coords.positionInRoot().y + coords.size.height).let { if (it > 0f) canvasBoundaryY = it }
+                }) {
                 LyricSectionHeader(
                     isExpanded = isLyricExpanded,
                     hasSelectedLines = selectedLyricLines.isNotEmpty(),
@@ -637,6 +640,7 @@ fun NowPlayingScreen(
                     onOpenLyricCard = { if (selectedLyricLines.isNotEmpty()) showLyricCardSheet = true },
                     onCycleSource = { song?.let { viewModel.cycleLyricSource(it) } }
                 )
+                }
                 Spacer(modifier = Modifier.height(6.dp))
 
                 Box(

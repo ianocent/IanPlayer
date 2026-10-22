@@ -57,6 +57,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
+import com.ianocent.musicplayer.data.canvas.CanvasLog
+import com.ianocent.musicplayer.data.canvas.CanvasMatch
+import com.ianocent.musicplayer.data.canvas.SpotifyCanvasRepository
 
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -660,6 +663,28 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         settingsStore.canvasFadeBeforeUpnext = enabled
     }
 
+    /** Spotify web-session cookie enabling the canvas pipeline. */
+    private val _spotifySpDc = MutableStateFlow(settingsStore.spotifySpDc)
+    val spotifySpDc: StateFlow<String> = _spotifySpDc
+
+    fun setSpotifySpDc(value: String) {
+        val trimmed = value.trim()
+        if (trimmed == _spotifySpDc.value) return
+        _spotifySpDc.value = trimmed
+        settingsStore.spotifySpDc = trimmed
+        // token scope changed: drop the cached one so the next resolve re-mints
+        com.ianocent.musicplayer.data.canvas.SpotifyTokenManager.invalidate()
+        canvasResolveJob?.cancel()
+        lastCanvasSongKey = null
+        // stale no_sp_dc verdicts must not block songs that were already resolved
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                AppDatabase.getInstance(getApplication<Application>().applicationContext)
+                    .canvasCacheDao().clearAll()
+            }
+        }
+    }
+
     private val _glassVibrancy = MutableStateFlow(settingsStore.glassVibrancy)
     val glassVibrancy: StateFlow<Float> = _glassVibrancy
 
@@ -833,6 +858,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _videoMode = MutableStateFlow(false)
     val videoMode: StateFlow<Boolean> = _videoMode
 
+    // Remote Spotify canvas for the current song (null = nothing resolved yet
+    // or no canvas). Resolution is debounced + keyed so fast skips don't storm
+    // the network and stale results never stick (spec §6.4.2, §6.8).
+    private val _spotifyCanvas = MutableStateFlow<CanvasMatch?>(null)
+    val spotifyCanvas: StateFlow<CanvasMatch?> = _spotifyCanvas
+    private var canvasResolveJob: Job? = null
+    private var lastCanvasSongKey: String? = null
+
     // Songs whose video identity was dropped after a failed video resolve/play.
     // Kept so a safety-net recollect never re-enters the video stage for them.
     private val droppedVideoIds = mutableSetOf<Long>()
@@ -944,6 +977,43 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     // video-catalogue songs carry the stage, songs don't.
                     _videoMode.value = song.isVideo && song.id !in droppedVideoIds
                     if (droppedVideoIds.size > 100) droppedVideoIds.clear()
+                }
+            }
+        }
+
+        // Spotify canvas: debounce ~600ms so quick skips don't storm the
+        // network, cancel the prior resolve, and only accept results still
+        // belonging to the active song.
+        viewModelScope.launch {
+            playbackGateway.currentSong.collect { song ->
+                val key = song?.let { SpotifyCanvasRepository.songKeyFor(it) }
+                if (key != lastCanvasSongKey) {
+                    CanvasLog.d(
+                        "VM: currentSong changed key=$key title='${song?.title}' " +
+                            "artist='${song?.artist}' remoteId=${song?.remoteId ?: "-"}"
+                    )
+                    canvasResolveJob?.cancel()
+                    lastCanvasSongKey = key
+                    _spotifyCanvas.value = null
+                    if (song != null) {
+                        val targetKey = key
+                        val appCtx = application.applicationContext
+                        canvasResolveJob = viewModelScope.launch {
+                            delay(600)
+                            CanvasLog.d("VM: debounce fired, resolving songKey=$targetKey")
+                            val match = SpotifyCanvasRepository.resolve(song, appCtx)
+                            // Accept only if the song didn't change while resolving.
+                            if (lastCanvasSongKey == targetKey) {
+                                CanvasLog.d(
+                                    "VM: resolved songKey=$targetKey matched=${match.matched} " +
+                                        "url=${match.canvasUrl ?: "-"} source=${match.source} error=${match.error ?: "-"}"
+                                )
+                                _spotifyCanvas.value = match
+                            } else {
+                                CanvasLog.d("VM: stale result dropped songKey=$targetKey")
+                            }
+                        }
+                    }
                 }
             }
         }

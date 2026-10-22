@@ -348,7 +348,28 @@ fun StreamTabContent(
                                                         )
                                                     )
                                             ) {
-                                                if (bannerUri != null) {
+                                                // Banner now mirrors the remote Spotify canvas of the
+                                                // current song: when a canvas resolved (matched with a
+                                                // URL), the looping video covers the banner background.
+                                                val remoteCanvas by viewModel.spotifyCanvas.collectAsState()
+                                                val currentCanvasUrl = remoteCanvas
+                                                    ?.takeIf { it.matched && !it.canvasUrl.isNullOrBlank() }
+                                                    ?.canvasUrl
+
+                                                if (currentCanvasUrl != null) {
+                                                    // Canvas video from Spotify takes over banner area
+                                                    com.ianocent.musicplayer.ui.canvas.PlayerCanvasVideoSurface(
+                                                        path = currentCanvasUrl,
+                                                        isPlaying = true,
+                                                        tint = adaptiveColor,
+                                                        modifier = Modifier.fillMaxSize()
+                                                    )
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .background(Color.Black.copy(alpha = 0.15f))
+                                                    )
+                                                } else if (bannerUri != null) {
                                                     coil.compose.AsyncImage(
                                                         model = bannerUri,
                                                         contentDescription = "Profile Banner",

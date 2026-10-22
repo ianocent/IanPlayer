@@ -39,6 +39,8 @@ data class VisualSlice(
     val canvasMode: CanvasMode?,
     val canvasVideoSource: String?,
     val canvasUsesVideo: Boolean,
+    /** Live Spotify canvas URL for the current song (null = none/no canvas). */
+    val remoteCanvasUrl: String?,
     val canvasFadeBeforeUpnext: Boolean,
 )
 
@@ -99,6 +101,7 @@ fun rememberPlayerUiState(
     val reduceMotion by viewModel.reduceMotion.collectAsState()
     val motionScale by viewModel.motionScale.collectAsState()
     val canvasFadeBeforeUpnext by viewModel.canvasFadeBeforeUpnext.collectAsState()
+    val spotifyCanvas by viewModel.spotifyCanvas.collectAsState()
 
     val canvasMode = remember(canvasModeId) { CanvasMode.from(canvasModeId) }
     val context = LocalContext.current
@@ -126,6 +129,7 @@ fun rememberPlayerUiState(
             canvasMode = canvasMode,
             canvasVideoSource = canvasVideoSource,
             canvasUsesVideo = canvasVideoSource != null,
+            remoteCanvasUrl = spotifyCanvas?.takeIf { it.matched && !it.canvasUrl.isNullOrBlank() }?.canvasUrl,
             canvasFadeBeforeUpnext = canvasFadeBeforeUpnext,
         ),
         lyrics = LyricsSlice(

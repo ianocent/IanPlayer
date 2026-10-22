@@ -11,6 +11,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import com.ianocent.musicplayer.data.Song
+import com.ianocent.musicplayer.data.canvas.CanvasLog
 import com.ianocent.musicplayer.data.canvas.CanvasMode
 import com.ianocent.musicplayer.data.canvas.CanvasVideoSource
 import com.ianocent.musicplayer.data.canvas.providers.CanvasProvider
@@ -48,6 +49,7 @@ fun rememberPlayerBackdrop(
     albumArt: Bitmap?,
     isDarkMode: Boolean,
     reduceMotion: Boolean,
+    remoteCanvasUrl: String? = null,
     motionScale: Float = 1f,
     screenWidth: Float,
     screenHeight: Float,
@@ -69,13 +71,35 @@ fun rememberPlayerBackdrop(
     val context = LocalContext.current
     val canvasMode = remember(canvasModeId) { CanvasMode.from(canvasModeId) }
 
+    // Local user-provided canvas file (IanCanvas folder). Only honoured when the
+    // user has video canvas enabled.
+    val localCanvasPath = remember(song?.id, canvasModeId, context) {
+        if (canvasMode == CanvasMode.VIDEO) CanvasVideoSource.resolve(song, context) else null
+    }
+
     // Real provider chain: walk from the requested mode, falling back to the
     // next provider (e.g. VIDEO → GENERATIVE) when the primary can't render.
     val resolvedProvider = remember(canvasMode, song?.id, canvasModeId, context) {
         CanvasProvider.resolveFor(canvasMode, song, context)
     }
-    val canvasVideoPath = remember(song?.id, canvasModeId) {
-        if (resolvedProvider?.usesVideoSurface == true) CanvasVideoSource.resolve(song, context) else null
+    val canvasVideoPath = remember(song?.id, canvasModeId, remoteCanvasUrl) {
+        // Priority (spec §6.4.3): user's local canvas video file first, then the
+        // live Spotify canvas URL, then nothing (existing look stays).
+        when {
+            localCanvasPath != null -> localCanvasPath
+            !remoteCanvasUrl.isNullOrBlank() -> remoteCanvasUrl
+            else -> null
+        }.also {
+            CanvasLog.d(
+                "UI: backdrop song=${song?.id} canvasMode=$canvasMode " +
+                    "localCanvasPath=$localCanvasPath remoteCanvasUrl=${remoteCanvasUrl ?: "-"} " +
+                    "videoPath=${it ?: "-"} source=${when {
+                        localCanvasPath != null -> "LOCAL_FILE"
+                        !remoteCanvasUrl.isNullOrBlank() -> "REMOTE_SPOTIFY"
+                        else -> "NONE"
+                    }}"
+            )
+        }
     }
     val canvasUsesVideo = canvasVideoPath != null
     val canvasDrawModifier = if (canvasUsesVideo || resolvedProvider == null) Modifier else {
@@ -104,7 +128,7 @@ fun rememberPlayerBackdrop(
                 screenWidth,
                 screenHeight
             )
-            drawRect(brush, alpha = if (canvasUsesVideo) 0.35f else 1f)
+            drawRect(brush)
         }
         .then(canvasDrawModifier)
 

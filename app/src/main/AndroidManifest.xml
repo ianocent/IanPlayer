@@ -56,14 +56,10 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="http" />
                 <data android:scheme="https" />
-                <data android:host="youtube.com" />
-                <data android:host="www.youtube.com" />
-                <data android:host="m.youtube.com" />
-                <data android:host="music.youtube.com" />
-                <data android:pathPrefix="/watch" />
-                <data android:pathPrefix="/shorts" />
-                <data android:pathPrefix="/live" />
-                <data android:pathPrefix="/embed" />
+                <data android:host="youtube.com" android:pathPrefix="/" />
+                <data android:host="www.youtube.com" android:pathPrefix="/" />
+                <data android:host="m.youtube.com" android:pathPrefix="/" />
+                <data android:host="music.youtube.com" android:pathPrefix="/" />
             </intent-filter>
 
             <!-- Short links: https://youtu.be/<videoId> -->
@@ -73,7 +69,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="http" />
                 <data android:scheme="https" />
-                <data android:host="youtu.be" />
+                <data android:host="youtu.be" android:pathPrefix="/" />
             </intent-filter>
 
             <!-- YouTube app internal links: vnd.youtube:<videoId> -->

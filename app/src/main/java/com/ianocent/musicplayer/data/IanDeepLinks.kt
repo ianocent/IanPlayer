@@ -26,7 +26,7 @@ object IanDeepLinks {
 
     /**
      * Accepts:
-     *  - `ianplayer://song?v=<videoId>[&type=video]`
+     *  - `ianplayer://song?v=<videoId>[&type=video]`  (share-link skema bawaan)
      *  - `ianplayer://open/<videoId>`
      *  - `https://youtu.be/<videoId>`
      *  - `https://(www|m|music).youtube.com/watch?v=<videoId>`
@@ -79,14 +79,15 @@ object IanDeepLinks {
     }
 
     /**
-     * `intent://` link understood by Chrome and other Android browsers: launch
-     * IanPlayer when installed, otherwise send the user to the latest GitHub
-     * release so they can download it.
+     * Custom-scheme link (`ianplayer://song?v=<id>`) that Android routes straight
+     * to IanPlayer when installed. Works in chat apps (WA, Telegram, Discord)
+     * unlike `intent://` which only Chrome understands. When app is not installed
+     * the link does nothing, so the share text below still points at the GitHub
+     * release page as the download fallback.
      */
     fun shareUri(videoId: String, preferVideo: Boolean = false): String {
         val type = if (preferVideo) "&type=video" else ""
-        val fallback = Uri.encode(RELEASE_URL)
-        return "intent://song?v=$videoId$type#Intent;scheme=$SCHEME;package=$PACKAGE;S.browser_fallback_url=$fallback;end"
+        return "ianplayer://song?v=$videoId$type"
     }
 
     /** Human-readable payload for ACTION_SEND, or null when the song has no shareable id. */

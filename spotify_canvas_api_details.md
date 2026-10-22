@@ -558,3 +558,118 @@ Tidak ada dialog/toast untuk kegagalan canvas. Canvas adalah enhancement, bukan 
 3. Worker diberi fallback ke public proxy kalau self-hosted down, atau strict self-hosted?
 4. Prefetch lagu berikutnya langsung aktif, atau tunggu fase 2?
 
+---
+
+# 7. REALITY CHECK 2026 + Implementasi Aktual (v2.1)
+
+Bagian ini mengoreksi Bagian 1–6 berdasarkan verifikasi jaringan langsung per hari ini.
+Skema §6 (self-hosted worker + Odesli + protobuf canvaz-cache) **sudah tidak bisa jalan
+apa adanya** — endpoint yang direferensikan sebagian besar sudah mati atau dikunci.
+
+## 7.1 Hasil verifikasi endpoint (dieksekusi langsung)
+
+| Endpoint | Status | Bukti |
+|---|---|---|
+| `canvas.canvasapi.workers.dev/api/canvas/{id}` (public proxy lama) | **MATI** | 404 `error code: 1042` |
+| `api.song.link/v1-alpha.1/links` (Odesli tanpa key) | **DEPRECATED** | 401 `PUBLIC_API_ACCESS_DEPRECATED` — sekarang butuh API key berbayar |
+| `open.spotify.com/get_access_token?...` (anonymous token lama, §6.3.2) | **DIBLOKIR** | 403 "URL Blocked" (Varnish) tanpa/TOTP |
+| `open.spotify.com/api/token` + TOTP **tanpa sp_dc** | **HIDUP** | 200 + `accessToken`, `isAnonymous:true` |
+| `api.spotify.com/v1/search` pakai token anonymous | **429** `QUOTA_EXCEEDED` — anonymous tidak dapat kuota Web API | |
+| `api-partner.spotify.com/pathfinder/v1/query` (GraphQL) pakai token anonymous | **HIDUP** | `searchTracks` mengembalikan uri/id/judul/artis/durasi + `playability` |
+| GraphQL `canvas` (trackUnion, hash `575138ab...`) pakai token anonymous | **NULL** | canvas selalu null untuk token anonymous |
+| `spclient.wg.spotify.com/canvaz-cache/v0/canvases` (protobuf) pakai token anonymous | **400** | "Could not parse request payload" — butuh token bawa sp_dc |
+| `spotify-canva.vercel.app/api/canvas?trackId={id}` | **HIDUP** | 200 JSON `{"canvasesList":[{"canvasUrl":"https://canvaz.scdn.co/...","artist":{...}}]}` |
+| MusicBrainz WS/2 (ISRC) | **HIDUP** tetapi tidak dipakai: `url-rels` Spotify jarang terisi | |
+
+Kesimpulan: jalur anonymous-token → **api-partner search** (Odesli dibuang sepenuhnya;
+judul/artis dari metadata YouTube atau MediaStore menutup kasus stream & lokal
+sekaligus), lalu hasil match → **canvaz REST proxy** (`spotify-canva.vercel.app`,
+deploy dari open-source `github.com/punisher-303/Spotify-Canva`) untuk mendapatkan
+URL MP4. Protobuf `canvaz-cache` hanya jalan dengan `sp_dc` → porsi itu dinaikkan ke
+proxy, bukan di app.
+
+## 7.2 Bug yang nyata menyebabkan canvas tidak pernah muncul (sebelum perbaikan)
+
+1. **`SpotifyCanvasRepository.resolve()` dead-code** — tidak pernah dipanggil dari
+   ViewModel/UI mana pun. Dengan backend sehidup mati pun tidak akan tampil.
+2. **Salah makna ID**: `Song.remoteId` untuk stream = **YouTube video ID**, tapi
+   proxy Spotify mengharuskan **22-char Spotify track ID**. YT ID selalu 404/not-found.
+3. **Lagu lokal langsung berhenti**: tidak punya `remoteId` → resolve mengembalikan
+   `matched:false` tanpa mencoba apa pun, meskipun backend masih hidup.
+4. **Semua upstream di Penurunan §6 mati**: worker proxy publik mati + Odesli diperketat.
+
+## 7.3 Sepekan implementasi (files)
+
+```
+data/canvas/
+  SpotifyTokenManager.kt     // anonymous token via TOTP (secret dict GitHub, HMAC-SHA1 6 digit)
+  SpotifyCanvasApi.kt        // (1) GraphQL searchTracks  (2) canvaz REST proxy
+  SpotifyCanvasRepository.kt // resolve: Room cache → text match → score → canvas fetch
+ui/player/PlayerUiState.kt            // VisualSlice + remoteCanvasUrl
+ui/player/components/PlayerBackdrop.kt // prioritas: file lokal > remote > tidak ada
+ui/NowPlayingScreen.kt                // pass remoteCanvasUrl ke backdrop
+viewmodel/MusicViewModel.kt           // observe currentSong, debounce 600 ms, cancel per key
+```
+
+Catatan penting implementasi:
+
+- **SongKey**: `yt:<remoteId>` atau `local:<judul|artis|durasi>` — negative cache 7 hari,
+  mapping positif 30 hari, URL canvas 12 jam.
+- **Skoring kandidat**: Levenshtein + Jaccard; wajib judul ≥0.72, artis ≥0.55,
+  durasi ±5 s = bonus utama, > 15 s = tolak; total ≥ 0.60.
+- **TOTP**: XOR-map nilai rahasia `((i % 33) + 9)` → **join desimal** (bukan char!),
+  UTF-8 → hex → secret bytes; counter = `floor(ms/30 000)`; `totpServer` pakai
+  `floor(serverMs/30)` semantik (mirroring implementasi ref).
+- **Debounce**: skip cepat di-tunda 600 ms; hasil resolve diabaikan bila songKey sudah
+  berubah saat resolve selesai (tidak ada canvas nyangkut dari lagu sebelumnya).
+- **Canvas video surface**: `PlayerCanvasVideoSurface` sudah bisa menerima URL https
+  langsung (`MediaItem.fromUri`), muted + REPEAT_MODE_ALL + RESIZE_MODE_ZOOM — tidak
+  perlu komponen baru.
+
+## 7.4 Risiko sisa & mitigasi
+
+- Instans proxy `spotify-canva.vercel.app` itu milik komunitas — bisa mati; kalau itu
+  terjadi, deploy sendiri (butuh `SP_DC`) dan ganti konstanta `CANVAS_PROXY_BASE`
+  di `SpotifyCanvasApi`.
+- `SEARCH_TRACKS_SHA` diambil dari bundle web-player publik hari ini; kalau Spotify
+  merotasi hash, search degradasi mulus (tidak ada kandidat → tidak ada canvas,
+  bukan crash).
+- Secret dict TOTP (`xyloflake/spot-secrets-go`) di-refresh tiap ~1 jam; snapshot
+  terakhir di-cache sebagai fallback kalau GitHub tidak tersedia.
+- Token anonymous tinggal ~1 jam dan dibuat per-proses; tidak pernah disimpan/dikirim
+  ke pihak lain.
+
+
+
+
+## 8. SP_DC requirement (Oct 2026)
+
+All public canvas REST proxies are dead or dying:
+- canvas.canvasapi.workers.dev ? 404
+- spotify-canva.vercel.app/api/canvas ? 500 `{"error":"Failed to fetch canvas data"}` for every id
+- spotify-canvas.vercel.app ? 404 route gone
+- api.paxsenix.org/api/canvas ? 401 (now requires API key)
+- spclient canvaz-cache with ANONYMOUS TOTP token ? 200 but empty (no canvases)
+
+Only working primary path: spclient `spclient.wg.spotify.com/canvaz-cache/v0/canvases`
+POST protobuf `[0x0A, len, [0x0A, uriLen, entity_uri, 0x10, 0x04]]` with a token minted
+from the USER'S sp_dc cookie (open.spotify.com/api/token TOTP flow + Cookie: sp_dc=...).
+Response parsed by scanning printable ASCII for `https://...*.mp4` canvas URLs.
+
+App wiring: Settings ? "Spotify Canvas (SP_DC)" stores `spotify_sp_dc`
+(SettingsStore.spotifySpDc); SpotifyTokenManager.getAccessToken(spDc) caches per
+credential scope; searchTrack(query, spDc) / fetchCanvas(trackId, spDc). Without
+sp_dc the VAL pipeline short-circuits: verdict `no_sp_dc` cached 1h.
+
+## 8. SP_DC requirement (Oct 2026)
+
+All public canvas REST proxies are dead or dying:
+- canvas.canvasapi.workers.dev -> 404
+- spotify-canva.vercel.app/api/canvas -> 500 '{error:Failed to fetch canvas data}' every id
+- spotify-canvas.vercel.app -> 404 route gone
+- api.paxsenix.org/api/canvas -> 401 (requires API key now)
+- spclient canvaz-cache with ANONYMOUS TOTP token -> 200 but empty
+
+Only working primary path: POST spclient.wg.spotify.com/canvaz-cache/v0/canvases protobuf [0x0A len [0x0A uriLen entity_uri 0x10 0x04]] with token minted from USER sp_dc cookie (open.spotify.com/api/token TOTP flow + Cookie sp_dc). Response parsed by scanning printable ASCII for https://...*.mp4 canvas URLs.
+
+App wiring: Settings -> 'Spotify Canvas (SP_DC)' stores spotify_sp_dc (SettingsStore.spotifySpDc); SpotifyTokenManager.getAccessToken(spDc) caches per credential scope; searchTrack(query, spDc) / fetchCanvas(trackId, spDc). Without sp_dc the resolve pipeline short-circuits: verdict no_sp_dc cached 1h.

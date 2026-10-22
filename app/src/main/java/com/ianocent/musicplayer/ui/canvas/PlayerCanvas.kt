@@ -7,7 +7,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import android.view.TextureView
+import android.view.ViewGroup.LayoutParams
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -23,12 +28,12 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
+import com.ianocent.musicplayer.data.canvas.CanvasLog
 import com.ianocent.musicplayer.data.canvas.CanvasMode
+import com.ianocent.musicplayer.ui.motion.rememberPlaybackClock
 import com.ianocent.musicplayer.data.canvas.providers.CanvasProviderRegistry
 import com.ianocent.musicplayer.data.canvas.providers.GenerativeProvider
 import com.ianocent.musicplayer.data.canvas.providers.KenBurnsProvider
-import com.ianocent.musicplayer.ui.motion.rememberPlaybackClock
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -71,12 +76,20 @@ fun PlayerCanvasLayer(
 /**
  * Renders a looping, muted video behind the UI. Usable when video mode is on
  * and a video file exists for the song.
+ *
+ * Uses a TextureView inside AspectRatioFrameLayout(ZOOM) instead of PlayerView:
+ * PlayerView defaults to a SurfaceView, which punches a separate window layer
+ * that Compose modifiers (alpha / drawWithContent fades) cannot affect — that
+ * was why the bottom-edge gradient never appeared. TextureView composites
+ * normally into the Compose layer.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun PlayerCanvasVideoSurface(
     path: String,
     isPlaying: Boolean,
     tint: Color,
+    darkScrimAlpha: Float = 0.35f,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -87,12 +100,39 @@ fun PlayerCanvasVideoSurface(
             setHandleAudioBecomingNoisy(false)
         }
     }
+    var videoAspect by remember { mutableStateOf(0f) }
 
     DisposableEffect(Unit) {
         onDispose { player.release() }
     }
 
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                CanvasLog.d("VIDEO: state=$playbackState (2=buffered 3=ready 4=ended)")
+            }
+
+            override fun onIsPlayingChanged(isPlayingNow: Boolean) {
+                CanvasLog.d("VIDEO: playing=$isPlayingNow")
+            }
+
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                videoAspect = if (videoSize.height > 0 && videoSize.width > 0) {
+                    videoSize.width.toFloat() / videoSize.height.toFloat()
+                } else 0f
+                CanvasLog.d("VIDEO: size=${videoSize.width}x${videoSize.height} aspect=$videoAspect")
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                CanvasLog.e("VIDEO: playerError code=${error.errorCode} cause=${error.cause}", error)
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+
     LaunchedEffect(path) {
+        CanvasLog.d("VIDEO: setting media path=$path isPlaying=$isPlaying")
         player.stop()
         player.clearMediaItems()
         player.setMediaItem(MediaItem.fromUri(path))
@@ -108,13 +148,30 @@ fun PlayerCanvasVideoSurface(
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
-                PlayerView(ctx).apply {
-                    useController = false
+                val textureView = TextureView(ctx)
+                androidx.media3.ui.AspectRatioFrameLayout(ctx).apply {
                     resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    addView(textureView, LayoutParams(
+                        LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT
+                    ))
+                    tag = textureView
                 }
             },
-            update = { view -> view.player = player }
+            update = { container ->
+                val tv = container.tag as TextureView
+                player.setVideoTextureView(tv)
+                (container as androidx.media3.ui.AspectRatioFrameLayout).setAspectRatio(
+                    if (videoAspect > 0f) videoAspect else 0f
+                )
+            }
         )
+        if (darkScrimAlpha > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = darkScrimAlpha))
+            )
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()

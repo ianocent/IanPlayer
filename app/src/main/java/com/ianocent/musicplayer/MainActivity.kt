@@ -524,6 +524,7 @@ fun ListingScreen(
     val glassBlur by viewModel.glassBlur.collectAsState()
     val glassVibrancy by viewModel.glassVibrancy.collectAsState()
     val canvasFadeBeforeUpnext by viewModel.canvasFadeBeforeUpnext.collectAsState()
+    val spotifySpDc by viewModel.spotifySpDc.collectAsState()
     val parsedTabOrder = remember(tabOrder) { tabOrder.split(",") }
     var showPlaylistSelectionDialog by remember { mutableStateOf<Song?>(null) }
 
@@ -1915,6 +1916,8 @@ fun ListingScreen(
             onGlassVibrancyChange = { viewModel.setGlassVibrancy(it) },
             canvasFadeBeforeUpnext = canvasFadeBeforeUpnext,
             onCanvasFadeBeforeUpnextChange = { viewModel.setCanvasFadeBeforeUpnext(it) },
+            spotifySpDc = spotifySpDc,
+            onSpDcChange = { viewModel.setSpotifySpDc(it) },
             onCheckForUpdate = {
                 showSettingsSheet = false
                 viewModel.checkForUpdate()
@@ -3928,6 +3931,8 @@ private fun SettingsBottomSheet(
     onGlassVibrancyChange: (Float) -> Unit,
     canvasFadeBeforeUpnext: Boolean,
     onCanvasFadeBeforeUpnextChange: (Boolean) -> Unit,
+    spotifySpDc: String,
+    onSpDcChange: (String) -> Unit,
     onCheckForUpdate: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -3937,6 +3942,8 @@ private fun SettingsBottomSheet(
     var editingName by remember { mutableStateOf(userName) }
     var pickedAvatarUri by remember { mutableStateOf(avatarUri) }
     var pickedBannerUri by remember { mutableStateOf(bannerUri) }
+    var spDcDraft by remember(spotifySpDc) { mutableStateOf(spotifySpDc) }
+    val spDcSaved = spotifySpDc
     val focusManager = LocalFocusManager.current
     val tabIds = listOf("songs" to "Songs", "albums" to "Albums", "stream" to "Stream", "playlists" to "Playlists")
     var currentTabOrder by remember { mutableStateOf(tabOrder.split(",")) }
@@ -4494,6 +4501,63 @@ private fun SettingsBottomSheet(
                 )
             }
             */
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            // Spotify sp_dc cookie — enables remote Spotify Canvas video
+            // lookups. Optional; when empty the canvas pipeline stays idle.
+            Text(
+                text = "Spotify Canvas (SP_DC)",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 4.dp, top = 8.dp)
+            )
+            Text(
+                text = "Cookie sp_dc dari akun Spotify Lu (login spotify.com → DevTools → Cookies → sp_dc). Isi buat nyalain canvas video remote.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            BasicTextField(
+                value = spDcDraft,
+                onValueChange = { spDcDraft = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                textStyle = MaterialTheme.typography.bodySmall.copy(
+                    color = MaterialTheme.colorScheme.onSurface
+                ),
+                singleLine = true,
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = {
+                    onSpDcChange(spDcDraft)
+                    focusManager.clearFocus()
+                }),
+                decorationBox = { innerTextField ->
+                    if (spDcDraft.isEmpty()) {
+                        Text(
+                            "sp_dc cookie (optional)",
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                        )
+                    }
+                    innerTextField()
+                }
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = if (spDcSaved.isBlank()) "Canvas: nonaktif (belum ada cookie)" else "Canvas: aktif",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = {
+                    onSpDcChange(spDcDraft)
+                    focusManager.clearFocus()
+                }) { Text("Simpan") }
+            }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
