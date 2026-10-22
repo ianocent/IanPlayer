@@ -878,146 +878,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         return songStore.loadCachedSongs(key)
     }
 
-    init {
-        _playCounts.value = loadPlayCounts()
-        _sortMode.value = settingsStore.sortMode
-        loadFavoriteIds()
-
-        // Load cached stream content
-        _trendingSongs.value = loadListFromPrefs("cached_trending")
-        val cachedGenres = mutableMapOf<String, List<Song>>()
-        (genres + moods).forEach { cat ->
-            val songs = loadListFromPrefs("cached_genre_${cat.name}")
-            if (songs.isNotEmpty()) {
-                cachedGenres[cat.name] = songs
-                _genreFirstSong.value = _genreFirstSong.value + (cat.name to songs.first())
-            }
-        }
-        _genreSongs.value = cachedGenres
-
-        checkForUpdate()
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                ytMusicRepository.cleanupExpiredCache()
-            } catch (e: Exception) {
-                Timber.w(e, "MusicViewModel cleanupExpiredCache failed")
-            }
-        }
-        fetchTrending()
-
-        playbackGateway = PlayerGateway(
-            context = appContext,
-            prefs = prefs,
-            songStore = songStore,
-            scope = viewModelScope,
-            ytMusicRepository = ytMusicRepository,
-            streamResolvers = streamResolvers,
-            getSongs = { _songs.value },
-            getAllStreamSongs = { streamSearch.allResults.value },
-            onSongPlayed = { song ->
-                if (song.isStream) addToStreamSongsCache(listOf(song))
-                playbackGateway.markAsPlayed(song.id)
-                incrementPlayCount(song.id)
-                lastVisualSongId = song.id
-                _videoMode.value = song.isVideo && song.id !in droppedVideoIds
-                loadArt(song)
-                loadLyric(song)
-            },
-            onBufferingChange = { },
-            onIsPlayingChange = { isPlaying ->
-                if (isPlaying) {
-                    _showListeningPill.value = true
-                    hidePillJob?.cancel()
-                } else {
-                    startHidePillTimer()
-                }
-            },
-            onVideoModeUnsupported = {
-                // A video-catalogue song failed to play as video — drop its video
-                // identity so the UI leaves the video stage and future resolves
-                // use audio. The song keeps playing via the audio fallback built
-                // inside the gateway.
-                playbackGateway.currentSong.value?.let { droppedVideoIds.add(it.id) }
-                _videoMode.value = false
-            }
-        )
-
-        playbackGateway.crossfadeMs = settingsStore.crossfadeDurationMs
-        playbackGateway.restorePlayerState()
-
-        playbackGateway.initialize { hasRestoredSong, restoredIsPlaying ->
-            if (hasRestoredSong) {
-                if (restoredIsPlaying) {
-                    _showListeningPill.value = true
-                } else {
-                    startHidePillTimer()
-                }
-            }
-        }
-
-        viewModelScope.launch {
-            _songs.collect {
-                playbackGateway.tryRestoreCurrentSongOnSongsChanged()
-            }
-        }
-
-        playbackGateway.startPositionPolling()
-
-        // Safety net for process-death restores: onSongPlayed may miss the
-        // resumed track (e.g. resolveSongFromItem fails before the library
-        // loads), leaving art/ambient/lyrics empty in NowPlaying. Re-derive the
-        // visuals for whatever song ends up current, once per song id.
-        viewModelScope.launch(Dispatchers.Default) {
-            playbackGateway.currentSong.collect { song ->
-                if (song != null && song.id != lastVisualSongId) {
-                    lastVisualSongId = song.id
-                    loadArt(song)
-                    loadLyric(song)
-                    // Video identity is intrinsic to the song (source section):
-                    // video-catalogue songs carry the stage, songs don't.
-                    _videoMode.value = song.isVideo && song.id !in droppedVideoIds
-                    if (droppedVideoIds.size > 100) droppedVideoIds.clear()
-                }
-            }
-        }
-
-        // Spotify canvas: debounce ~600ms so quick skips don't storm the
-        // network, cancel the prior resolve, and only accept results still
-        // belonging to the active song.
-        viewModelScope.launch {
-            playbackGateway.currentSong.collect { song ->
-                val key = song?.let { SpotifyCanvasRepository.songKeyFor(it) }
-                if (key != lastCanvasSongKey) {
-                    CanvasLog.d(
-                        "VM: currentSong changed key=$key title='${song?.title}' " +
-                            "artist='${song?.artist}' remoteId=${song?.remoteId ?: "-"}"
-                    )
-                    canvasResolveJob?.cancel()
-                    lastCanvasSongKey = key
-                    _spotifyCanvas.value = null
-                    if (song != null) {
-                        val targetKey = key
-                        val appCtx = application.applicationContext
-                        canvasResolveJob = viewModelScope.launch {
-                            delay(600)
-                            CanvasLog.d("VM: debounce fired, resolving songKey=$targetKey")
-                            val match = SpotifyCanvasRepository.resolve(song, appCtx)
-                            // Accept only if the song didn't change while resolving.
-                            if (lastCanvasSongKey == targetKey) {
-                                CanvasLog.d(
-                                    "VM: resolved songKey=$targetKey matched=${match.matched} " +
-                                        "url=${match.canvasUrl ?: "-"} source=${match.source} error=${match.error ?: "-"}"
-                                )
-                                _spotifyCanvas.value = match
-                            } else {
-                                CanvasLog.d("VM: stale result dropped songKey=$targetKey")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 
 
     fun loadSongs() {
@@ -1473,6 +1333,147 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             if (cursor.moveToFirst()) {
                 cursor.getString(cursor.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media.DATA))
             } else null
+        }
+    }
+
+    init {
+        _playCounts.value = loadPlayCounts()
+        _sortMode.value = settingsStore.sortMode
+        loadFavoriteIds()
+
+        // Load cached stream content
+        _trendingSongs.value = loadListFromPrefs("cached_trending")
+        val cachedGenres = mutableMapOf<String, List<Song>>()
+        (genres + moods).forEach { cat ->
+            val songs = loadListFromPrefs("cached_genre_${cat.name}")
+            if (songs.isNotEmpty()) {
+                cachedGenres[cat.name] = songs
+                _genreFirstSong.value = _genreFirstSong.value + (cat.name to songs.first())
+            }
+        }
+        _genreSongs.value = cachedGenres
+
+        checkForUpdate()
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                ytMusicRepository.cleanupExpiredCache()
+            } catch (e: Exception) {
+                Timber.w(e, "MusicViewModel cleanupExpiredCache failed")
+            }
+        }
+        fetchTrending()
+
+        playbackGateway = PlayerGateway(
+            context = appContext,
+            prefs = prefs,
+            songStore = songStore,
+            scope = viewModelScope,
+            ytMusicRepository = ytMusicRepository,
+            streamResolvers = streamResolvers,
+            getSongs = { _songs.value },
+            getAllStreamSongs = { streamSearch.allResults.value },
+            onSongPlayed = { song ->
+                if (song.isStream) addToStreamSongsCache(listOf(song))
+                playbackGateway.markAsPlayed(song.id)
+                incrementPlayCount(song.id)
+                lastVisualSongId = song.id
+                _videoMode.value = song.isVideo && song.id !in droppedVideoIds
+                loadArt(song)
+                loadLyric(song)
+            },
+            onBufferingChange = { },
+            onIsPlayingChange = { isPlaying ->
+                if (isPlaying) {
+                    _showListeningPill.value = true
+                    hidePillJob?.cancel()
+                } else {
+                    startHidePillTimer()
+                }
+            },
+            onVideoModeUnsupported = {
+                // A video-catalogue song failed to play as video — drop its video
+                // identity so the UI leaves the video stage and future resolves
+                // use audio. The song keeps playing via the audio fallback built
+                // inside the gateway.
+                playbackGateway.currentSong.value?.let { droppedVideoIds.add(it.id) }
+                _videoMode.value = false
+            }
+        )
+
+        playbackGateway.crossfadeMs = settingsStore.crossfadeDurationMs
+        playbackGateway.restorePlayerState()
+
+        playbackGateway.initialize { hasRestoredSong, restoredIsPlaying ->
+            if (hasRestoredSong) {
+                if (restoredIsPlaying) {
+                    _showListeningPill.value = true
+                } else {
+                    startHidePillTimer()
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            _songs.collect {
+                playbackGateway.tryRestoreCurrentSongOnSongsChanged()
+            }
+        }
+
+        playbackGateway.startPositionPolling()
+
+        // Safety net for process-death restores: onSongPlayed may miss the
+        // resumed track (e.g. resolveSongFromItem fails before the library
+        // loads), leaving art/ambient/lyrics empty in NowPlaying. Re-derive the
+        // visuals for whatever song ends up current, once per song id.
+        viewModelScope.launch(Dispatchers.Default) {
+            playbackGateway.currentSong.collect { song ->
+                if (song != null && song.id != lastVisualSongId) {
+                    lastVisualSongId = song.id
+                    loadArt(song)
+                    loadLyric(song)
+                    // Video identity is intrinsic to the song (source section):
+                    // video-catalogue songs carry the stage, songs don't.
+                    _videoMode.value = song.isVideo && song.id !in droppedVideoIds
+                    if (droppedVideoIds.size > 100) droppedVideoIds.clear()
+                }
+            }
+        }
+
+        // Spotify canvas: debounce ~600ms so quick skips don't storm the
+        // network, cancel the prior resolve, and only accept results still
+        // belonging to the active song.
+        viewModelScope.launch {
+            playbackGateway.currentSong.collect { song ->
+                val key = song?.let { SpotifyCanvasRepository.songKeyFor(it) }
+                if (key != lastCanvasSongKey) {
+                    CanvasLog.d(
+                        "VM: currentSong changed key=$key title='${song?.title}' " +
+                            "artist='${song?.artist}' remoteId=${song?.remoteId ?: "-"}"
+                    )
+                    canvasResolveJob?.cancel()
+                    lastCanvasSongKey = key
+                    _spotifyCanvas.value = null
+                    if (song != null) {
+                        val targetKey = key
+                        val appCtx = application.applicationContext
+                        canvasResolveJob = viewModelScope.launch {
+                            delay(600)
+                            CanvasLog.d("VM: debounce fired, resolving songKey=$targetKey")
+                            val match = SpotifyCanvasRepository.resolve(song, appCtx)
+                            // Accept only if the song didn't change while resolving.
+                            if (lastCanvasSongKey == targetKey) {
+                                CanvasLog.d(
+                                    "VM: resolved songKey=$targetKey matched=${match.matched} " +
+                                        "url=${match.canvasUrl ?: "-"} source=${match.source} error=${match.error ?: "-"}"
+                                )
+                                _spotifyCanvas.value = match
+                            } else {
+                                CanvasLog.d("VM: stale result dropped songKey=$targetKey")
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
