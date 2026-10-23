@@ -3,6 +3,7 @@ build/
 out/
 *.user
 .vs/
+Testing/
 
 # Third-party binaries (download manual, jangan di-commit)
 third_party/mpv/lib/
