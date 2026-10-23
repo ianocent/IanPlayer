@@ -5,13 +5,36 @@ Update file ini di tiap phase M#
 
 | Milestone | Status |
 |---|---|
-| M0 Fondasi | 🟢 M0.1 + M0.2 + M0.3 selesai — lanjut M0.4 |
+| M0 Fondasi | 🟢 M0 selesai (M0.1–M0.4) — lanjut M1.1 |
 | M1 Local Library | ⚪ belum |
 | M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | ⚪ belum |
 | M4 Lyrics+Download | ⚪ belum |
 | M5 Visual | ⚪ belum |
 | M6 Desktop & Rilis | ⚪ belum |
+
+---
+
+## M0.4 — App shell QML (selesai, 2026-10-24)
+
+- [x] Layout: titlebar custom + rail 4 tab + konten kosong
+- [x] Font **Inter** bundel — 4 static TTF (Regular/Medium/SemiBold/Bold) di `src/resources/fonts/` (~1.6 MB), register via `QFontDatabase::addApplicationFont`, fail-soft; token tipografi masuk `Theme.qml` (display 44/700 … label 12/500, kontrol baku 40px)
+- [x] Tab reorderable via drag (threshold 20/80% atas-bawah item, geser lewat `ListModel.move`) + persist `tab_order` di QSettings (`Qt.labs.settings`, registry `HKCU\Software\ianocent\IanPlayer\ui`)
+- [x] Custom titlebar: `Qt.FramelessWindowHint` + `startSystemMove` di area titlebar + double-click → `showMaximized`/`showNormal` + 3 window button (min/max/close)
+- [x] Resize edge 8 MouseArea (`startSystemResize`, 4 sisi + 4 pojok, cursor shape pas, disable saat maximized)
+- [x] Icon.ico — HOLDING (lukis artwork, detail visual M5)
+
+Catatan M0.4 (jebakan yang ketemu & solusinya):
+1. **QML property ber-prefix `on` illegal** — `Theme.onAccent` dibaca parser sebagai handler signal → singleton gagal sejak M0.2 TANPA symptom serius (binding undefined disunyikan). Rename `accentContrast`. Aturan: jangan pernah bikin property mulai dengan `on`.
+2. **Singleton QML perlu diset eksplisit**: di Qt 6.8, `qt_add_qml_module` TIDAK scan `pragma Singleton` otomatis — qmldir generated cuma `Theme 1.0` biasa sampai `set_source_files_properties(src/ui/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)` ditambah (sebelum `qt_add_qml_module`).
+3. Root `ApplicationWindow` harus diimport unaliased — alias `C.` dihilangkan dari sample import; kamu judes `C.ApplicationWindow` diroot.
+4. Inline component (`component Foo : Bar`) — id luar tidak selalu resolve di dalam; jadikan property publik (mis. `hoverColor`) daripada refer id luar.
+5. `Qt.labs.settings` deprecated di Qt 6.8 — `Settings` BELUM tersedia di modul `QtCore` (cek qmldir Qt 6.8.3); kompromi: pakai labs dulu, migrasi ke `QSettings` C++ wrapper saat M1 settings store dibangun.
+6. `causedStdErrTest`: LNK1168 kalau exe test lupa di-kill dulu sebelum rebuild.
+
+Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
+
+Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
 
 ---
 

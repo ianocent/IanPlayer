@@ -30,6 +30,15 @@ qt_add_executable(ianplayer
     assets/app.manifest
 )
 
+qt_add_resources(ianplayer "app_fonts"
+    PREFIX "/"
+    FILES
+        src/resources/fonts/Inter-Regular.ttf
+        src/resources/fonts/Inter-Medium.ttf
+        src/resources/fonts/Inter-SemiBold.ttf
+        src/resources/fonts/Inter-Bold.ttf
+)
+
 target_include_directories(ianplayer PRIVATE ${MPV_DIR}/include)
 target_link_libraries(ianplayer PRIVATE
     Qt6::Quick
@@ -37,6 +46,10 @@ target_link_libraries(ianplayer PRIVATE
     ianplayer_core
     ${MPV_DIR}/lib/x86_64/mpv.lib
 )
+
+# Theme = QML singleton: generator qmldir cuma baca property QT_QML_SINGLETON_TYPE
+# ini (pragma Singleton di file tidak di-scan otomatis oleh qt 6.8 macros).
+set_source_files_properties(src/ui/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(ianplayer
     URI IanPlayer.PC

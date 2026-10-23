@@ -18,7 +18,7 @@ QtObject {
     // Accent — play red
     readonly property color accent:        "#E11D48"
     readonly property color accentHover:   "#F43F5E"
-    readonly property color onAccent:      "#FFFFFF"
+    readonly property color accentContrast: "#FFFFFF"
 
     // Border & state
     readonly property color border:       "#2A2D35"
@@ -33,4 +33,26 @@ QtObject {
     readonly property int radius: 8
     readonly property int radiusCard: 12
     readonly property int radiusArtwork: 20
+
+    // Tipografi — keluarga "Inter" (registered via QFontDatabase, 4 weight)
+    // token sesuai docs/03-DESIGN-SYSTEM.md bagian 2
+    readonly property string fontFamily: "Inter"
+    readonly property string fontFamilyFallback: "Segoe UI"
+
+    readonly property int sizeDisplay: 44   // 700 — empty state, splash
+    readonly property int sizeH1: 32        // 600 — screen title
+    readonly property int sizeH2: 24        // 600 — section title
+    readonly property int sizeH3: 18        // 500 — card title
+    readonly property int sizeBody: 16      // 400 — isi
+    readonly property int sizeSmall: 13     // 400 — artist, durasi
+    readonly property int sizeLabel: 12     // 500 — uppercase, +0.8 tracking
+
+    readonly property int weightRegular: 400
+    readonly property int weightMedium: 500
+    readonly property int weightSemiBold: 600
+    readonly property int weightBold: 700
+
+    // Kontrol baku (bagian 3)
+    readonly property int controlHeight: 40
+    readonly property int rowHeight: 64
 }

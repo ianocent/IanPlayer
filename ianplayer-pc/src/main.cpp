@@ -1,6 +1,8 @@
 #include <QGuiApplication>
 #include <QQuickStyle>
 #include <QQmlApplicationEngine>
+#include <QFontDatabase>
+#include <QFont>
 #include <QObject>
 #include <QFileInfo>
 #include <QTimer>
@@ -118,6 +120,18 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("IanPlayer"));
     app.setApplicationVersion(QStringLiteral("0.1.0"));
     app.setOrganizationName(QStringLiteral("ianocent"));
+
+    // Font bundel (M0.4): Inter static 4 weight; fail-soft kalau resource hilang
+    const QStringList fontFiles = {
+        QStringLiteral(":/fonts/Inter-Regular.ttf"),
+        QStringLiteral(":/fonts/Inter-Medium.ttf"),
+        QStringLiteral(":/fonts/Inter-SemiBold.ttf"),
+        QStringLiteral(":/fonts/Inter-Bold.ttf"),
+    };
+    for (const QString &file : fontFiles)
+        [[maybe_unused]] const int fontId = QFontDatabase::addApplicationFont(file);
+    if (QFontDatabase::families().contains(QLatin1String("Inter")))
+        app.setFont(QFont(QStringLiteral("Inter"), 10));
 
     // Mode CLI smoke "Hello Audio" (exit criteria M0.3)
     const QStringList args = QCoreApplication::arguments();
