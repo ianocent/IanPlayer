@@ -1,0 +1,21 @@
+# Line endings — locked per-bagian, biar aman repo dual (Android + PC)
+* text=auto
+
+*.cpp text eol=crlf
+*.h text eol=crlf
+*.hpp text eol=crlf
+*.qml text eol=crlf
+*.md text eol=crlf
+*.txt text eol=crlf
+*.json text eol=crlf
+*.cmake text eol=crlf
+*.def text eol=crlf
+*.manifest text eol=crlf
+
+# Binary
+*.dll binary
+*.7z binary
+*.exe binary
+*.ico binary
+*.png binary
+*.pdf binary

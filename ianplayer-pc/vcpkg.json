@@ -1,0 +1,9 @@
+{
+  "name": "ianplayer-pc",
+  "version": "0.1.0",
+  "builtin-baseline": "40a678a192636131f04b3af79ba118d869effade",
+  "dependencies": [
+    "taglib",
+    { "name": "gtest", "version>=": "1.14.0" }
+  ]
+}

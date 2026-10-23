@@ -5,13 +5,37 @@ Update file ini di tiap phase M#
 
 | Milestone | Status |
 |---|---|
-| M0 Fondasi | 🟢 M0.1 selesai — M0.2 siap dimulai |
+| M0 Fondasi | 🟢 M0.1 + M0.2 selesai — lanjut M0.3 |
 | M1 Local Library | ⚪ belum |
 | M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | ⚪ belum |
 | M4 Lyrics+Download | ⚪ belum |
 | M5 Visual | ⚪ belum |
 | M6 Desktop & Rilis | ⚪ belum |
+
+---
+
+## M0.2 — CMake skeleton (selesai, 2026-10-23)
+
+- [x] Struktur repo lengkap (`src/{app,core,db,playback,net,models,ui,resources}`, `third_party`, `assets`, `docs`)
+- [x] `CMakeLists.txt` root — target `ianplayer`, C++20, Qt6::Quick + QuickControls2, mpv.lib linked, POST_BUILD copy `libmpv-2.dll`
+- [x] `CMakePresets.json` — debug/release; toolchain vcpkg **pin hardcode ke `C:/dev/vcpkg`** (VsDevCmd menimpa `VCPKG_ROOT` ke `VC\vcpkg` bawaan VS yang versi lama)
+- [x] `vcpkg.json` — taglib 2.3.1 + gtest 1.18.0 installed (manifest + `builtin-baseline`, pertama kali ~4.3 menit, sekarang cache)
+- [x] `src/main.cpp` — QGuiApplication + QQmlApplicationEngine + style Basic + fail-fast QML error
+- [x] `src/ui/Theme.qml` — singleton design token
+- [x] `src/ui/AppWindow.qml` — window 960×640 dark, sidebar 4 tab placeholder + label versi
+- [x] `assets/app.manifest` — longPathAware + PerMonitorV2 + Win10/11 supportedOS
+- [x] `.gitattributes` — CRLF per-bagian + binary (scope folder `ianplayer-pc/`, Android tak terpengaruh)
+- [x] Flags `/W4 /permissive- /utf-8`
+- [ ] Icon.ico — HOLDING, kerjakan di M0.4 (custom titlebar) bersama artwork
+
+**Verified:** `cmake --preset debug && cmake --build --preset debug` → `build/debug/Debug/ianplayer.exe` → app RUNNING, window QML tampil.
+
+Catatan M0.2 (jebakan yang ketemu & solusinya):
+1. `qt_policy` wajib dipanggil SETELAH `find_package(Qt6)` — sebelum itu command-nya belum ada.
+2. `QQuickStyle` butuh module `QuickControls2`, tidak cuma `Quick`.
+3. VsDevCmd menimpa `VCPKG_ROOT` → vcpkg bawaan VS menuntut `builtin-baseline`; solusi: presets pin toolchain `C:/dev/vcpkg` + `builtin-baseline` di `vcpkg.json`.
+4. Runtime dev: PATH perlu ditambah `C:\Qt\6.8.3\msvc2022_64\bin` agar `Qt6*.dll` ketemu (deploy final pakai windeployqt di M6).
 
 ---
 
