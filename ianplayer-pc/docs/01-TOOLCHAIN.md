@@ -39,7 +39,18 @@ winget install --id Kitware.CMake --exact
 
 Pilih "Add CMake to PATH" saat installer muncul opsinya.
 
-### 1.3 Qt 6.7 LTS
+### 1.3 Qt 6.8 LTS
+
+Terpasang di project ini via aqtinstall (tanpa akun Qt):
+
+```powershell
+pip install aqtinstall
+python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -O C:\Qt -m qtimageformats qtshadertools
+```
+
+Alternatif: installer resmi di `https://www.qt.io/download-qt-installer` (perlu akun Qt gratis), pilih `MSVC 2022 64-bit` + module `qtimageformats`, `qtshadertools`.
+
+Catatan: Qt 6.7.x tidak punya arsitektur `msvc2022_64` (cuma `msvc2019_64`), jadi project ini pin Qt 6.8.3 LTS yang punya binary native `win64_msvc2022_64`.
 
 ```powershell
 winget install --id QtProject.Qt.DesignStudio --exact  # optional, untuk desain QML
@@ -54,7 +65,7 @@ Download installer online Qt lebih dari itu: masuk `https://www.qt.io/download-q
   - `Additional Libraries` → **Qt Advanced (Debug symbols)** biar crashes bisa di-trace
 - **Developer and Designer Tools** → Qt Creator (editor QML enak, walaupun coding utama bisa tetap VS)
 
-Lokasi default: `C:\Qt\6.7.3\msvc2022_64`. Kalau versi beda, sesuaikan di `CMAKE_PREFIX_PATH`.
+Lokasi default: `C:\Qt\6.8.3\msvc2022_64`. Kalau versi beda, sesuaikan di `CMAKE_PREFIX_PATH`.
 
 ### 1.4 vcpkg
 
@@ -107,14 +118,24 @@ ianplayer-pc/
 
 ### Libmpv (audio backend)</think><tool_call>edit<arg_key>newString</arg_key><arg_value>### Libmpv (audio backend)
 
-**Jangan pakai vcpkg untuk libmpv.** Versi di vcpkg sering telat. Ambil build resmi:
+**Jangan pakai vcpkg untuk libmpv.** Versi di vcpkg sering telat/lebih kecil di pilihan build. Ambil build resmi dari release:
 
 ```powershell
-# Ambil rilis terbaru di https://sourceforge.net/projects/mpv-player-windows/files/libmpv/
-# Simpan isi paket ke third_party/mpv/
-#   include/     -> client.h (render.h & render_gl.h opsional)
-#   lib/x86_64/  -> mpv.lib (import lib) + mpv-2.dll
-# mpv-2.dll harus di sebelah .exe saat deploy
+# Sumber: https://github.com/shinchiro/mpv-winbuild-cmake/releases (tag terbaru)
+# Asset: mpv-dev-x86_64-<date>-<hash>.7z   (yang polos, BUKAN -v3)
+# Ekstrak pakai 7-Zip atau 7z CLI; jangan yang Python py7zr (BCJ2 unsupported)
+# Layout hasil:
+#   include/mpv/     -> client.h, render.h, render_gl.h, stream_cb.h
+#   libmpv-2.dll     -> pindah ke third_party/mpv/lib/x86_64/
+#   libmpv.dll.a     -> import lib MinGW; untuk MSVC generate mpv.lib sendiri (di bawah)
+```
+
+Generate import lib MSVC (sekali saja, butuh VS Developer PowerShell terpasang):
+
+```powershell
+dumpbin /exports third_party\mpv\lib\x86_64\libmpv-2.dll > exports.txt
+# buat exports.def: garis eksport -> "EXPORTS" + nama eksport
+lib /def:exports.def /machine:X64 /out:third_party\mpv\lib\x86_64\mpv.lib
 ```
 
 Include & link di `CMakeLists.txt`:
@@ -180,7 +201,7 @@ Deps penting via vcpkg:
       "binaryDir": "${sourceDir}/build/${presetName}",
       "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
       "cacheVariables": {
-        "CMAKE_PREFIX_PATH": "C:/Qt/6.7.3/msvc2022_64",
+        "CMAKE_PREFIX_PATH": "C:/Qt/6.8.3/msvc2022_64",
         "CMAKE_TOOLCHAIN_FILE": "",
         "VCPKG_TARGET_TRIPLET": "x64-windows"
       }

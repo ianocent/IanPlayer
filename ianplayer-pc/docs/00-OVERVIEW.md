@@ -32,7 +32,7 @@ Opsi yang dievaluasi:
 ### Keputusan stack
 
 - **Language:** C++20 (MSVC v143)
-- **UI:** Qt 6.7 LTS, QML Quick. Glass/blur pakai `MultiEffect` + layer blur; Haze Android diganti implementasi QML
+- **UI:** Qt 6.8 LTS, QML Quick. Glass/blur pakai `MultiEffect` + layer blur; Haze Android diganti implementasi QML
 - **Audio engine:** libmpv (ia bukan cuma video: audio decode semua format, gapless, WASAPI output). Alternatif QMediaPlayer ditolak: codec support cacat (flac/opus ok tapi gapless dan format eksotik lemah)
 - **Stream URL resolution:** bundel `yt-dlp.exe` sebagai child process. Alasan di bawah
 - **Build:** CMake + vcpkg, MSVC

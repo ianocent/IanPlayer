@@ -28,7 +28,7 @@ Goal: environment jalan, skeleton build, audio lokal + YouTube putar dari comman
 ### Phase M0.1 — Environment (0.5-1 hari)
 
 - [ ] Ikuti semua langkah `01-TOOLCHAIN.md` bagian 1: VS 2022, CMake, Qt 6.7 msvc64, vcpkg, Python.
-- [ ] Download libmpv terbaru (SourceForge, folder files/libmpv), extract ke `third_party/mpv/`.
+- [ ] Download libmpv terbaru — build GitHub `shinchiro/mpv-winbuild-cmake` (asset `mpv-dev-x86_64-<date>-<hash>.7z`, pakai yang biasa, bukan `v3`) ke `third_party/mpv/`. Isi sudah tersusun: `include/mpv/*.h`, `lib/x86_64/libmpv-2.dll`. Import lib `mpv.lib` digenerate sendiri setelah VS terpasang (lihat di bawah).
 - [ ] Download `yt-dlp.exe` standalone terbaru (GitHub releases) ke `third_party/ytdlp/`. Yang exe standalone, bukan source tarball.
 - [ ] Cek versi di Developer PowerShell: `cmake --version`, `yt-dlp.exe --version`, `vcpkg version`.
 

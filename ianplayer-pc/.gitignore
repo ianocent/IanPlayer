@@ -1,0 +1,26 @@
+# Build output
+build/
+out/
+*.user
+.vs/
+
+# Third-party binaries (download manual, jangan di-commit)
+third_party/mpv/lib/
+third_party/mpv/*.dll
+third_party/mpv/*.7z
+third_party/mpv/extract/
+third_party/ytdlp/
+*.exe
+*.lib
+*.exports*
+exports.txt
+
+# Secrets / keys (mengikuti konsep keys.properties Android)
+keys.properties
+config/*.local.toml
+
+# IDE
+.idea/
+*.autosave
+.qtc_clangd/
+CMakeUserPresets.json
