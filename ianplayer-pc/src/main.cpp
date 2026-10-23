@@ -1,6 +1,116 @@
 #include <QGuiApplication>
-#include <QQmlApplicationEngine>
 #include <QQuickStyle>
+#include <QQmlApplicationEngine>
+#include <QObject>
+#include <QFileInfo>
+#include <QTimer>
+
+#include "playback/playback_controller.h"
+#include "net/stream_url_resolver.h"
+
+#include <iostream>
+
+#include <windows.h>
+
+namespace {
+
+// Mode CLI dipanggil dari terminal: exe subsystem GUI tak punya stdout.
+// Attach ke console parent biar cout kelihatan.
+void attachParentConsole()
+{
+    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        freopen("CONOUT$", "w", stdout);
+        freopen("CONOUT$", "w", stderr);
+    }
+}
+
+constexpr const char *kAudioExt = "mp3 flac m4a aac wav ogg opus";
+
+bool looksLikeUrl(const QString &arg)
+{
+    const QUrl url = QUrl::fromUserInput(arg);
+    return url.isValid()
+        && (url.scheme() == QLatin1String("http") || url.scheme() == QLatin1String("https"));
+}
+
+bool looksLikeLocalMedia(const QString &arg)
+{
+    const QFileInfo fi(arg);
+    if (!fi.exists() || !fi.isFile())
+        return false;
+    const QStringList extensions = QString::fromUtf8(kAudioExt).split(QLatin1Char(' '));
+    return extensions.contains(fi.suffix().toLower());
+}
+
+// Smoke "Hello Audio": IanPlayer.exe <file.flac|YouTube URL>
+// Skrip programatik: main 6 s -> seek +10 -> jeda -> lanjut + volume 60 -> keluar
+// pada endReached (atau timeout 120 s). Output progres ke stdout.
+int runHiAudio(const QGuiApplication &app, const QString &target)
+{
+    attachParentConsole();
+
+    PlaybackController mpv;
+    if (!mpv.valid()) {
+        std::cout << "[FAIL] mpv tidak siap\n";
+        return 1;
+    }
+
+    QString trackUrl;
+    if (looksLikeUrl(target)) {
+        StreamUrlResolver resolver;
+        QString err;
+        const auto resolved = resolver.getStreamUrl(QUrl::fromUserInput(target), &err);
+        if (!resolved) {
+            std::cout << "[FAIL] resolve streaming: " << err.toStdString() << "\n";
+            return 1;
+        }
+        std::cout << "[CACHE/RESOLVE] expiresAtMs=" << resolved->expiresAtMs << "\n";
+        trackUrl = resolved->url;
+    } else {
+        trackUrl = QUrl::fromLocalFile(QFileInfo(target).absoluteFilePath()).toString();
+    }
+
+    QObject::connect(&mpv, &PlaybackController::trackLoaded, [] {
+        std::cout << "[LOAD] file loaded, mulai putar\n";
+    });
+    QObject::connect(&mpv, &PlaybackController::endReached, [&app] {
+        std::cout << "[END] eof tercapai\n";
+        app.quit();
+    });
+    QObject::connect(&mpv, &PlaybackController::errorOccurred, [&app](const QString &msg) {
+        std::cout << "[ERR] " << msg.toStdString() << "\n";
+        app.quit();
+    });
+
+    QTimer::singleShot(6000, [&mpv] {
+        std::cout << "[SEEK] +10 s (pos=" << mpv.positionSeconds() << ")\n";
+        mpv.seekBy(10.0);
+    });
+    QTimer::singleShot(8000, [&mpv] {
+        std::cout << "[PAUSE]\n";
+        mpv.pause();
+    });
+    QTimer::singleShot(10000, [&mpv] {
+        std::cout << "[RESUME] volume->60\n";
+        mpv.setVolume(60);
+        mpv.play();
+    });
+    // Safety quit: jangan gantung kalau track lebih panjang dari skrip
+    QTimer::singleShot(120000, [&app] {
+        std::cout << "[TIMEOUT]\n";
+        app.quit();
+    });
+
+    mpv.loadTrack(QUrl(trackUrl));
+
+    const int rc = app.exec();
+    // Teardown order aman: PlaybackController dibangun STACK sebelum app keluar
+    // scope main (destructor mpv=stop -> join thread -> mpv_terminate_destroy,
+    // jauh sebelum QGuiApplication destructor).
+    return rc == 0 ? 0 : 1;
+}
+
+} // namespace
 
 int main(int argc, char *argv[])
 {
@@ -9,10 +119,21 @@ int main(int argc, char *argv[])
     app.setApplicationVersion(QStringLiteral("0.1.0"));
     app.setOrganizationName(QStringLiteral("ianocent"));
 
+    // Mode CLI smoke "Hello Audio" (exit criteria M0.3)
+    const QStringList args = QCoreApplication::arguments();
+    if (args.size() > 1) {
+        const QString target = args.at(1);
+        if (looksLikeUrl(target) || looksLikeLocalMedia(target))
+            return runHiAudio(app, target);
+        std::cout << "Argumen bukan file media atau URL yang dikenal: "
+                  << target.toStdString() << "\n";
+        return 2;
+    }
+
+    // Mode GUI biasa
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     QQmlApplicationEngine engine;
-
     QObject::connect(
         &engine,
         &QQmlApplicationEngine::objectCreationFailed,

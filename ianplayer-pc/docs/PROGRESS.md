@@ -5,13 +5,50 @@ Update file ini di tiap phase M#
 
 | Milestone | Status |
 |---|---|
-| M0 Fondasi | 🟢 M0.1 + M0.2 selesai — lanjut M0.3 |
+| M0 Fondasi | 🟢 M0.1 + M0.2 + M0.3 selesai — lanjut M0.4 |
 | M1 Local Library | ⚪ belum |
 | M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | ⚪ belum |
 | M4 Lyrics+Download | ⚪ belum |
 | M5 Visual | ⚪ belum |
 | M6 Desktop & Rilis | ⚪ belum |
+
+---
+
+## M0.3 — libmpv audio chain (selesai, 2026-10-24)
+
+- [x] `PlaybackController` (`src/playback/`) — `mpv_create` + option `volume=100`, `gapless-audio=weak`, ao default WASAPI
+- [x] `loadTrack(url)` async via `mpv_command_async`
+- [x] Observe properties: `time-pos`, `duration`, `pause`, `eof-reached`, `metadata` — event loop `mpv_wait_event` di `std::thread` sendiri, sinyal Qt ke main thread (auto-queue)
+- [x] Teardown order aman: stop → join thread → `mpv_terminate_destroy` (destructor stack sebelum QGuiApplication)
+- [x] CLI test 1: `ianplayer.exe <file.mp3>` — LOADED + eof ✓ (`ting_iphone.mp3`)
+- [x] CLI test 2: `ianplayer.exe <YouTube URL>` — resolve yt-dlp → load → seek +10 → pause → resume + volume 60 → timeout ✓
+- [x] `StreamUrlResolver` (`src/net/`) — yt-dlp `-J --no-download` via `QProcess::setProgram+setArguments`, pilih format audio-only (vcodec none, acodec ada) bitrate tertinggi
+- [x] Cache SQLite `cached_stream_urls` (videoId/url/resolvedAtMs/expiresAtMs) di `%LOCALAPPDATA%\ianocent\IanPlayer\ianplayer-pc.db` — file muncul ✓
+- [x] Parser `expire=` epoch (pure static, testable) + fallback TTL 6 jam
+- [x] gtest `ianplayer_tests` — 10 test parser expire + videoId + host filter: **10/10 PASS**
+- [x] CMake: lib `ianplayer_core` (non-UI, shared exe+tests), `find_package(Sql, GTest)`, POST_BUILD copy yt-dlp.exe + libmpv-2.dll
+- [x] Mode CLI attach parent console (`AttachConsole`) — subsystem GUI tak punya stdout default
+
+Catatan M0.3 (jebakan yang ketemu & solusinya):
+1. **`mpv.lib` import-lib salah nama DLL**: `lib /def:exports.def` tanpa direktif `LIBRARY` membuat import table menunjuk `exports.dll` (nama file def) → runtime `0xc0000135 STATUS_DLL_NOT_FOUND`. Solusi: tambah baris `LIBRARY libmpv-2.dll` di baris-1 def lalu regen `lib /def:...`.
+2. ctest harus dijalankan dari `build/debug` (bukan source root), dan itu pun opt-in PATH Qt bin.
+3. Debug-compile memakai DLL Qt bertambah `d` suffix (Qt6Cored.dll dst) → PATH `C:\Qt\6.8.3\msvc2022_64\bin` dengan Debug runtime.
+4. `dumpbin /dependents` = cara cepat diagnosa DLL not found pre-lah.
+
+Verified smoke:
+```
+[LOAD] file loaded, mulai putar
+[END] eof tercapai
+```
+```
+[CACHE/RESOLVE] expiresAtMs=1792803518000
+[LOAD] file loaded, mulai putar
+[SEEK] +10 s (pos=5.46233)
+[PAUSE]
+[RESUME] volume->60
+[TIMEOUT]
+```
 
 ---
 
