@@ -6,7 +6,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Core Sql)
+find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Core Sql Concurrent Gui)
+find_package(TagLib CONFIG REQUIRED)
 
 qt_policy(SET QTP0001 NEW)
 qt_policy(SET QTP0004 NEW)
@@ -27,6 +28,12 @@ qt_add_executable(ianplayer
     src/main.cpp
     src/playback/playback_controller.h
     src/playback/playback_controller.cpp
+    src/core/library_scanner.h
+    src/core/library_scanner.cpp
+    src/db/library_database.h
+    src/db/library_database.cpp
+    src/app/library_service.h
+    src/app/library_service.cpp
     assets/app.manifest
 )
 
@@ -43,6 +50,8 @@ target_include_directories(ianplayer PRIVATE ${MPV_DIR}/include)
 target_link_libraries(ianplayer PRIVATE
     Qt6::Quick
     Qt6::QuickControls2
+    Qt6::Concurrent
+    TagLib::TagLib
     ianplayer_core
     ${MPV_DIR}/lib/x86_64/mpv.lib
 )
@@ -69,9 +78,14 @@ find_package(GTest CONFIG REQUIRED)
 
 add_executable(ianplayer_tests
     src/tests/stream_url_test.cpp
+    src/tests/filename_parse_test.cpp
+    src/core/library_scanner.h
+    src/core/library_scanner.cpp
 )
 target_link_libraries(ianplayer_tests PRIVATE
     ianplayer_core
+    TagLib::TagLib
+    Qt6::Gui
     GTest::gtest
     GTest::gtest_main
 )

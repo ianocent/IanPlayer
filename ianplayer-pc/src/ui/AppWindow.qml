@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls as C
 import QtQuick.Layouts
+import QtQuick.Dialogs 1.3
 import Qt.labs.settings
 import IanPlayer.PC
 
@@ -264,12 +265,91 @@ C.ApplicationWindow {
                     weight: Theme.weightSemiBold
                 }
             }
+            component SongsPane : Column {
+                anchors {
+                    top: contentTitle.bottom
+                    left: contentTitle.left
+                    right: parent.right
+                    topMargin: 16
+                }
+                spacing: 12
+
+                C.Label {
+                    text: qsTr("Penyimpanan Lokal")
+                    font {
+                        family: Theme.fontFamily
+                        pixelSize: Theme.sizeH4
+                        weight: Theme.weightSemiBold
+                    }
+                    color: Theme.textPrimary
+                }
+
+                RowLayout {
+                    spacing: 8
+
+                    C.Button {
+                        text: qsTr("Scan Folder")
+                        onClicked: folderDialog.open()
+                    }
+
+                    C.Button {
+                        text: qsTr("Rescan")
+                        enabled: !LibraryService.scanning
+                        onClicked: LibraryService.rescanNow()
+                    }
+                }
+
+                FolderDialog {
+                    id: folderDialog
+                    title: qsTr("Pilih folder musik")
+                    onAccepted: LibraryService.addRoot(folder)
+                }
+
+                C.ProgressBar {
+                    Layout.fillWidth: true
+                    from: 0
+                    to: LibraryService.progressTotal > 0 ? LibraryService.progressTotal : 100
+                    value: LibraryService.progressCurrent
+                    visible: LibraryService.scanning && LibraryService.progressTotal > 0
+                }
+
+                C.Label {
+                    text: LibraryService.scanStatusText
+                    color: Theme.textSecondary
+                    font {
+                        family: Theme.fontFamily
+                        pixelSize: Theme.sizeSmall
+                        weight: Theme.weightMedium
+                    }
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                C.Label {
+                    text: qsTr("%1 lagu di library").arg(LibraryService.songCount)
+                    color: Theme.textDisabled
+                    font {
+                        family: Theme.fontFamily
+                        pixelSize: Theme.sizeSmall
+                    }
+                }
+            }
+
+            // ---- content pane ----
+            SongsPane {
+                id: songsPane
+                visible: tabsModel.count > 0
+                    && tabsModel.get(tabRail.activeIndex % tabsModel.count).name === qsTr("Songs")
+            }
+
             C.Label {
                 anchors {
                     top: contentTitle.bottom
                     left: contentTitle.left
-                    topMargin: 8
+                    topMargin: 16
                 }
+                visible: tabsModel.count === 0
+                    || tabsModel.get(tabRail.activeIndex % tabsModel.count).name !== qsTr("Songs")
                 text: qsTr("Konten menyusul di milestone M1+")
                 color: Theme.textSecondary
                 font {

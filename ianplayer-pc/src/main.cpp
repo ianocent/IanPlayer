@@ -1,14 +1,20 @@
 #include <QGuiApplication>
 #include <QQuickStyle>
 #include <QQmlApplicationEngine>
+#include <QQmlContext>
 #include <QFontDatabase>
 #include <QFont>
 #include <QObject>
 #include <QFileInfo>
 #include <QTimer>
+#include <QStandardPaths>
 
 #include "playback/playback_controller.h"
 #include "net/stream_url_resolver.h"
+
+#include "core/library_scanner.h"
+#include "db/library_database.h"
+#include "app/library_service.h"
 
 #include <iostream>
 
@@ -148,6 +154,15 @@ int main(int argc, char *argv[])
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     QQmlApplicationEngine engine;
+
+    // DB + scanner + service (M1.1) — di-expose ke QML context
+    const QString dbPath = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
+        + QStringLiteral("/ianplayer-pc.db");
+    LibraryScanner scanner;
+    LibraryDatabase libDb(dbPath);
+    LibraryService service(&scanner, &libDb);
+    engine.rootContext()->setContextProperty(QStringLiteral("LibraryService"), &service);
+
     QObject::connect(
         &engine,
         &QQmlApplicationEngine::objectCreationFailed,

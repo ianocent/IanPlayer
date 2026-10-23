@@ -9,7 +9,7 @@
 
 // Resolusi URL streaming (M0.3 scope): YouTube URL -> direct googlevideo URL via
 // yt-dlp.exe (QProcess), dengan cache SQLite tabel `cached_stream_urls`
-// (schema samados Android Room: videoId, url, resolvedAtMs, expiresAtMs).
+// (schema 02-ARCHITECTURE.md: video_id, url, resolvedAtMs, expiresAtMs).
 //
 // Pure helper (static, tanpa side effect) dipisah biar ke-test gtest.
 class StreamUrlResolver

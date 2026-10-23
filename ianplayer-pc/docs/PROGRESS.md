@@ -6,7 +6,7 @@ Update file ini di tiap phase M#
 | Milestone | Status |
 |---|---|
 | M0 Fondasi | 🟢 M0 selesai (M0.1–M0.4) — lanjut M1.1 |
-| M1 Local Library | ⚪ belum |
+| M1 Local Library | 🟢 M1.1 selesai (folder scan + TagLib + SQLite) — lanjut M1.2 |
 | M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | ⚪ belum |
 | M4 Lyrics+Download | ⚪ belum |
@@ -38,7 +38,31 @@ Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-cli
 
 ---
 
-## M0.3 — libmpv audio chain (selesai, 2026-10-24)
+## M1.1 — Folder scan + metadata TagLib + SQLite library (selesai, 2026-10-24)
+
+- [x] `LibraryScanner` (`src/core/library_scanner.{h,cpp}`): traverse rekursif multi folder; ekstensi mp3/flac/m4a/aac/wav/ogg/opus; skip folder sistem & dotfolder (System Volume Information, $RECYCLE.BIN, Windows, Program Files, AppData, dll)
+- [x] TagLib: title/artist/album/track/year/duration_ms/bitrate dari tag; embedded album art (mp3 APIC, FLAC picture, m4a/aac covr) → thumbnail 256 & 64 px JPEG q85 di `%LOCALAPPDATA%\ianocent\IanPlayer\thumbnails\<sha1(album|artist)>_{256,64}.jpg`
+- [x] Fallback `"Artist - Title"` dari nama file — port 1:1 `MusicRepository.kt` (dashIndex > 0), tidak ada dash → Unknown Artist
+- [x] `LibraryDatabase` (`src/db/library_database.{h,cpp}`): schema per `02-ARCHITECTURE.md` (songs, albums, artists, playlists, playlist_songs, favorites, play_counts, play_history, cached_stream_urls → kolom `video_id`), `PRAGMA journal_mode=WAL`, connection `library#<dbPath>` di `%LOCALAPPDATA%\ianocent\IanPlayer\ianplayer-pc.db`
+- [x] Incremental scan: `knownModifiedByPath` → skip TagLib kalau `modified_ts` masih cocok; akhir scan `upsertSong` batch transaksi + `markUnavailableExcept` + `rebuildIndexes` (artist_id/album_id + tabel albums/artists/art_256)
+- [x] `QFileSystemWatcher` pada roots + debounce 2 s → rescan incrementil
+- [x] `LibraryService` (`src/app/library_service.{h,cpp}`) diexpose ke QML sebagai context property `LibraryService`: `scanning`, `progressCurrent/Total`, `songCount`, `scanStatusText`, `addRoot/removeRoot/rescanNow`; roots persist QSettings (`library/folder_roots`)
+- [x] `main.cpp`: daftar LibraryScanner/LibraryDatabase/LibraryService, context property, `QStandardPaths::AppLocalDataLocation/ianplayer-pc.db`; `QGuiApplication` org "ianocent" / app "IanPlayer"
+- [x] `AppWindow.qml`: tab **Songs** → `SongsPane`: tombol Scan Folder (`FolderDialog`), Rescan, `ProgressBar`, status text, counter lagu; import `QtQuick.Dialogs 1.3`
+- [x] `StreamUrlResolver`: migrasi kolom cache `videoId` → `video_id` (ALTER TABLE di ctor + semua query), sesuai 02-ARCHITECTURE.md
+- [x] CMakeLists: `Qt6::Concurrent` + `Qt6::Gui` (tests), `find_package(TagLib CONFIG REQUIRED)` + link `TagLib::TagLib`, 4 file baru masuk exe; `library_scanner` + test baru masuk `ianplayer_tests`
+- [x] gtest `ParseTaglessFileNameTest`: 5 case (dash split, multi-dash, no-dash, leading dash, empty parts) — **PASS**
+- [x] Build debug via `cmake --preset debug && cmake --build --preset debug` — lolos (VsDevCmd + PATH Qt bin); `ianplayer_tests.exe` → **15/15 PASS**
+- [x] Smoke clash GUI: app alive, start bersih, tidak crash
+
+Catatan M1.1:
+1. `QImage` di header scanner → forward declaration saja (`class QImage;`), include `.cpp`, agar target tests (hanya Qt Core) tidak butuh QtGui include path; tests link `Qt6::Gui` untuk QImage di implementasi scanner.
+2. `QSqlDatabase::exec()` deprecated warning Qt 6.8 — biarkan, gunakan `QSqlQuery::exec()` di kode baru.
+3. `Q_DECLARE_METATYPE` butuh `<QtCore/qmetatype.h>` (bukan cuma `<QtGlobal>`).
+4. TagLib 2.3.1: gambar lewat `tag->frameList("APIC")` (mp3), `flac.pictureList().front()->data()`, `mp4 tag->item("covr").toCoverArtList().front().data()`.
+5. Exe debug di `build\debug\Debug\ianplayer.exe`; kill proses lama dulu (LNK1168).
+
+---
 
 - [x] `PlaybackController` (`src/playback/`) — `mpv_create` + option `volume=100`, `gapless-audio=weak`, ao default WASAPI
 - [x] `loadTrack(url)` async via `mpv_command_async`

@@ -64,10 +64,16 @@ StreamUrlResolver::StreamUrlResolver(QString dbPath)
     QSqlQuery q(m_db);
     q.exec(QStringLiteral(
         "CREATE TABLE IF NOT EXISTS cached_stream_urls ("
-        "videoId TEXT PRIMARY KEY NOT NULL,"
+        "video_id TEXT PRIMARY KEY NOT NULL,"
         "url TEXT NOT NULL,"
         "resolvedAtMs INTEGER NOT NULL,"
         "expiresAtMs INTEGER NOT NULL)"));
+
+    // Migrasi dari tabel lama (kolom videoId): rename ke video_id sesuai
+    // 02-ARCHITECTURE.md. Abaikan error kalau sudah video_id / tabel belum ada.
+    QSqlQuery mig(m_db);
+    mig.exec(QStringLiteral(
+        "ALTER TABLE cached_stream_urls RENAME COLUMN videoId TO video_id"));
 }
 
 bool StreamUrlResolver::isYouTubeUrl(const QUrl &url)
@@ -168,7 +174,7 @@ StreamUrlResolver::lookupCache(const QString &videoId)
 
     QSqlQuery q(m_db);
     q.prepare(QStringLiteral(
-        "SELECT url, resolvedAtMs, expiresAtMs FROM cached_stream_urls WHERE videoId = :id"));
+        "SELECT url, resolvedAtMs, expiresAtMs FROM cached_stream_urls WHERE video_id = :id"));
     q.bindValue(QStringLiteral(":id"), videoId);
     if (!q.exec() || !q.next())
         return std::nullopt;
@@ -182,7 +188,7 @@ StreamUrlResolver::lookupCache(const QString &videoId)
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (now >= item.expiresAtMs) {
         QSqlQuery del(m_db);
-        del.prepare(QStringLiteral("DELETE FROM cached_stream_urls WHERE videoId = :id"));
+        del.prepare(QStringLiteral("DELETE FROM cached_stream_urls WHERE video_id = :id"));
         del.bindValue(QStringLiteral(":id"), videoId);
         del.exec();
         return std::nullopt;
@@ -198,7 +204,7 @@ void StreamUrlResolver::storeToCache(const ResolvedStream &item)
     QSqlQuery q(m_db);
     q.prepare(QStringLiteral(
         "INSERT OR REPLACE INTO cached_stream_urls"
-        " (videoId, url, resolvedAtMs, expiresAtMs)"
+        " (video_id, url, resolvedAtMs, expiresAtMs)"
         " VALUES (:id, :url, :resolved, :expires)"));
     q.bindValue(QStringLiteral(":id"), item.videoId);
     q.bindValue(QStringLiteral(":url"), item.url);
