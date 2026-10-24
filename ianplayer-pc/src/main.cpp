@@ -19,6 +19,8 @@
 #include "models/library_proxy_model.h"
 #include "models/album_list_model.h"
 #include "models/artist_list_model.h"
+#include "models/playlist_list_model.h"
+#include "models/playlist_song_model.h"
 
 #include <iostream>
 
@@ -174,9 +176,13 @@ int main(int argc, char *argv[])
     songProxy.sort(0);
     AlbumListModel albumModel(&libDb);
     ArtistListModel artistModel(&libDb);
+    PlaylistListModel playlistModel(&libDb);
+    PlaylistSongModel playlistSongsModel(&libDb);
     engine.rootContext()->setContextProperty(QStringLiteral("LibraryProxy"), &songProxy);
     engine.rootContext()->setContextProperty(QStringLiteral("AlbumListModel"), &albumModel);
     engine.rootContext()->setContextProperty(QStringLiteral("ArtistListModel"), &artistModel);
+    engine.rootContext()->setContextProperty(QStringLiteral("PlaylistListModel"), &playlistModel);
+    engine.rootContext()->setContextProperty(QStringLiteral("PlaylistSongModel"), &playlistSongsModel);
 
     // snapshot ulang model saat scan sukses / favorit ganti
     QObject::connect(&service, &LibraryService::libraryChanged, [&] {
@@ -188,6 +194,15 @@ int main(int argc, char *argv[])
     QObject::connect(&service, &LibraryService::favoritesChanged, [&] {
         songModel.reload();
         songProxy.invalidate();
+    });
+    QObject::connect(&service, &LibraryService::playlistsChanged, [&] {
+        playlistModel.reload();
+    });
+    QObject::connect(&service, &LibraryService::playlistContentsChanged,
+                     [&](qint64 playlistId) {
+        if (playlistId == playlistSongsModel.playlistKey())
+            playlistSongsModel.reload();
+        playlistModel.reload();   // count ikut berubah
     });
 
     QObject::connect(

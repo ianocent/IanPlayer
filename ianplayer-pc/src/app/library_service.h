@@ -51,6 +51,17 @@ public:
     // Dipanggil controller playback saat track lokal mulai putar.
     Q_INVOKABLE void recordLocalPlayed(const QString &path);
 
+    // === playlists (M1.3) ===
+    Q_INVOKABLE qint64 createPlaylist(const QString &name);
+    Q_INVOKABLE void renamePlaylist(qint64 playlistKey, const QString &name);
+    Q_INVOKABLE void deletePlaylist(qint64 playlistKey);
+    Q_INVOKABLE void setPlaylistImage(qint64 playlistKey, const QString &imagePath);
+    // songKey = "local:<id>" | "yt:<videoId>" — stream key ditolak sementara
+    // (queue stream hadir M2); kembalikan false kalau bukan "local:".
+    Q_INVOKABLE bool addSongToPlaylist(qint64 playlistKey, const QString &songKey);
+    Q_INVOKABLE void removeSongFromPlaylist(qint64 playlistKey, const QString &songKey);
+    Q_INVOKABLE void movePlaylistSongLive(qint64 playlistKey, qint64 songId, int toPos);
+
     // buka Windows Explorer dengan file terpilih (medley pitfall /select: harus
     // backslash; startDetached)
     Q_INVOKABLE void revealLocalFile(const QString &path);
@@ -60,6 +71,8 @@ signals:
     void progressChanged();
     void libraryChanged();
     void favoritesChanged();
+    void playlistsChanged();
+    void playlistContentsChanged(qint64 playlistId);
     void playStateChanged();
     void scanStatusChanged();
     void rootsChanged();

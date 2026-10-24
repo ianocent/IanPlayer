@@ -44,6 +44,10 @@ qt_add_executable(ianplayer
     src/models/album_list_model.cpp
     src/models/artist_list_model.h
     src/models/artist_list_model.cpp
+    src/models/playlist_list_model.h
+    src/models/playlist_list_model.cpp
+    src/models/playlist_song_model.h
+    src/models/playlist_song_model.cpp
     assets/app.manifest
 )
 

@@ -182,6 +182,65 @@ void LibraryService::recordLocalPlayed(const QString &path)
         emit playStateChanged();
 }
 
+// ==== playlists (M1.3) : proxy ke LibraryDatabase + signal ====
+
+qint64 LibraryService::createPlaylist(const QString &name)
+{
+    const qint64 id = m_db->createPlaylist(name);
+    if (id > 0)
+        emit playlistsChanged();
+    return id;
+}
+
+void LibraryService::renamePlaylist(qint64 playlistKey, const QString &name)
+{
+    if (m_db->renamePlaylist(playlistKey, name))
+        emit playlistsChanged();
+}
+
+void LibraryService::deletePlaylist(qint64 playlistKey)
+{
+    if (m_db->deletePlaylist(playlistKey))
+        emit playlistsChanged();
+}
+
+void LibraryService::setPlaylistImage(qint64 playlistKey, const QString &imagePath)
+{
+    if (m_db->setPlaylistImage(playlistKey, imagePath))
+        emit playlistsChanged();
+}
+
+bool LibraryService::addSongToPlaylist(qint64 playlistKey, const QString &songKey)
+{
+    // v1: cuma "local:<id>"; stream key hadir bareng queue M2
+    if (!songKey.startsWith(QStringLiteral("local:")))
+        return false;
+    const qint64 songId = songKey.mid(6).toLongLong();
+    if (m_db->addToPlaylist(playlistKey, songId)) {
+        emit playlistsChanged();
+        emit playlistContentsChanged(playlistKey);
+        return true;
+    }
+    return false;
+}
+
+void LibraryService::removeSongFromPlaylist(qint64 playlistKey, const QString &songKey)
+{
+    if (!songKey.startsWith(QStringLiteral("local:")))
+        return;
+    const qint64 songId = songKey.mid(6).toLongLong();
+    if (m_db->removeFromPlaylist(playlistKey, songId)) {
+        emit playlistsChanged();
+        emit playlistContentsChanged(playlistKey);
+    }
+}
+
+void LibraryService::movePlaylistSongLive(qint64 playlistKey, qint64 songId, int toPos)
+{
+    if (m_db->movePlaylistSong(playlistKey, songId, toPos))
+        emit playlistContentsChanged(playlistKey);
+}
+
 void LibraryService::revealLocalFile(const QString &path)
 {
     QProcess::startDetached(QStringLiteral("explorer.exe"),

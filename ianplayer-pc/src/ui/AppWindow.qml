@@ -252,10 +252,12 @@ C.ApplicationWindow {
             color: Theme.bg
 
             // ---- state navigasi sub-pane (detail screen M1.2) ----
-            property string subPane: ""       // "" | "album" | "artist"
+            property string subPane: ""       // "" | "album" | "artist" | "playlist"
             property int detailId: 0
             property string detailTitle: ""
             property string detailArt: ""
+            property int detailPlaylistKey: 0
+            property int chooserSongKey: 0    // lagu sementara versi chooser menu
 
             function openAlbum(id, name, art) {
                 LibraryProxy.sortMode = 2
@@ -275,11 +277,20 @@ C.ApplicationWindow {
                 detailTitle = name
                 detailArt = art
             }
+            function openPlaylist(key, name, image) {
+                PlaylistSongModel.playlistKey = key
+                subPane = "playlist"
+                detailPlaylistKey = key
+                detailId = key
+                detailTitle = name
+                detailArt = image
+            }
             function closeDetail() {
                 subPane = ""
                 LibraryProxy.albumFilter = 0
                 LibraryProxy.artistFilter = 0
-                librarySearch.text = ""
+                LibraryProxy.searchText = ""
+                PlaylistSongModel.playlistKey = 0
             }
 
             C.Label {
@@ -348,9 +359,17 @@ C.ApplicationWindow {
                 }
             }
 
-            // daftar lagu generik: baris 56px + thumbnails + fast scroller A-Z
+            // daftar lagu generik: baris 56px + thumbnails + fast scroller A-Z.
+            // listModel/sectionProp bisa ditimpa (isian playlist detail pakai
+            // PlaylistSongModel); reorderable nuju aktif grip drag.
             component LibraryList : Item {
                 id: libraryListRoot
+
+                property var listModel: LibraryProxy
+                property string sectionProp: LibraryProxy.sectionProperty
+                property bool showLetters:
+                    LibraryProxy.sortMode === 0 && LibraryProxy.count > 0 && LibraryProxy.count > 0
+                property bool reorderable: false
 
                 function fmtDur(ms) {
                     if (ms <= 0) return ""
@@ -358,8 +377,11 @@ C.ApplicationWindow {
                     return Math.floor(total / 60) + ":" + ("0" + total % 60).slice(-2)
                 }
 
-                property bool lettersActive:
-                    LibraryProxy.sortMode === 0 && LibraryProxy.count > 0
+                // dipakai grip drag-reorder — hanya PlaylistSongModel saja yang
+                // punya feature ini
+                function moveSongJs(songId, toPos) {
+                    return PlaylistSongModel.moveSong(songId, toPos)
+                }
 
                 ListView {
                     id: songListView
@@ -368,18 +390,19 @@ C.ApplicationWindow {
                         bottom: parent.bottom
                         left: parent.left
                         right: parent.right
-                        rightMargin: libraryListRoot.lettersActive ? 34 : 0
+                        rightMargin: libraryListRoot.showLetters
+                                     && !libraryListRoot.reorderable ? 34 : 0
                     }
                     clip: true
                     reuseItems: true
-                    model: LibraryProxy
+                    model: libraryListRoot.listModel
                     spacing: 2
                     boundsBehavior: Flickable.StopAtBounds
 
                     // section A-Z hanya bekerja trik: role sectionLetter selalu
                     // ada; saat sort bukan judul, Qt menonaktifkan section kalau
                     // property kosong.
-                    section.property: LibraryProxy.sectionProperty
+                    section.property: libraryListRoot.sectionProp
                     section.labelPositioning: ViewSection.CurrentLabelInline | ViewSection.InlineLabels
                     section.delegate: C.Label {
                         text: section
@@ -515,11 +538,55 @@ C.ApplicationWindow {
                         TapHandler {
                             acceptedButtons: Qt.AllButtons
                             onSingleTapped: (eventPoint, button) => {
-                                if (button === Qt.LeftButton)
+                                if (button === Qt.LeftButton
+                                    && !libraryListRoot.reorderable)
                                     LibraryService.recordLocalPlayed(rowDelegate.path)
                                 else if (button === Qt.RightButton)
                                     rowMenu.popup()
                             }
+                        }
+
+                        // grip drag-reorder (playlist detail): seret → posisi
+                        // target dihitung dari posisi pointer; model di C++ yang
+                        // melanjutkan (beginMoveRows jadi animasi halus)
+                        MouseArea {
+                            id: reorderDrag
+                            visible: libraryListRoot.reorderable
+                            enabled: libraryListRoot.reorderable
+                            anchors {
+                                left: parent.left
+                                top: parent.top
+                                bottom: parent.bottom
+                            }
+                            width: 20
+                            cursorShape: Qt.SizeAllCursor
+                            property int dragPos: -1   // posisi aktif terakhir
+
+                            onPressed: (mouse) => {
+                                dragPos = rowDelegate.index
+                                mouse.accepted = true
+                            }
+                            onPositionChanged: (mouse) => {
+                                if (!pressed || songListView.count === 0)
+                                    return
+                                const inList = mapToItem(songListView, 0, mouse.y)
+                                const rowH = rowDelegate.height + songListView.spacing
+                                let target = Math.floor(inList.y / rowH)
+                                target = Math.max(0, Math.min(target, songListView.count - 1))
+                                if (target !== dragPos) {
+                                    if (libraryListRoot.moveSongJs(rowDelegate.songId, target))
+                                        dragPos = target
+                                }
+                                // autoscroll kalau di pinggir viewport
+                                const speed = 12
+                                if (inList.y < 12)
+                                    songListView.contentY = Math.max(0, songListView.contentY - speed)
+                                else if (inList.y > songListView.height - 12)
+                                    songListView.contentY = Math.min(
+                                        songListView.contentHeight - songListView.height,
+                                        songListView.contentY + speed)
+                            }
+                            onReleased: dragPos = -1
                         }
 
                         C.Menu {
@@ -537,7 +604,10 @@ C.ApplicationWindow {
                             }
                             C.MenuItem {
                                 text: qsTr("Tambah ke Playlist")
-                                enabled: false   // M1.3
+                                onClicked: {
+                                    chooserSongKey = rowDelegate.songId
+                                    addPlaylistMenu.popup()
+                                }
                             }
                         }
                     }
@@ -545,7 +615,7 @@ C.ApplicationWindow {
 
                 // ---- fast scroller A–Z (paritas Android; hanya sort judul) ----
                 Column {
-                    visible: libraryListRoot.lettersActive
+                    visible: libraryListRoot.showLetters && !libraryListRoot.reorderable
                     anchors {
                         top: parent.top
                         bottom: parent.bottom
@@ -907,7 +977,8 @@ C.ApplicationWindow {
             // == detail screen: daftar lagu album/artis ==
             ColumnLayout {
                 id: detailPane
-                visible: contentArea.subPane !== ""
+                visible: contentArea.subPane === "album"
+                    || contentArea.subPane === "artist"
                 anchors {
                     top: contentTitle.bottom
                     left: contentTitle.left
@@ -944,6 +1015,372 @@ C.ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                 }
+            }
+
+            // == Playlists pane (M1.3): daftar kartu + CRUD ==
+            Item {
+                id: playlistsPane
+                visible: contentArea.subPane === ""
+                    && tabsModel.count > 0
+                    && tabsModel.get(tabRail.activeIndex % tabsModel.count).name === qsTr("Playlists")
+                anchors {
+                    top: contentTitle.bottom
+                    left: contentTitle.left
+                    right: parent.right
+                    rightMargin: 24
+                    bottom: parent.bottom
+                    topMargin: 16
+                }
+
+                RowLayout {
+                    id: playlistTools
+                    anchors {
+                        top: parent.top
+                        left: parent.left
+                        right: parent.right
+                    }
+                    spacing: 8
+
+                    C.Button {
+                        text: qsTr("Playlist Baru")
+                        onClicked: {
+                            playlistNameDialog.editKey = 0
+                            playlistNameDialog.name = ""
+                            playlistNameDialog.open()
+                        }
+                        font.family: Theme.fontFamily
+                    }
+
+                    C.Label {
+                        text: qsTr("%1 playlist").arg(PlaylistListModel.count)
+                        color: Theme.textDisabled
+                        font {
+                            family: Theme.fontFamily
+                            pixelSize: Theme.sizeSmall
+                        }
+                    }
+                }
+
+                ListView {
+                    visible: PlaylistListModel.count > 0
+                    anchors {
+                        top: playlistTools.bottom
+                        left: parent.left
+                        right: parent.right
+                        bottom: parent.bottom
+                        topMargin: 12
+                    }
+                    clip: true
+                    model: PlaylistListModel
+                    spacing: 8
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    C.ScrollBar.vertical: C.ScrollBar {}
+
+                    delegate: C.ItemDelegate {
+                        id: playlistRow
+
+                        required property int index
+                        required property int playlistKey
+                        required property string playlistName
+                        required property string playlistImage
+                        required property int playlistSongCount
+
+                        width: playlistsPane.width
+                        height: 72
+                        hoverEnabled: true
+                        background: Rectangle {
+                            color: playlistRow.hovered ? Theme.surface2 : "transparent"
+                            radius: Theme.radius
+                        }
+
+                        RowLayout {
+                            anchors.fill: parent
+                            spacing: 12
+
+                            Rectangle {
+                                Layout.preferredWidth: 56
+                                Layout.preferredHeight: 56
+                                color: Theme.surface2
+                                radius: Theme.radius
+                                clip: true
+
+                                C.Label {
+                                    visible: playlistRow.playlistImage === ""
+                                    anchors.centerIn: parent
+                                    text: "\u2661"
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 22
+                                }
+                                Image {
+                                    visible: playlistRow.playlistImage !== ""
+                                    anchors.fill: parent
+                                    source: playlistRow.playlistImage
+                                    fillMode: Image.PreserveAspectCrop
+                                    smooth: true
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+
+                                C.Label {
+                                    Layout.fillWidth: true
+                                    text: playlistRow.playlistName
+                                    color: Theme.textPrimary
+                                    elide: Text.ElideRight
+                                    font {
+                                        family: Theme.fontFamily
+                                        pixelSize: Theme.sizeBody
+                                        weight: Theme.weightMedium
+                                    }
+                                }
+                                C.Label {
+                                    Layout.fillWidth: true
+                                    text: qsTr("%1 lagu").arg(playlistRow.playlistSongCount)
+                                    color: Theme.textSecondary
+                                    font {
+                                        family: Theme.fontFamily
+                                        pixelSize: Theme.sizeSmall
+                                    }
+                                }
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            C.AbstractButton {
+                                Layout.preferredWidth: 32
+                                Layout.preferredHeight: 32
+                                contentItem: Text {
+                                    text: "\u22EF"
+                                    color: Theme.textSecondary
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                    font.pixelSize: 16
+                                }
+                                onClicked: playlistRowMenu.popup()
+                            }
+                        }
+
+                        TapHandler {
+                            acceptedButtons: Qt.LeftButton
+                            onSingleTapped:
+                                contentArea.openPlaylist(
+                                    playlistRow.playlistKey,
+                                    playlistRow.playlistName,
+                                    playlistRow.playlistImage)
+                        }
+
+                        C.Menu {
+                            id: playlistRowMenu
+                            C.MenuItem {
+                                text: qsTr("Buka")
+                                onClicked: contentArea.openPlaylist(
+                                    playlistRow.playlistKey,
+                                    playlistRow.playlistName,
+                                    playlistRow.playlistImage)
+                            }
+                            C.MenuItem {
+                                text: qsTr("Ganti Nama")
+                                onClicked: {
+                                    playlistNameDialog.editKey = playlistRow.playlistKey
+                                    playlistNameDialog.name = playlistRow.playlistName
+                                    playlistNameDialog.open()
+                                }
+                            }
+                            C.MenuItem {
+                                text: qsTr("Ganti Sampul")
+                                onClicked: {
+                                    playlistImageDialog.dialogPlaylistKey
+                                        = playlistRow.playlistKey
+                                    playlistImageDialog.open()
+                                }
+                            }
+                            C.MenuItem {
+                                text: qsTr("Hapus Playlist")
+                                onClicked: LibraryService.deletePlaylist(
+                                    playlistRow.playlistKey)
+                            }
+                        }
+                    }
+                }
+
+                C.Label {
+                    visible: PlaylistListModel.count === 0
+                    anchors.centerIn: parent
+                    text: qsTr("Belum ada playlist. Klik \"Playlist Baru\" atau tambahkan lagu lewat menu klik-kanan di tab Songs.")
+                    color: Theme.textSecondary
+                    font.family: Theme.fontFamily
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignHCenter
+                    width: 340
+                }
+            }
+
+            // == playlist detail: header + daftar lagu + drag reorder ==
+            ColumnLayout {
+                id: playlistDetailPane
+                visible: contentArea.subPane === "playlist"
+                anchors {
+                    top: contentTitle.bottom
+                    left: contentTitle.left
+                    right: parent.right
+                    rightMargin: 24
+                    bottom: parent.bottom
+                    topMargin: 16
+                }
+                spacing: 12
+
+                RowLayout {
+                    spacing: 8
+
+                    C.Button {
+                        text: qsTr("\u2190 Kembali")
+                        onClicked: contentArea.closeDetail()
+                        font.family: Theme.fontFamily
+                    }
+
+                    C.Label {
+                        text: qsTr("Playlist \u00B7 %1").arg(contentArea.detailTitle)
+                        color: Theme.textSecondary
+                        font {
+                            family: Theme.fontFamily
+                            pixelSize: Theme.sizeSmall
+                            weight: Theme.weightMedium
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    C.AbstractButton {
+                        Layout.preferredWidth: 32
+                        Layout.preferredHeight: 32
+                        contentItem: Text {
+                            text: "\u22EF"
+                            color: Theme.textSecondary
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            font.pixelSize: 16
+                        }
+                        onClicked: playlistDetailMenu.popup()
+                    }
+                }
+
+                C.Label {
+                    Layout.fillWidth: true
+                    visible: PlaylistSongModel.count === 0
+                    text: qsTr("Playlist kosong. Tambahkan lagu lewat menu klik-kanan di tab Songs.")
+                    color: Theme.textSecondary
+                    font.family: Theme.fontFamily
+                }
+
+                LibraryList {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    listModel: PlaylistSongModel
+                    sectionProp: ""
+                    reorderable: true
+                }
+            }
+
+            // == menu kelola playlist di halaman detail ==
+            C.Menu {
+                id: playlistDetailMenu
+                C.MenuItem {
+                    text: qsTr("Ganti Nama")
+                    onClicked: {
+                        playlistNameDialog.editKey = contentArea.detailPlaylistKey
+                        playlistNameDialog.name = contentArea.detailTitle
+                        playlistNameDialog.open()
+                    }
+                }
+                C.MenuItem {
+                    text: qsTr("Ganti Sampul")
+                    onClicked: {
+                        playlistImageDialog.dialogPlaylistKey = contentArea.detailPlaylistKey
+                        playlistImageDialog.open()
+                    }
+                }
+                C.MenuItem {
+                    text: qsTr("Hapus Playlist")
+                    onClicked: {
+                        contentArea.closeDetail()
+                        LibraryService.deletePlaylist(contentArea.detailPlaylistKey)
+                    }
+                }
+            }
+
+            // == chooser "Tambah ke Playlist" (dari baris songs) ==
+            C.Menu {
+                id: addPlaylistMenu
+                title: qsTr("Tambah ke Playlist")
+                Repeater {
+                    model: PlaylistListModel
+                    delegate: C.MenuItem {
+                        required property int playlistKey
+                        required property string playlistName
+                        text: playlistName
+                        onClicked: LibraryService.addSongToPlaylist(
+                            playlistKey, "local:" + contentArea.chooserSongKey)
+                    }
+                }
+                C.MenuSeparator {}
+                C.MenuItem {
+                    text: qsTr("Playlist baru...")
+                    onClicked: {
+                        playlistNameDialog.editKey = 0
+                        playlistNameDialog.name = ""
+                        playlistNameDialog.open()
+                    }
+                }
+            }
+
+            // == dialog buat/rename nama playlist ==
+            C.Dialog {
+                id: playlistNameDialog
+                property int editKey: 0
+                property string name: ""
+                x: (parent.width - width) / 2
+                y: (parent.height - height) / 2
+                parent: contentArea
+                title: editKey === 0 ? qsTr("Playlist Baru") : qsTr("Ganti Nama Playlist")
+                standardButtons: C.Dialog.Ok | C.Dialog.Cancel
+                modal: true
+
+                onAccepted: {
+                    const n = playlistNameField.text.trim()
+                    if (n === "")
+                        return
+                    if (editKey === 0) {
+                        const newId = LibraryService.createPlaylist(n)
+                        if (newId > 0 && contentArea.chooserSongKey > 0) {
+                            LibraryService.addSongToPlaylist(
+                                newId, "local:" + contentArea.chooserSongKey)
+                            contentArea.chooserSongKey = 0
+                        }
+                    } else {
+                        LibraryService.renamePlaylist(editKey, n)
+                    }
+                }
+
+                C.TextField {
+                    id: playlistNameField
+                    text: playlistNameDialog.name
+                    placeholderText: qsTr("Nama playlist")
+                    Layout.preferredWidth: 280
+                    font.family: Theme.fontFamily
+                }
+            }
+
+            // == dialog pilih sampul playlist ==
+            FileDialog {
+                id: playlistImageDialog
+                property int dialogPlaylistKey: 0
+                title: qsTr("Pilih gambar sampul playlist")
+                nameFilters: [qsTr("Gambar (*.png *.jpg *.jpeg *.webp)")]
+                onAccepted: LibraryService.setPlaylistImage(
+                    dialogPlaylistKey, playlistImageDialog.selectedFile.toString())
             }
 
             // == placeholder tab yang belum aktif ==

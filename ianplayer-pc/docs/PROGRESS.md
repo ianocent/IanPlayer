@@ -6,7 +6,7 @@ Update file ini di tiap phase M#
 | Milestone | Status |
 |---|---|
 | M0 Fondasi | 🟢 M0 selesai (M0.1–M0.4) |
-| M1 Local Library | 🟡 M1.2 Models + Library UI (Songs/Albums/Artists jalan) — lanjut sisa M1.2 (playlists M1.3) |
+| M1 Local Library | 🟢 M1.3 Playlists selesai — M1 tuntas (M1.1–M1.3) |
 | M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | ⚪ belum |
 | M4 Lyrics+Download | ⚪ belum |
@@ -38,7 +38,34 @@ Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-cli
 
 ---
 
-## M1.2 — Models + Library UI (bagian 1 selesai, 2026-10-24)
+## M1.3 — Playlists (selesai, 2026-10-24)
+
+- [x] DB playlist API (`library_database.{h,cpp}`): `allPlaylists()` (urut nama NOCASE + songCount subquery), `playlistSongs(id)` (JOIN songs, `ORDER BY position`, tamu `avail=1`), `createPlaylist/renamePlaylist/deletePlaylist` (transaction + hapus `playlist_songs` manual — tanpa FK cascade), `setPlaylistImage`, `addToPlaylist` (append `MAX(position)+1`, `INSERT OR IGNORE` — `numRowsAffected()` untuk laporkan false saat duplikat), `removeFromPlaylist` (false kalau lagu tidak ada), `movePlaylistSong(id, songId, toPos)` (baca urutan → remove/insert → tulis ulang position, clamp)
+- [x] `PlaylistListModel` (`src/models/playlist_list_model.{h,cpp}`): roles `playlistKey/playlistName/playlistImage/playlistCreatedTs/playlistSongCount`, `reload()`/`reset()`
+- [x] `PlaylistSongModel` (`src/models/playlist_song_model.{h,cpp}`): isi playlist + `Q_PROPERTY playlistKey` (set → reload) + **`moveSong(songId, toPos)`** — DB rewrite lalu `beginMoveRows` (destRow+1 kalau turun, konvensi end-exclusive) → ListView animasi tanpa reset (pitfall M1.2)
+- [x] `LibraryService` invokables: `createPlaylist/renamePlaylist/deletePlaylist/setPlaylistImage/addSongToPlaylist/removeSongFromPlaylist` + signal `playlistsChanged`/`playlistContentsChanged(pid)`; songKey cuma `local:<id>` — **`yt:<videoId>` ditolak sampai M2 queue** (false)
+- [x] main.cpp: context property `PlaylistListModel`/`PlaylistSongModel` + connect signal → reload; `PlaylistSongModel.reload()` hanya kalau `playlistKey() == pid`
+- [x] QML `AppWindow.qml`:
+  - `LibraryList` dijadikan generik: props `listModel` (default `LibraryProxy`), `sectionProp` ("" = tanpa section), `reorderable` (grip 20px kiri row, drag → hitung target dari pointer Y + autoscroll pinggir viewport → `PlaylistSongModel.moveSong`); rail fast-scroller disembunyikan saat reorderable
+  - Playlists pane: baris kartu (cover 56px gambar/♥ placeholder, nama, %lagu, menu ⋯: Buka/Ganti Nama/Ganti Sampul/Hapus) + tombol "Playlist Baru" + empty-state label
+  - Playlist detail pane (subPane `"playlist"`; `detailPane` album/artis di-exclude): header Kembali + ⋯ kelola + `LibraryList { listModel: PlaylistSongModel; reorderable: true }`
+  - Context menu row Songs: "Tambah ke Playlist" → `addPlaylistMenu` chooser (Repeater `PlaylistListModel` + "Playlist baru...")
+  - `playlistNameDialog` (create/rename; return id `createPlaylist` dipakai auto-add lagu chooser), `playlistImageDialog` (`FileDialog` QtQuick.Dialogs; path disimpan sebagai `file:///` URL — Image source menerima langsung)
+- [x] gtest: `PlaylistCrudAndSongOrder` (create/rename/add append/move/remove/songCount/persist delete) + `PlaylistDuplicateSongIgnoredAndGuardRails` (duplikat false, remove tak-ada false, move out-of-range false, nama kosong -1, image persist) → **41/41 PASS**
+
+Verifikasi: build preset debug OK; gtest 41/41; smoke app alive, stderr cuma deprecation `Qt.labs.settings` (sudah diketahui M0.4).
+
+HOLDING (diarsipkan v2):
+1. DnD drag-lagu dari tab Songs → rail "Playlists" (chooser menu via klik-kanan + submenu sudah memenuhi UX tambah-lagu; baris drag DnD ke rail butuh Drag.started/DropArea per rail item, ditunda)
+2. Agregasi `playlistContentsChanged` untuk image rename di header detail tak auto-refresh label — minor.
+
+Jebakan M1.3:
+1. **`INSERT OR IGNORE` tidak cukup** — exec OK meski baris duplikat tidak tertulis; gunakan `numRowsAffected() > 0` untuk kontrak API add/remove.
+2. `beginMoveRows` arah turun: destRow = posisi + 1 (end-exclusive) — kalau salah, Qt assert "Invalid row moved".
+3. `std::clamp(int, qsizetype, qsizetype)` gagal compile (MSVC ambigu) — cast `int(...)` kalau campur tipe int & `QVector::size()`.
+4. Panjang `deletePlaylist` perlu hapus manual kedua tabel dulu sebelum commit — single transaction supaya tidak select di tengah state setengah-hapus.
+
+---
 
 - [x] `LibrarySongModel` (`src/models/library_song_model.{h,cpp}`): QAbstractListModel snapshot dari DB (id/path/title/artist/album/duration/bitrate/codec/art64/art256/track/year/favorite/playCount/sectionLetter + sortRole casefolded); `reload()` dipanggil main.cpp saat signal `libraryChanged`/`favoritesChanged` — semua akses DB di main thread (pitfall doc)
 - [x] `LibraryProxyModel` (`src/models/library_proxy_model.{h,cpp}`): QSortFilterProxyModel — sort 5 mode (title/artist/album+track#/recently added desc/play count desc, paritas `sort_mode` Android), search filter title/artist/album case-insensitive, filter albumId/artistId untuk detail screen, `indexForLetter()` untuk fast scroller

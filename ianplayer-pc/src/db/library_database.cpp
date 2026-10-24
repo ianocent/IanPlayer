@@ -3,6 +3,8 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <algorithm>
+
 #include <QtSql/QSqlDatabase>
 #include <QtSql/QSqlError>
 #include <QtSql/QSqlQuery>
@@ -309,6 +311,253 @@ int LibraryDatabase::songCount() const
     QSqlQuery q(libraryConnection(m_dbPath));
     q.exec(QStringLiteral("SELECT COUNT(*) FROM songs WHERE avail = 1"));
     return q.next() ? q.value(0).toInt() : 0;
+}
+
+// ==== playlists (M1.3) ====
+
+QVector<LibraryDatabase::PlaylistRow> LibraryDatabase::allPlaylists() const
+{
+    QVector<PlaylistRow> result;
+    if (!m_open)
+        return result;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral(
+        "SELECT p.id, p.name, p.image, p.created_ts,"
+        " (SELECT COUNT(*) FROM playlist_songs ps"
+        "   JOIN songs s ON s.id = ps.song_id AND s.avail = 1"
+        "   WHERE ps.playlist_id = p.id)"
+        " FROM playlists p ORDER BY p.name COLLATE NOCASE"));
+    q.exec();
+    while (q.next()) {
+        PlaylistRow row;
+        row.id = q.value(0).toLongLong();
+        row.name = q.value(1).toString();
+        row.image = q.value(2).toString();
+        row.createdTs = q.value(3).toLongLong();
+        row.songCount = q.value(4).toInt();
+        result.append(row);
+    }
+    return result;
+}
+
+QVector<SongRecord> LibraryDatabase::playlistSongs(qint64 playlistId) const
+{
+    QVector<SongRecord> result;
+    if (!m_open)
+        return result;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral(
+        "SELECT s.id, s.path, s.title, s.artist, s.artist_id, s.album,"
+        " s.album_id, s.track_no, s.year, s.duration_ms, s.bitrate, s.codec,"
+        " s.art_256, s.art_64, s.added_ts, s.modified_ts, s.avail"
+        " FROM playlist_songs ps JOIN songs s ON s.id = ps.song_id"
+        " WHERE ps.playlist_id = :pl AND s.avail = 1 ORDER BY ps.position"));
+    q.bindValue(QStringLiteral(":pl"), playlistId);
+    q.exec();
+    while (q.next()) {
+        SongRecord rec;
+        rec.id = q.value(0).toLongLong();
+        rec.path = q.value(1).toString();
+        rec.title = q.value(2).toString();
+        rec.artist = q.value(3).toString();
+        rec.artistId = q.value(4).toLongLong();
+        rec.album = q.value(5).toString();
+        rec.albumId = q.value(6).toLongLong();
+        rec.trackNo = q.value(7).toInt();
+        rec.year = q.value(8).toInt();
+        rec.durationMs = q.value(9).toLongLong();
+        rec.bitrate = q.value(10).toInt();
+        rec.codec = q.value(11).toString();
+        rec.art256 = q.value(12).toString();
+        rec.art64 = q.value(13).toString();
+        rec.addedTs = q.value(14).toLongLong();
+        rec.modifiedTs = q.value(15).toLongLong();
+        rec.avail = q.value(16).toInt();
+        result.append(rec);
+    }
+    return result;
+}
+
+qint64 LibraryDatabase::createPlaylist(const QString &name)
+{
+    if (!m_open || name.trimmed().isEmpty())
+        return -1;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral(
+        "INSERT INTO playlists (name, image, created_ts) VALUES (:name, '', :ts)"));
+    q.bindValue(QStringLiteral(":name"), name.trimmed());
+    q.bindValue(QStringLiteral(":ts"), QDateTime::currentMSecsSinceEpoch());
+    if (!q.exec())
+        return -1;
+    return q.lastInsertId().toLongLong();
+}
+
+bool LibraryDatabase::renamePlaylist(qint64 id, const QString &name)
+{
+    if (!m_open || name.trimmed().isEmpty())
+        return false;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral("UPDATE playlists SET name = :name WHERE id = :id"));
+    q.bindValue(QStringLiteral(":name"), name.trimmed());
+    q.bindValue(QStringLiteral(":id"), id);
+    return q.exec();
+}
+
+bool LibraryDatabase::deletePlaylist(qint64 id)
+{
+    if (!m_open)
+        return false;
+    QSqlDatabase db = libraryConnection(m_dbPath);
+    if (!db.transaction())
+        return false;
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("DELETE FROM playlists WHERE id = :id"));
+    q.bindValue(QStringLiteral(":id"), id);
+    if (!q.exec()) {
+        db.rollback();
+        return false;
+    }
+    q.prepare(QStringLiteral("DELETE FROM playlist_songs WHERE playlist_id = :id"));
+    q.bindValue(QStringLiteral(":id"), id);
+    if (!q.exec()) {
+        db.rollback();
+        return false;
+    }
+    if (!db.commit()) {
+        db.rollback();
+        return false;
+    }
+    return true;
+}
+
+bool LibraryDatabase::setPlaylistImage(qint64 id, const QString &imagePath)
+{
+    if (!m_open)
+        return false;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral("UPDATE playlists SET image = :img WHERE id = :id"));
+    q.bindValue(QStringLiteral(":img"), imagePath);
+    q.bindValue(QStringLiteral(":id"), id);
+    return q.exec();
+}
+
+bool LibraryDatabase::addToPlaylist(qint64 playlistId, qint64 songId)
+{
+    if (!m_open)
+        return false;
+    QSqlDatabase db = libraryConnection(m_dbPath);
+    if (!db.transaction())
+        return false;
+    QSqlQuery q(db);
+    // posisi akhir = jumlah baris playlist
+    q.prepare(QStringLiteral(
+        "SELECT COALESCE(MAX(position) + 1, 0) FROM playlist_songs WHERE playlist_id = :pl"));
+    q.bindValue(QStringLiteral(":pl"), playlistId);
+    if (!q.exec() || !q.next()) {
+        db.rollback();
+        return false;
+    }
+    const int nextPos = q.value(0).toInt();
+
+    q.prepare(QStringLiteral(
+        "INSERT OR IGNORE INTO playlist_songs (playlist_id, song_id, position)"
+        " VALUES (:pl, :song, :pos)"));
+    q.bindValue(QStringLiteral(":pl"), playlistId);
+    q.bindValue(QStringLiteral(":song"), songId);
+    q.bindValue(QStringLiteral(":pos"), nextPos);
+    if (!q.exec()) {
+        db.rollback();
+        return false;
+    }
+    const int inserted = q.numRowsAffected();   // 0 = sudah ada (INSERT OR IGNORE)
+    if (!db.commit()) {
+        db.rollback();
+        return false;
+    }
+    return inserted > 0;
+}
+
+bool LibraryDatabase::removeFromPlaylist(qint64 playlistId, qint64 songId)
+{
+    if (!m_open)
+        return false;
+    // hapus + rapikan ulang position supaya urutan tetap padat
+    QSqlDatabase db = libraryConnection(m_dbPath);
+    if (!db.transaction())
+        return false;
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "DELETE FROM playlist_songs WHERE playlist_id = :pl AND song_id = :song"));
+    q.bindValue(QStringLiteral(":pl"), playlistId);
+    q.bindValue(QStringLiteral(":song"), songId);
+    if (!q.exec() || q.numRowsAffected() == 0) {
+        db.rollback();
+        return false;   // lagu memang tidak ada di playlist
+    }
+
+    q.prepare(QStringLiteral(
+        "SELECT song_id FROM playlist_songs WHERE playlist_id = :pl ORDER BY position"));
+    q.bindValue(QStringLiteral(":pl"), playlistId);
+    if (!q.exec()) {
+        db.rollback();
+        return false;
+    }
+    QVector<qint64> order;
+    while (q.next())
+        order.append(q.value(0).toLongLong());
+    if (!db.commit())
+        return false;
+    return true;
+}
+
+bool LibraryDatabase::movePlaylistSong(qint64 playlistId, qint64 songId, int toPos)
+{
+    if (!m_open)
+        return false;
+    QSqlDatabase db = libraryConnection(m_dbPath);
+    if (!db.transaction())
+        return false;
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "SELECT song_id FROM playlist_songs WHERE playlist_id = :pl ORDER BY position"));
+    q.bindValue(QStringLiteral(":pl"), playlistId);
+    if (!q.exec()) {
+        db.rollback();
+        return false;
+    }
+    QVector<qint64> order;
+    int current = -1;
+    while (q.next()) {
+        const qint64 id = q.value(0).toLongLong();
+        if (id == songId)
+            current = int(order.size());
+        order.append(id);
+    }
+    if (current < 0 || toPos < 0 || toPos >= order.size()) {
+        db.rollback();
+        return false;
+    }
+    order.removeAt(current);
+    toPos = std::clamp(toPos, 0, int(order.size()) - 1);
+    order.insert(order.begin() + toPos, songId);
+
+    QSqlQuery upd(db);
+    upd.prepare(QStringLiteral(
+        "UPDATE playlist_songs SET position = :pos WHERE playlist_id = :pl AND song_id = :song"));
+    for (int i = 0; i < order.size(); ++i) {
+        upd.bindValue(QStringLiteral(":pos"), i);
+        upd.bindValue(QStringLiteral(":pl"), playlistId);
+        upd.bindValue(QStringLiteral(":song"), order.at(i));
+        if (!upd.exec()) {
+            db.rollback();
+            return false;
+        }
+    }
+    if (!db.commit()) {
+        db.rollback();
+        return false;
+    }
+    return true;
 }
 
 // ==== paritas SongStore.kt: favorites / play counts / play history ====

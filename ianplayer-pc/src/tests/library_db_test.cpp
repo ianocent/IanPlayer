@@ -112,3 +112,131 @@ TEST(LibraryDbTest, SongIdLookupByPath)
 
     EXPECT_FALSE(db.songIdAndDurationByPath(QStringLiteral("C:/music/b.mp3")).has_value());
 }
+
+// ==== M1.3 playlists ====
+
+namespace {
+
+// 3 lagu contoh; balikin id sesuai urutan.
+QVector<qint64> seedSongs(LibraryDatabase &db)
+{
+    const QStringList paths = {
+        QStringLiteral("C:/music/s1.mp3"),
+        QStringLiteral("C:/music/s2.mp3"),
+        QStringLiteral("C:/music/s3.mp3"),
+    };
+    QVector<qint64> ids;
+    for (int i = 0; i < paths.size(); ++i) {
+        SongRecord rec;
+        rec.path = paths.at(i);
+        rec.title = QStringLiteral("Song %1").arg(i + 1);
+        rec.artist = QStringLiteral("Artist");
+        rec.album = QStringLiteral("Album");
+        rec.durationMs = 100000 + i;
+        rec.modifiedTs = 1;
+        EXPECT_TRUE(db.upsertSong(rec));
+        const auto id = db.songIdByPath(paths.at(i));
+        EXPECT_TRUE(id.has_value());
+        ids.append(*id);
+    }
+    return ids;
+}
+
+} // namespace
+
+TEST(LibraryDbTest, PlaylistCrudAndSongOrder)
+{
+    QTemporaryDir dir;
+    LibraryDatabase db(openTempDb(dir));
+    ASSERT_TRUE(db.isOpen());
+    const auto songIds = seedSongs(db);
+    ASSERT_EQ(songIds.size(), 3);
+
+    // create + allPlaylists urut nama NOCASE + songCount
+    const qint64 pidA = db.createPlaylist(QStringLiteral("Alpha"));
+    const qint64 pidB = db.createPlaylist(QStringLiteral("beta"));
+    ASSERT_GT(pidA, 0);
+    ASSERT_GT(pidB, 0);
+
+    auto playlists = db.allPlaylists();
+    ASSERT_EQ(playlists.size(), 2);
+    EXPECT_EQ(playlists.at(0).name, QStringLiteral("Alpha"));
+    EXPECT_EQ(playlists.at(1).name, QStringLiteral("beta"));
+    EXPECT_EQ(playlists.at(0).songCount, 0);
+
+    // addTo appends di posisi akhir
+    EXPECT_TRUE(db.addToPlaylist(pidA, songIds.at(0)));
+    EXPECT_TRUE(db.addToPlaylist(pidA, songIds.at(1)));
+    EXPECT_TRUE(db.addToPlaylist(pidA, songIds.at(2)));
+
+    auto songs = db.playlistSongs(pidA);
+    ASSERT_EQ(songs.size(), 3);
+    EXPECT_EQ(songs.at(0).id, songIds.at(0));
+    EXPECT_EQ(songs.at(1).id, songIds.at(1));
+    EXPECT_EQ(songs.at(2).id, songIds.at(2));
+
+    // rename
+    EXPECT_TRUE(db.renamePlaylist(pidA, QStringLiteral("Zeta")));
+    playlists = db.allPlaylists();
+    EXPECT_EQ(playlists.at(1).name, QStringLiteral("Zeta"));
+
+    // movePlaylistSong: s3 (posisi 2) pindah ke 0
+    EXPECT_TRUE(db.movePlaylistSong(pidA, songIds.at(2), 0));
+    songs = db.playlistSongs(pidA);
+    ASSERT_EQ(songs.size(), 3);
+    EXPECT_EQ(songs.at(0).id, songIds.at(2));
+    EXPECT_EQ(songs.at(1).id, songIds.at(0));
+    EXPECT_EQ(songs.at(2).id, songIds.at(1));
+
+    // removeFrom tengah; position ke-rapikan
+    EXPECT_TRUE(db.removeFromPlaylist(pidA, songIds.at(0)));
+    songs = db.playlistSongs(pidA);
+    ASSERT_EQ(songs.size(), 2);
+    EXPECT_EQ(songs.at(0).id, songIds.at(2));
+    EXPECT_EQ(songs.at(1).id, songIds.at(1));
+
+    // songCount ikut diperbarui di allPlaylists
+    playlists = db.allPlaylists();
+    qint64 countA = 0;
+    for (const auto &row : playlists)
+        if (row.id == pidA)
+            countA = row.songCount;
+    EXPECT_EQ(countA, 2);
+
+    // delete playlist ikut hapus baris isi
+    EXPECT_TRUE(db.deletePlaylist(pidA));
+    EXPECT_TRUE(db.playlistSongs(pidA).isEmpty());
+    playlists = db.allPlaylists();
+    ASSERT_EQ(playlists.size(), 1);
+    EXPECT_EQ(playlists.at(0).id, pidB);
+}
+
+TEST(LibraryDbTest, PlaylistDuplicateSongIgnoredAndGuardRails)
+{
+    QTemporaryDir dir;
+    LibraryDatabase db(openTempDb(dir));
+    ASSERT_TRUE(db.isOpen());
+    const auto songIds = seedSongs(db);
+
+    const qint64 pid = db.createPlaylist(QStringLiteral("Solo"));
+    ASSERT_GT(pid, 0);
+
+    EXPECT_TRUE(db.addToPlaylist(pid, songIds.at(0)));
+    EXPECT_FALSE(db.addToPlaylist(pid, songIds.at(0)));   // INSERT OR IGNORE
+    EXPECT_EQ(db.playlistSongs(pid).size(), 1);
+
+    // baris yang tak ada di playlist tidak bisa dielap/dipindah
+    EXPECT_FALSE(db.removeFromPlaylist(pid, songIds.at(1)));
+    EXPECT_FALSE(db.movePlaylistSong(pid, songIds.at(1), 0));
+    // out-of-range move
+    EXPECT_FALSE(db.movePlaylistSong(pid, songIds.at(0), 5));
+
+    // nama kosong ditolak
+    const qint64 badId = db.createPlaylist(QStringLiteral("   "));
+    EXPECT_EQ(badId, -1);
+    EXPECT_FALSE(db.renamePlaylist(pid, QStringLiteral("   ")));
+
+    // sampul tersimpan
+    EXPECT_TRUE(db.setPlaylistImage(pid, QStringLiteral("file:///X:/cover.png")));
+    EXPECT_EQ(db.allPlaylists().at(0).image, QStringLiteral("file:///X:/cover.png"));
+}

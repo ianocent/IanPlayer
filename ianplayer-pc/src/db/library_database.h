@@ -104,6 +104,28 @@ public:
     QVector<AlbumRow> allAlbums() const;   // urut nama COLLATE NOCASE
     QVector<ArtistRow> allArtists() const;
 
+    // ---- playlists untuk UI (M1.3, paritas SongStore.kt) ----
+    struct PlaylistRow
+    {
+        qint64 id = 0;
+        QString name;
+        QString image;
+        qint64 createdTs = 0;
+        int songCount = 0;
+    };
+    QVector<PlaylistRow> allPlaylists() const;             // urut nama NOCASE
+    QVector<SongRecord> playlistSongs(qint64 playlistId) const; // urut position, avail=1
+
+    qint64 createPlaylist(const QString &name);            // id baru / -1 gagal
+    bool renamePlaylist(qint64 id, const QString &name);
+    bool deletePlaylist(qint64 id);                        // ikut hapus playlist_songs
+    bool setPlaylistImage(qint64 id, const QString &imagePath);
+    bool addToPlaylist(qint64 playlistId, qint64 songId);  // append posisi akhir
+    bool removeFromPlaylist(qint64 playlistId, qint64 songId);
+    // reorder live: ambil lagu, lepas dari posisinya, selipkan ke toPos (0..n-1),
+    // tulis ulang semua position. for DnD drag reorder playlist detail.
+    bool movePlaylistSong(qint64 playlistId, qint64 songId, int toPos);
+
 private:
     void createSchema();
 
