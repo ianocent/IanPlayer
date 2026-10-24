@@ -15,6 +15,10 @@
 #include "core/library_scanner.h"
 #include "db/library_database.h"
 #include "app/library_service.h"
+#include "models/library_song_model.h"
+#include "models/library_proxy_model.h"
+#include "models/album_list_model.h"
+#include "models/artist_list_model.h"
 
 #include <iostream>
 
@@ -162,6 +166,29 @@ int main(int argc, char *argv[])
     LibraryDatabase libDb(dbPath);
     LibraryService service(&scanner, &libDb);
     engine.rootContext()->setContextProperty(QStringLiteral("LibraryService"), &service);
+
+    // Models library M1.2 — semua akses DB di main thread (pitfall doc)
+    LibrarySongModel songModel(&libDb);
+    LibraryProxyModel songProxy;
+    songProxy.setSourceModel(&songModel);
+    songProxy.sort(0);
+    AlbumListModel albumModel(&libDb);
+    ArtistListModel artistModel(&libDb);
+    engine.rootContext()->setContextProperty(QStringLiteral("LibraryProxy"), &songProxy);
+    engine.rootContext()->setContextProperty(QStringLiteral("AlbumListModel"), &albumModel);
+    engine.rootContext()->setContextProperty(QStringLiteral("ArtistListModel"), &artistModel);
+
+    // snapshot ulang model saat scan sukses / favorit ganti
+    QObject::connect(&service, &LibraryService::libraryChanged, [&] {
+        songModel.reload();
+        albumModel.reload();
+        artistModel.reload();
+        songProxy.invalidate();   // ulang filter+sort di atas snapshot baru
+    });
+    QObject::connect(&service, &LibraryService::favoritesChanged, [&] {
+        songModel.reload();
+        songProxy.invalidate();
+    });
 
     QObject::connect(
         &engine,

@@ -6,7 +6,7 @@ Update file ini di tiap phase M#
 | Milestone | Status |
 |---|---|
 | M0 Fondasi | 🟢 M0 selesai (M0.1–M0.4) |
-| M1 Local Library | 🟢 M1.1 selesai penuh (scan + TagLib + SQLite + favorites/history + title clean) — lanjut M1.2 |
+| M1 Local Library | 🟡 M1.2 Models + Library UI (Songs/Albums/Artists jalan) — lanjut sisa M1.2 (playlists M1.3) |
 | M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | ⚪ belum |
 | M4 Lyrics+Download | ⚪ belum |
@@ -35,6 +35,32 @@ Catatan M0.4 (jebakan yang ketemu & solusinya):
 Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
 
 Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
+
+---
+
+## M1.2 — Models + Library UI (bagian 1 selesai, 2026-10-24)
+
+- [x] `LibrarySongModel` (`src/models/library_song_model.{h,cpp}`): QAbstractListModel snapshot dari DB (id/path/title/artist/album/duration/bitrate/codec/art64/art256/track/year/favorite/playCount/sectionLetter + sortRole casefolded); `reload()` dipanggil main.cpp saat signal `libraryChanged`/`favoritesChanged` — semua akses DB di main thread (pitfall doc)
+- [x] `LibraryProxyModel` (`src/models/library_proxy_model.{h,cpp}`): QSortFilterProxyModel — sort 5 mode (title/artist/album+track#/recently added desc/play count desc, paritas `sort_mode` Android), search filter title/artist/album case-insensitive, filter albumId/artistId untuk detail screen, `indexForLetter()` untuk fast scroller
+- [x] `AlbumListModel` + `ArtistListModel` (`src/models/*.{h,cpp}`) + DB `allAlbums()/allArtists()` (count lagu per album/artist, urut nama COLLATE NOCASE)
+- [x] UI Songs tab (`AppWindow.qml`): scan controls + search field (debounce 250ms Timer) + combo sort 5 mode + ListView baris 56px (thumb 48px/judul/artis/durasi/heart hover/klik-ka For context menu)
+- [x] Context menu klik kanan: Tambah/Hapus Favorit, Tampilkan di Explorer (`revealLocalFile` → `explorer.exe /select,`), Tambah ke Playlist (disabled, M1.3)
+- [x] Klik kiri baris → `recordLocalPlayed` — recording play counts + history 90d sudah hidup dari M1.1+ (hook real play mengunggu M2 queue)
+- [x] Fast scroller A–Z rail kanan (aktif hanya sort title; sections via role `sectionLetter`)
+- [x] Albums tab: GridView kotak 160×200 (art 144/placeholder huruf, nama, artis, count) + Artists tab: GridView bulat — klik → detail screen (header + LibraryList dengan `LibraryProxy.albumFilter/artistFilter`)
+- [x] Detail screen album/artis: tombol Kembali; default tab list disi "Artists" (desktop, reorderable)
+- [x] gtest baru: `library_model_test.cpp` (3 test: model reload+roles, proxy sort 5 mode + search, fast scroller) — total **39/39 PASS**
+- [x] Build + smoke: app alive, stderr hanya deprecation Qt.labs.settings (known)
+
+Catatan M1.2 (jebakan):
+1. **QSortFilterProxyModel sorts lazily** — `setSourceModel` + `sort(0)` wajib; reuse: `invalidate()` saat reload model, jangan reset sortMode sama nilai (guard early-return).
+2. `Set-alias` bubug klasik ini render: `ScrollBar.vertical` attached property harus fully qualified `C.ScrollBar.vertical` — alias import mengel Components jadi unqualified type not found ("Non-existent attached object").
+3. `C.ItemDelegate.radius` tidak ada — pindah ke `background: Rectangle{ radius: } ` (warning "Cannot assign to non-existent property radius").
+4. Referensi id instance dari dalam inline component (pitfall M0.4 #4): jangan refer id luar — letter rail pakai binding konteks property, `fmtDur` didefinisikan di dalam LibraryList itu sendiri.
+5. `QSortFilterProxyModel.count` — property `count()` harus Q_PROPERTY sendiri (QML tidak pakai rowCount).
+6. Test `LibraryProxyModel.index(row)` di C++ harus `proxy.index(row, 0)` — signature 2-arg [:catatan untuk test lain].
+
+HOLDING (bagian M1.2 belum): Playlists tab (M1.3), fast scroller letter highlight hover (minor), album art di sort Recently Added header (minor).
 
 ---
 

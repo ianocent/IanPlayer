@@ -85,6 +85,25 @@ public:
     // Baris history yang masih dalam window 90d (lihat recordPlayed)
     QVector<PlayHistoryEntry> playHistory() const;
 
+    // ---- daftar albums/artists untuk UI grid (M1.2) ----
+    struct AlbumRow
+    {
+        qint64 id = 0;
+        QString name;
+        QString artist;
+        QString art256;
+        int songCount = 0;
+    };
+    struct ArtistRow
+    {
+        qint64 id = 0;
+        QString name;
+        QString art256;
+        int songCount = 0;
+    };
+    QVector<AlbumRow> allAlbums() const;   // urut nama COLLATE NOCASE
+    QVector<ArtistRow> allArtists() const;
+
 private:
     void createSchema();
 

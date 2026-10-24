@@ -36,6 +36,14 @@ qt_add_executable(ianplayer
     src/db/library_database.cpp
     src/app/library_service.h
     src/app/library_service.cpp
+    src/models/library_song_model.h
+    src/models/library_song_model.cpp
+    src/models/library_proxy_model.h
+    src/models/library_proxy_model.cpp
+    src/models/album_list_model.h
+    src/models/album_list_model.cpp
+    src/models/artist_list_model.h
+    src/models/artist_list_model.cpp
     assets/app.manifest
 )
 
@@ -83,11 +91,16 @@ add_executable(ianplayer_tests
     src/tests/filename_parse_test.cpp
     src/tests/title_clean_test.cpp
     src/tests/library_db_test.cpp
+    src/tests/library_model_test.cpp
     src/tests/test_main.cpp
     src/core/library_scanner.h
     src/core/library_scanner.cpp
     src/db/library_database.h
     src/db/library_database.cpp
+    src/models/library_song_model.h
+    src/models/library_song_model.cpp
+    src/models/library_proxy_model.h
+    src/models/library_proxy_model.cpp
 )
 target_link_libraries(ianplayer_tests PRIVATE
     ianplayer_core

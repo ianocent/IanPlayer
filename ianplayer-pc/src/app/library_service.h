@@ -51,6 +51,10 @@ public:
     // Dipanggil controller playback saat track lokal mulai putar.
     Q_INVOKABLE void recordLocalPlayed(const QString &path);
 
+    // buka Windows Explorer dengan file terpilih (medley pitfall /select: harus
+    // backslash; startDetached)
+    Q_INVOKABLE void revealLocalFile(const QString &path);
+
 signals:
     void scanningChanged();
     void progressChanged();

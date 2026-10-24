@@ -4,6 +4,8 @@
 #include "db/library_database.h"
 
 #include <QDateTime>
+#include <QDir>
+#include <QProcess>
 #include <QSettings>
 
 namespace {
@@ -178,4 +180,11 @@ void LibraryService::recordLocalPlayed(const QString &path)
     const QString key = QStringLiteral("local:%1").arg(row->first);
     if (m_db->recordPlayed(key, QDateTime::currentMSecsSinceEpoch(), row->second))
         emit playStateChanged();
+}
+
+void LibraryService::revealLocalFile(const QString &path)
+{
+    QProcess::startDetached(QStringLiteral("explorer.exe"),
+        QStringList() << QStringLiteral("/select,")
+                      << QDir::toNativeSeparators(path));
 }

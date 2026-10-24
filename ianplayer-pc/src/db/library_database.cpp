@@ -473,3 +473,48 @@ QVector<LibraryDatabase::PlayHistoryEntry> LibraryDatabase::playHistory() const
     }
     return result;
 }
+
+QVector<LibraryDatabase::AlbumRow> LibraryDatabase::allAlbums() const
+{
+    QVector<AlbumRow> result;
+    if (!m_open)
+        return result;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral(
+        "SELECT a.id, a.name, a.artist, a.art_256,"
+        " (SELECT COUNT(*) FROM songs s WHERE s.album_id = a.id AND s.avail = 1)"
+        " FROM albums a ORDER BY a.name COLLATE NOCASE"));
+    q.exec();
+    while (q.next()) {
+        AlbumRow row;
+        row.id = q.value(0).toLongLong();
+        row.name = q.value(1).toString();
+        row.artist = q.value(2).toString();
+        row.art256 = q.value(3).toString();
+        row.songCount = q.value(4).toInt();
+        result.append(row);
+    }
+    return result;
+}
+
+QVector<LibraryDatabase::ArtistRow> LibraryDatabase::allArtists() const
+{
+    QVector<ArtistRow> result;
+    if (!m_open)
+        return result;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral(
+        "SELECT t.id, t.name, t.art_256,"
+        " (SELECT COUNT(*) FROM songs s WHERE s.artist_id = t.id AND s.avail = 1)"
+        " FROM artists t ORDER BY t.name COLLATE NOCASE"));
+    q.exec();
+    while (q.next()) {
+        ArtistRow row;
+        row.id = q.value(0).toLongLong();
+        row.name = q.value(1).toString();
+        row.art256 = q.value(2).toString();
+        row.songCount = q.value(3).toInt();
+        result.append(row);
+    }
+    return result;
+}
