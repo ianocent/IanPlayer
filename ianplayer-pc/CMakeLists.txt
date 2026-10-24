@@ -19,6 +19,8 @@ set(MPV_DIR ${CMAKE_SOURCE_DIR}/third_party/mpv)
 # ---- ianplayer_core: logic non-UI (network/cache) supaya bisa di-test gtest ----
 add_library(ianplayer_core STATIC
     src/net/stream_url_resolver.cpp
+    src/core/title_cleaner.cpp
+    src/core/title_cleaner.h
 )
 target_include_directories(ianplayer_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(ianplayer_core PUBLIC Qt6::Core Qt6::Sql)
@@ -79,15 +81,19 @@ find_package(GTest CONFIG REQUIRED)
 add_executable(ianplayer_tests
     src/tests/stream_url_test.cpp
     src/tests/filename_parse_test.cpp
+    src/tests/title_clean_test.cpp
+    src/tests/library_db_test.cpp
+    src/tests/test_main.cpp
     src/core/library_scanner.h
     src/core/library_scanner.cpp
+    src/db/library_database.h
+    src/db/library_database.cpp
 )
 target_link_libraries(ianplayer_tests PRIVATE
     ianplayer_core
     TagLib::TagLib
     Qt6::Gui
     GTest::gtest
-    GTest::gtest_main
 )
 if (MSVC)
     target_compile_options(ianplayer_tests PRIVATE /W4 /permissive- /utf-8)

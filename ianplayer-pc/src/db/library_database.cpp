@@ -164,6 +164,9 @@ bool LibraryDatabase::upsertSong(const SongRecord &rec)
     q.bindValue(QStringLiteral(":added"), rec.addedTs);
     q.bindValue(QStringLiteral(":modified"), rec.modifiedTs);
 
+    if (!q.exec())
+        return false;
+
     // catatan: art_256/art_64 & added_ts sengaja tidak dikut panggil di
     // ON CONFLICT UPDATE — artwork lama dan added_ts dipertahankan.
     return true;
@@ -306,4 +309,167 @@ int LibraryDatabase::songCount() const
     QSqlQuery q(libraryConnection(m_dbPath));
     q.exec(QStringLiteral("SELECT COUNT(*) FROM songs WHERE avail = 1"));
     return q.next() ? q.value(0).toInt() : 0;
+}
+
+// ==== paritas SongStore.kt: favorites / play counts / play history ====
+
+std::optional<qint64> LibraryDatabase::songIdByPath(const QString &path) const
+{
+    if (!m_open)
+        return std::nullopt;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral("SELECT id FROM songs WHERE path = :path"));
+    q.bindValue(QStringLiteral(":path"), path);
+    if (!q.exec() || !q.next())
+        return std::nullopt;
+    return q.value(0).toLongLong();
+}
+
+std::optional<QPair<qint64, qint64>>
+LibraryDatabase::songIdAndDurationByPath(const QString &path) const
+{
+    if (!m_open)
+        return std::nullopt;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral("SELECT id, duration_ms FROM songs WHERE path = :path"));
+    q.bindValue(QStringLiteral(":path"), path);
+    if (!q.exec() || !q.next())
+        return std::nullopt;
+    return QPair<qint64, qint64>{ q.value(0).toLongLong(), q.value(1).toLongLong() };
+}
+
+bool LibraryDatabase::isFavorite(const QString &songKey) const
+{
+    if (!m_open)
+        return false;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral("SELECT 1 FROM favorites WHERE song_key = :key"));
+    q.bindValue(QStringLiteral(":key"), songKey);
+    return q.exec() && q.next();
+}
+
+QSet<QString> LibraryDatabase::favoriteKeys() const
+{
+    QSet<QString> result;
+    if (!m_open)
+        return result;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.exec(QStringLiteral("SELECT song_key FROM favorites"));
+    while (q.next())
+        result.insert(q.value(0).toString());
+    return result;
+}
+
+bool LibraryDatabase::setFavorite(const QString &songKey, bool favorite)
+{
+    if (!m_open)
+        return false;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    if (favorite) {
+        q.prepare(QStringLiteral(
+            "INSERT OR IGNORE INTO favorites (song_key) VALUES (:key)"));
+        q.bindValue(QStringLiteral(":key"), songKey);
+    } else {
+        q.prepare(QStringLiteral("DELETE FROM favorites WHERE song_key = :key"));
+        q.bindValue(QStringLiteral(":key"), songKey);
+    }
+    return q.exec();
+}
+
+bool LibraryDatabase::recordPlayed(const QString &songKey, qint64 playedTsMs, qint64 durationMs)
+{
+    if (!m_open)
+        return false;
+
+    // Paritas SongStore.recordPlayed: counter +1, history append, lalu trim
+    // baris lebih tua dari window 90 hari (cutoff = now - HISTORY_WINDOW_MS).
+    QSqlDatabase db = libraryConnection(m_dbPath);
+    if (!db.transaction())
+        return false;
+
+    QSqlQuery q(db);
+
+    q.prepare(QStringLiteral(
+        "INSERT INTO play_counts (song_key, count, last_ts) VALUES (:key, 1, :ts)"
+        " ON CONFLICT(song_key) DO UPDATE SET count = count + 1, last_ts = excluded.last_ts"));
+    q.bindValue(QStringLiteral(":key"), songKey);
+    q.bindValue(QStringLiteral(":ts"), playedTsMs);
+    if (!q.exec()) {
+        db.rollback();
+        return false;
+    }
+
+    q.prepare(QStringLiteral(
+        "INSERT INTO play_history (song_key, played_ts, duration_ms)"
+        " VALUES (:key, :ts, :dur)"));
+    q.bindValue(QStringLiteral(":key"), songKey);
+    q.bindValue(QStringLiteral(":ts"), playedTsMs);
+    q.bindValue(QStringLiteral(":dur"), durationMs);
+    if (!q.exec()) {
+        db.rollback();
+        return false;
+    }
+
+    constexpr qint64 kHistoryWindowMs = 90LL * 24 * 60 * 60 * 1000;
+    const qint64 cutoff = playedTsMs - kHistoryWindowMs;
+    q.prepare(QStringLiteral(
+        "DELETE FROM play_history WHERE played_ts <= :cutoff"));
+    q.bindValue(QStringLiteral(":cutoff"), cutoff);
+    if (!q.exec()) {
+        db.rollback();
+        return false;
+    }
+
+    if (!db.commit()) {
+        db.rollback();
+        return false;
+    }
+    return true;
+}
+
+int LibraryDatabase::playCount(const QString &songKey) const
+{
+    if (!m_open)
+        return 0;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral("SELECT count FROM play_counts WHERE song_key = :key"));
+    q.bindValue(QStringLiteral(":key"), songKey);
+    if (!q.exec() || !q.next())
+        return 0;
+    return q.value(0).toInt();
+}
+
+QHash<QString, int> LibraryDatabase::allPlayCounts() const
+{
+    QHash<QString, int> result;
+    if (!m_open)
+        return result;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.exec(QStringLiteral("SELECT song_key, count FROM play_counts"));
+    while (q.next())
+        result.insert(q.value(0).toString(), q.value(1).toInt());
+    return result;
+}
+
+QVector<LibraryDatabase::PlayHistoryEntry> LibraryDatabase::playHistory() const
+{
+    QVector<PlayHistoryEntry> result;
+    if (!m_open)
+        return result;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral(
+        "SELECT song_key, played_ts, duration_ms FROM play_history"
+        " WHERE played_ts > :cutoff ORDER BY played_ts DESC"));
+    constexpr qint64 kHistoryWindowMs = 90LL * 24 * 60 * 60 * 1000;
+    q.bindValue(QStringLiteral(":cutoff"),
+                QDateTime::currentMSecsSinceEpoch() - kHistoryWindowMs);
+    q.exec();
+    while (q.next()) {
+        PlayHistoryEntry entry;
+        entry.songKey = q.value(0).toString();
+        entry.playedTsMs = q.value(1).toLongLong();
+        entry.durationMs = q.value(2).toLongLong();
+        result.append(entry);
+    }
+    return result;
 }

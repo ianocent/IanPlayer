@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls as C
 import QtQuick.Layouts
-import QtQuick.Dialogs 1.3
+import QtQuick.Dialogs
 import Qt.labs.settings
 import IanPlayer.PC
 

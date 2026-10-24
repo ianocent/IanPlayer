@@ -1,5 +1,7 @@
 #include "core/library_scanner.h"
 
+#include "core/title_cleaner.h"
+
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -198,6 +200,10 @@ SongRecord LibraryScanner::readTagLib(const QString &filePath, const QString &co
     }
     if (rec.album.isEmpty())
         rec.album = QStringLiteral("Unknown Album");
+
+    // bersihkan akhiran promo "(Official Video)", "[Lyrics]", dsb. dari judul
+    // hasil tag ATAU nama file (parity #30 target M1.1 — port SongTags.kt)
+    rec.title = SongTags::cleanTitle(rec.title);
 
     return rec;
 }

@@ -3,6 +3,7 @@
 #include "core/library_scanner.h"
 #include "db/library_database.h"
 
+#include <QDateTime>
 #include <QSettings>
 
 namespace {
@@ -136,4 +137,45 @@ void LibraryService::onScanCompleted(const QVector<SongRecord> &newRecords,
 int LibraryService::songCount() const
 {
     return m_db->songCount();
+}
+
+int LibraryService::favoriteCount() const
+{
+    return m_db->favoriteKeys().size();
+}
+
+QString LibraryService::localKeyForPath(const QString &path) const
+{
+    const auto id = m_db->songIdByPath(path);
+    return id ? QStringLiteral("local:%1").arg(*id) : QString();
+}
+
+bool LibraryService::isFavorite(const QString &songKey) const
+{
+    return m_db->isFavorite(songKey);
+}
+
+void LibraryService::setFavorite(const QString &songKey, bool favorite)
+{
+    if (songKey.isEmpty())
+        return;
+    if (m_db->setFavorite(songKey, favorite))
+        emit favoritesChanged();
+}
+
+void LibraryService::toggleFavorite(const QString &songKey)
+{
+    if (songKey.isEmpty())
+        return;
+    setFavorite(songKey, !m_db->isFavorite(songKey));
+}
+
+void LibraryService::recordLocalPlayed(const QString &path)
+{
+    const auto row = m_db->songIdAndDurationByPath(path);
+    if (!row)
+        return;
+    const QString key = QStringLiteral("local:%1").arg(row->first);
+    if (m_db->recordPlayed(key, QDateTime::currentMSecsSinceEpoch(), row->second))
+        emit playStateChanged();
 }

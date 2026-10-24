@@ -5,6 +5,7 @@
 #include <QVector>
 #include <QHash>
 #include <QSet>
+#include <QPair>
 
 #include <optional>
 #include <QtCore/qmetatype.h>
@@ -58,6 +59,31 @@ public:
     // ---- query untuk UI/model (M1.2+) ----
     QVector<SongRecord> allSongs() const;
     int songCount() const;
+
+    // ---- paritas SongStore.kt (#7 target M1.1) ----
+    // song_key = "local:<id>" | "yt:<videoId>" (02-ARCHITECTURE.md)
+    std::optional<qint64> songIdByPath(const QString &path) const;
+    std::optional<QPair<qint64, qint64>> songIdAndDurationByPath(const QString &path) const;
+
+    // favorites
+    bool isFavorite(const QString &songKey) const;
+    QSet<QString> favoriteKeys() const;
+    bool setFavorite(const QString &songKey, bool favorite);
+
+    // play counts + play history (window 90 hari, dipangkas di recordPlayed —
+    // paritas SongStore.recordPlayed Android)
+    bool recordPlayed(const QString &songKey, qint64 playedTsMs, qint64 durationMs);
+    int playCount(const QString &songKey) const;
+    QHash<QString, int> allPlayCounts() const;
+
+    struct PlayHistoryEntry
+    {
+        QString songKey;
+        qint64 playedTsMs = 0;
+        qint64 durationMs = 0;
+    };
+    // Baris history yang masih dalam window 90d (lihat recordPlayed)
+    QVector<PlayHistoryEntry> playHistory() const;
 
 private:
     void createSchema();

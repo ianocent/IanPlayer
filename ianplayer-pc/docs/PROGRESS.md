@@ -5,8 +5,8 @@ Update file ini di tiap phase M#
 
 | Milestone | Status |
 |---|---|
-| M0 Fondasi | 🟢 M0 selesai (M0.1–M0.4) — lanjut M1.1 |
-| M1 Local Library | 🟢 M1.1 selesai (folder scan + TagLib + SQLite) — lanjut M1.2 |
+| M0 Fondasi | 🟢 M0 selesai (M0.1–M0.4) |
+| M1 Local Library | 🟢 M1.1 selesai penuh (scan + TagLib + SQLite + favorites/history + title clean) — lanjut M1.2 |
 | M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | ⚪ belum |
 | M4 Lyrics+Download | ⚪ belum |
@@ -35,6 +35,28 @@ Catatan M0.4 (jebakan yang ketemu & solusinya):
 Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
 
 Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
+
+---
+
+## M1.1+ — Lanjutan M1.1: fix bug persist + paritas #7 #30 (selesai, 2026-10-24)
+
+**Bug terbesar yang ketemu:** `LibraryDatabase::upsertSong` tidak pernah memanggil `q.exec()` — scan "berhasil" (progress jalan, commit transaksi sukses) tapi nol baris tertulis ke DB, `songCount` selalu 0. Terbukti lewat gtest baru `LibraryDbTest.SongIdLookupByPath` (upsert → lookup gagal). Fix: cek `q.exec()` + balas hasilnya. Scan M1.1 sebelumnya PRA-fix ini praktis tidak menulis apa pun.
+
+- [x] Paritas **#7** (favorites + play counts + history 90d → SQLite):
+  - `LibraryDatabase`: `setFavorite/isFavorite/favoriteKeys`, `recordPlayed` (transaksi: play_counts upsert +1 + play_history insert + trim `played_ts <= now-90d`, paritas `SongStore.recordPlayed`), `playCount/allPlayCounts/playHistory`, `songIdByPath/songIdAndDurationByPath`
+  - `song_key = "local:<id>" | "yt:<videoId>"` per 02-ARCHITECTURE.md
+  - `LibraryService` QML: `favoriteCount`, `isFavorite/setFavorite/toggleFavorite`, `localKeyForPath`, `recordLocalPlayed(path)` + signal `favoritesChanged`/`playStateChanged`. Hook dipanggil controller playback saat M2 track lokal mulai putar
+- [x] Paritas **#30** (title cleaning regex): port 1:1 `SongTags.kt:85-162` → `src/core/title_cleaner.{h,cpp}` (namespace `SongTags`, masuk `ianplayer_core`): `cleanTitle` (6 regex TITLE_JUNK + loop repeat + trimEnd `-|([` + fallback raw), `isJunkArtist`, `resolve` ("- Topic"/VEVO cleanup, trusted-artist strip verbatim, dash split dengan guard `left<=60 && no'('`), dipakai scanner: `readTagLib` memanggil `cleanTitle(rec.title)` di akhir (junk dari tag ATAU nama file); `resolve` penuh baru dipakai M4.3
+- [x] gtest baru: `title_clean_test.cpp` (17 test) + `library_db_test.cpp` (4 test) — total **36/36 PASS**
+- [x] **test_main.cpp custom** — `QCoreApplication` wajib diangkat sebelum test: tanpa itu semua test DB crash `0xc0000005` (gtest_main bawaan diganti; `GTest::gtest_main` dicabut dari link)
+- [x] Fix QML app mati saat start (regression ketemu smoke): `import QtQuick.Dialogs 1.3` → `import QtQuick.Dialogs` — Qt 6.8.3 cuma ekspos versi 6.x, modul `1.3` "not installed" → fail-fast -1
+- [x] Fix binding undefined: `Theme.sizeH4` token baru (15/600) — reference SongsPane membuat "Unable to assign [undefined] to int"
+- [x] Smoke: app alive, stderr hanya deprecation `Qt.labs.settings` (known, migrate ke QSettings saat M5.1)
+
+Catatan M1.1+ (jebakan):
+1. **Query prepared tapi tidak pernah `exec()` gagal senyap** — `upsertSong` balas `true` tanpa cek; pola: selalu propagasikan `q.exec()` result. Kontrol gtest upsert wajib ada untuk setiap fungsi persist.
+2. Test Qt tanpa `QCoreApplication` → singletons (mis. registry QSqlDatabase) belum ter-init penuh; crash khas `0xc0000005` TANPA stack trace berguna. Solusi: main test custom.
+3. `QtQuick.Dialogs 1.3` compile-time oke (module ada di disk) tapi runtime gagal karena versi import — smoke GUI wajib redirect stderr (`Start-Process -RedirectStandardError`), jangan cuma cek "windows muncul".
 
 ---
 

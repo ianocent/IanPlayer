@@ -43,6 +43,7 @@ QtObject {
     readonly property int sizeH1: 32        // 600 — screen title
     readonly property int sizeH2: 24        // 600 — section title
     readonly property int sizeH3: 18        // 500 — card title
+    readonly property int sizeH4: 15        // 600 — pane sub-title (Songs pane)
     readonly property int sizeBody: 16      // 400 — isi
     readonly property int sizeSmall: 13     // 400 — artist, durasi
     readonly property int sizeLabel: 12     // 500 — uppercase, +0.8 tracking
