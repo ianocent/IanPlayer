@@ -21,6 +21,8 @@ add_library(ianplayer_core STATIC
     src/net/stream_url_resolver.cpp
     src/net/innertube_client.cpp
     src/net/innertube_client.h
+    src/net/tidal_repository.cpp
+    src/net/tidal_repository.h
     src/net/thumbnail_cache.cpp
     src/net/thumbnail_cache.h
     src/core/title_cleaner.cpp

@@ -9,7 +9,7 @@ Update file ini di tiap phase M#
 | M1 Local Library | 🟢 M1 selesai (M1.1–M1.3) |
 | M2 Playback Penuh | 🟢 M2 selesai (M2.1–M2.4) |
 | M2 Playback Penuh | ⚪ belum |
-| M3 Streaming | 🟡 M3.2 InnerTube client (search/browse/related + noise filter + genres/moods + thumbnail cache) selesai — lanjut M3.3 Tidal |
+| M3 Streaming | 🟡 M3.3 Tidal search selesai — lanjut M3.4 Stream UI |
 | M4 Lyrics+Download | ⚪ belum |
 | M5 Visual | ⚪ belum |
 | M6 Desktop & Rilis | ⚪ belum |
@@ -36,6 +36,23 @@ Catatan M0.4 (jebakan yang ketemu & solusinya):
 Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
 
 Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
+
+---
+
+## M3.3 — Tidal search (selesai, 2026-10-26)
+
+- [x] `TidalRepository` (src/net/tidal_repository.{h,cpp}): GET `api.tidal.com/v1/search/tracks` (limit 20, countryCode ID), header `x-tidal-token` (public token), parse items → title/artist/album/duration/artUrl (cover → resources.tidal.com/.../1280x1280.jpg)
+- [x] Async `searchSongs(query)` + signal `searchFinished(tracks, error)`; error handling (non-200 → empty)
+- [x] Build debug OK; smoke alive; gtest 55/55 PASS (tidak ada test baru — pure network)
+
+HOLDING (v2):
+1. TidalStreamResolver fallback ke YouTube (M3.4, butuh StreamSong model + QueueManager resolver)
+2. Dual-provider search UI (M3.4) fan-out YTM + Tidal dengan debounce 300ms
+3. Playback Tidal track via placeholder + resolver fallback
+
+Jebakan M3.3:
+1. Token Tidal publik bisa berubah/expired — kalau 401/403, search kosong; dokumentasikan.
+2. `cover` string immutable (QString) — gunakan variabel mutable sebelum `.replace`.
 
 ---
 
