@@ -15,7 +15,11 @@
     {
       "name": "release",
       "inherits": "debug",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/build/debug/vcpkg_installed",
+        "VCPKG_APPLOCAL_DEPS": "OFF"
+      }
     }
   ],
   "buildPresets": [

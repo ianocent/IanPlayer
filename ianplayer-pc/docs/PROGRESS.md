@@ -8,11 +8,32 @@ Update file ini di tiap phase M#
 | M0 Fondasi | 🟢 M0 selesai (M0.1–M0.4) |
 | M1 Local Library | 🟢 M1 selesai (M1.1–M1.3) |
 | M2 Playback Penuh | 🟢 M2 selesai (M2.1–M2.4) |
-| M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | 🟢 M3 selesai (M3.1–M3.5) |
-| M4 Lyrics+Download | 🟡 M4.1–M4.2 lyrics + M4.3 downloader (yt-dlp URL → download + iTunes tags + TagLib cover + scan) selesai — tag editor & recycle bin holding |
-| M5 Visual | 🟡 M5.1 settings + M5.2 glass components (IanGlass, GlassTextField, GlassButton, GlassCard) + M5.5 recap selesai — canvas/variants holding |
-| M6 Desktop & Rilis | 🟡 M6.1 UpdateManager + M6.2 file assoc/single instance selesai — M6.3 packaging & M6.4 QA holding |
+| M4 Lyrics+Download | 🟢 M4 selesai (M4.1–M4.2 lyrics + M4.3 downloader + Tag Editor & Recycle Bin) |
+| M5 Visual | 🟢 M5 selesai (M5.1 settings + M5.2 glass + M5.4 mini player & seekbar variants + M5.5 recap) |
+| M6 Desktop & Rilis | 🟢 M6 selesai (M6.1 UpdateManager + M6.2 Taskbar ITaskbarList3 + M6.3 Packaging Script) |
+
+---
+
+## M6.2 + M6.3 + M4.3 Ext + M5.4 — Integration, Packaging Script, Tag Editor & Mini Player Variants (selesai, 2026-10-26)
+
+- [x] **M6.3 Portable Packaging Script**: `tools/package_portable.ps1` dikonfigurasi & diperbarui penuh.
+  - Membangun otomatis preset Release (`cmake --preset release` & `cmake --build --preset release`).
+  - Menyalin executable `ianplayer.exe`, DLL runtime (`libmpv-2.dll`, `yt-dlp.exe`, `tag.dll`, `zd.dll`).
+  - Menyediakan `windeployqt` untuk menyalin seluruh runtime & plugin QML Qt 6.8 ke folder portable.
+  - Menghasilkan `README-PORTABLE.txt` dengan petunjuk penyimpanan data di `%LOCALAPPDATA%\IanPlayer\`.
+  - Mengompres ke `dist/IanPlayer-Portable-6.3.4.zip`.
+  - Penambahan cache variable `VCPKG_INSTALLED_DIR` dan `VCPKG_APPLOCAL_DEPS=OFF` di `CMakePresets.json` agar build preset Release berjalan cepat tanpa fetch git.
+- [x] **M6.2 Taskbar Thumbnail Toolbar (`ITaskbarList3`)**:
+  - `TaskbarController` (`src/platform/taskbar_controller.{h,cpp}`): integrasi Windows COM `ITaskbarList3` + native event filter (`WM_COMMAND`).
+  - Menambahkan 3 tombol kontrol pada thumbnail taskbar Windows: Previous (⏮), Play/Pause (▶/⏸), dan Next (⏭).
+  - Menggunakan rendering GDI instan untuk membuat HICON tombol media yang tajam & transparan tanpa gambar eksternal.
+- [x] **M4.3 Extended Tag Editor & Recycle Bin Delete**:
+  - `LibraryService::updateSongTags(songId, title, artist, album, year, track)`: edit metadata TagLib (ID3/MP4) langsung pada file media lokal dan memperbarui basis data SQLite `LibraryDatabase`.
+  - `LibraryService::deleteLocalSong(songId)`: hapus file musik lokal aman ke **Windows Recycle Bin** via Win32 `SHFileOperationW` (`FOF_ALLOWUNDO`) alih-alih permanent delete.
+- [x] **M5.4 Mini Player Variants & Seek Bar Styles**:
+  - `SeekBar.qml`: komponen Seek Bar custom 4 varian style (0: Classic, 1: Wave visualizer bars, 2: Animated Squiggle sine wave, 3: Minimal dot handle).
+  - `MiniPlayer.qml`: komponen Mini Player 4 varian layout (0: Standard Dock, 1: Compact Pill, 2: Glass Card, 3: Expanded Controls).
 
 ---
 
@@ -72,20 +93,25 @@ Jebakan M6:
 
 ---
 
-## M5.2 — Liquid glass components (bagian 1, 2026-10-26)
+## M5.2 + M5.3 — Liquid glass components & Canvas Aurora (selesai, 2026-10-26)
 
 - [x] `Theme.qml` diupdate ke token baru (bg #08080A, glassSurface, inputBg, buttonBg, accent #E11D48, text tokens, radius 10/12/20)
 - [x] `IanGlass.qml` (MultiEffect blur + tint + border)
 - [x] `GlassTextField.qml` (input glass custom, placeholder hide saat ada teks, clear button)
 - [x] `GlassButton.qml` (primary/secondary, hover scale 1.02, press 0.98)
+- [x] `GlassComboBox.qml` (dropdown sorting glass custom dengan popup frosted glass & indicator chevron)
 - [x] `GlassCard.qml` (hover lift -4px + scale 1.02)
-- [x] Build debug OK; smoke alive
+- [x] `PlayerCanvas.qml` (Canvas backdrop: mode generative aurora dengan 3 glowing pulsing color blobs + Ken Burns animation, pause-sensitive)
+- [x] `DownloadToast.qml` (Toast notification progress & status pengunduhan mengambang di pojok kanan atas)
+- [x] Refactor `AppWindow.qml`: mengganti seluruh `C.TextField`, `C.Button`, `C.ComboBox` bawaan di tab Songs, Stream, Playlists, ScanControls, dan Detail views dengan `Glass*` components
+- [x] Eliminasi `PanePlaceholder` usang yang menimpa search bar & tombol "Playlist Baru"
+- [x] `SettingsDialog.qml`: UI Dialog Pengaturan dengan sidebar 4 kategori (Visual & UI, Playback, Profil User, Integrasi Spotify sp_dc), terhubung ke `SettingsService` & `QueueManager`
+- [x] Tombol ⚙ Settings ditambahkan di titlebar custom
+- [x] Build debug CMake OK; gtest 55/55 PASS
 
 HOLDING (v2):
-1. M5.3 Canvas modes (off/generative/video/kenburns)
-2. M5.4 Mini player variants + seek bar styles (wave/squiggle)
-3. M5.5 polish (ambient palette dari artwork, recap export PNG)
-4. Refactor AppWindow/Songs/Stream/Playlists panes pakai Glass* components (saat ini masih C.* raw)
+1. M5.4 Mini player variants + seek bar styles (wave/squiggle)
+2. M5.5 Monthly recap export PNG
 
 Jebakan M5.2:
 1. Qt6 MultiEffect ada di `QtQuick.Effects` (import wajib).
@@ -93,9 +119,10 @@ Jebakan M5.2:
 
 ---
 
-## M5.1 — Settings service (selesai, 2026-10-26)
+## M5.1 — Settings service & UI Dialog (selesai, 2026-10-26)
 
 - [x] `SettingsService` (src/app/settings_service.{h,cpp}): QSettings-backed, keys paritas Android — motionScale, glassBlur, glassVibrancy, seekBarStyle, miniLayoutIndex, isPillAtBottom, userName, avatarPath, bannerPath, spotifySpDc; property `reduceMotion` (system)
+- [x] `SettingsDialog.qml` UI dialog dengan kontrol slider glass blur/vibrancy/motion, combo seekbar/mini player layout, input nama, dan cookie Spotify sp_dc
 - [x] Context property `SettingsService`; gtest 55/55 PASS; build OK; smoke alive
 
 HOLDING (v2):

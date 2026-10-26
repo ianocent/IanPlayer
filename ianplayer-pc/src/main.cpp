@@ -18,6 +18,7 @@
 #include "playback/playback_controller.h"
 #include "playback/queue_manager.h"
 #include "platform/smtc_controller.h"
+#include "platform/taskbar_controller.h"
 #include "net/stream_url_resolver.h"
 
 #include "core/library_scanner.h"
@@ -421,8 +422,9 @@ int main(int argc, char *argv[])
 
     engine.loadFromModule("IanPlayer.PC", "AppWindow");
 
-    // SMTC (M2.3): expose playback to Windows media keys / volume OSD
+    // SMTC & Taskbar (M2.3 + M6.2): media keys + Windows taskbar thumbnail buttons
     SmtcController *smtc = nullptr;
+    TaskbarController *taskbar = nullptr;
     if (!engine.rootObjects().isEmpty()) {
         if (QWindow *w = qobject_cast<QWindow *>(engine.rootObjects().first())) {
             smtc = new SmtcController(reinterpret_cast<void *>(w->winId()), &queueManager, &app);
@@ -436,6 +438,11 @@ int main(int argc, char *argv[])
             });
             QObject::connect(&queueManager, &QueueManager::isPlayingChanged, smtc,
                              [smtc](bool p) { smtc->setPlaybackStatus(p); });
+
+            taskbar = new TaskbarController(reinterpret_cast<void *>(w->winId()), &queueManager, &app);
+            taskbar->setPlaybackStatus(queueManager.isPlaying());
+            QObject::connect(&queueManager, &QueueManager::isPlayingChanged, taskbar,
+                             [taskbar](bool p) { taskbar->setPlaybackStatus(p); });
         }
     }
 

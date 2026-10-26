@@ -146,6 +146,10 @@ C.ApplicationWindow {
             }
 
             WindowButton {
+                text: "\u2699"  // ⚙ settings
+                onClicked: settingsDialog.open()
+            }
+            WindowButton {
                 text: "\u2500"  // \u2500 minimize
                 onClicked: root.showMinimized()
             }
@@ -263,6 +267,11 @@ C.ApplicationWindow {
             Layout.fillHeight: true
             color: Theme.bg
 
+            PlayerCanvas {
+                anchors.fill: parent
+                z: -1
+            }
+
             // ---- state navigasi sub-pane (detail screen M1.2) ----
             property string subPane: ""       // "" | "album" | "artist" | "playlist"
             property int detailId: 0
@@ -332,12 +341,12 @@ C.ApplicationWindow {
                 RowLayout {
                     spacing: 8
 
-                    C.Button {
+                    GlassButton {
                         text: qsTr("Scan Folder")
                         onClicked: folderDialog.open()
                     }
 
-                    C.Button {
+                    GlassButton {
                         text: qsTr("Rescan")
                         enabled: !LibraryService.scanning
                         onClicked: LibraryService.rescanNow()
@@ -686,12 +695,10 @@ C.ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 8
 
-                    C.TextField {
+                    GlassTextField {
                         id: librarySearch
                         Layout.preferredWidth: 280
                         placeholderText: qsTr("Cari judul/artis/album...")
-                        selectByMouse: true
-                        font.family: Theme.fontFamily
                         Timer {
                             id: searchDebounce
                             interval: 250
@@ -708,7 +715,7 @@ C.ApplicationWindow {
                         font.pixelSize: Theme.sizeSmall
                     }
 
-                    C.ComboBox {
+                    GlassComboBox {
                         model: [qsTr("Judul"),
                                 qsTr("Artis"),
                                 qsTr("Album"),
@@ -716,7 +723,6 @@ C.ApplicationWindow {
                                 qsTr("Terakhir diputar")]
                         currentIndex: LibraryProxy.sortMode
                         onActivated: (idx) => LibraryProxy.sortMode = idx
-                        font.family: Theme.fontFamily
                     }
                 }
 
@@ -1004,10 +1010,9 @@ C.ApplicationWindow {
                 RowLayout {
                     spacing: 8
 
-                    C.Button {
+                    GlassButton {
                         text: qsTr("\u2190 Kembali")
                         onClicked: contentArea.closeDetail()
-                        font.family: Theme.fontFamily
                     }
 
                     C.Label {
@@ -1053,14 +1058,14 @@ C.ApplicationWindow {
                     }
                     spacing: 8
 
-                    C.Button {
+                    GlassButton {
                         text: qsTr("Playlist Baru")
+                        primary: true
                         onClicked: {
                             playlistNameDialog.editKey = 0
                             playlistNameDialog.name = ""
                             playlistNameDialog.open()
                         }
-                        font.family: Theme.fontFamily
                     }
 
                     C.Label {
@@ -1248,10 +1253,9 @@ C.ApplicationWindow {
                 RowLayout {
                     spacing: 8
 
-                    C.Button {
+                    GlassButton {
                         text: qsTr("\u2190 Kembali")
                         onClicked: contentArea.closeDetail()
-                        font.family: Theme.fontFamily
                     }
 
                     C.Label {
@@ -1416,18 +1420,16 @@ C.ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 8
 
-                    C.TextField {
+                    GlassTextField {
                         id: streamSearchField
                         Layout.fillWidth: true
                         placeholderText: qsTr("Cari di YouTube Music / Tidal...")
-                        font.family: Theme.fontFamily
                         onTextChanged: streamSearchDebounce.restart()
                     }
 
-                    C.Button {
+                    GlassButton {
                         text: qsTr("Browse")
                         onClicked: StreamService.browseHome()
-                        font.family: Theme.fontFamily
                     }
                 }
 
@@ -1494,91 +1496,31 @@ C.ApplicationWindow {
                 }
             }
 
-            // == placeholder tab yang belum aktif ==
-            component PanePlaceholder : C.Label {
-                anchors {
-                    top: contentTitle.bottom
-                    left: contentTitle.left
-                    topMargin: 16
-                    leftMargin: 32
-                }
-                text: qsTr("Konten menyusul di milestone M1.3+ / M3")
-                color: Theme.textSecondary
-                font {
-                    family: Theme.fontFamily
-                    pixelSize: Theme.sizeBody
-                }
-            }
-
-            PanePlaceholder {
-                visible: contentArea.subPane === ""
-                    && tabsModel.count > 0
-                    && ["Stream", "Playlists"].indexOf(
-                        tabsModel.get(tabRail.activeIndex % tabsModel.count).name) >= 0
-            }
+            // All tabs (Stream, Songs, Playlists, Albums, Artists) now have active panes
         }
     }
 
-    // ---- mini player dock (M2.2) ----
-    Rectangle {
+    // ---- mini player dock (M2.2 + M5.4) ----
+    MiniPlayer {
         id: miniPlayer
-        visible: QueueManager.queueCount > 0
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-        height: 72
-        color: Theme.surface1
         z: 5
-
-        Rectangle {
-            anchors { top: parent.top; left: parent.left; right: parent.right }
-            height: 2
-            color: Theme.surface2
-            Rectangle {
-                anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-                width: parent.width * (QueueManager.durationMsCurrent() > 0
-                    ? QueueManager.positionMs() / QueueManager.durationMsCurrent() : 0)
-                color: Theme.accent
-            }
-        }
-
-        RowLayout {
-            anchors { fill: parent; leftMargin: 12; rightMargin: 12; topMargin: 8; bottomMargin: 8 }
-            spacing: 12
-
-            Rectangle {
-                Layout.preferredWidth: 56; Layout.preferredHeight: 56
-                color: Theme.surface2; radius: Theme.radius; clip: true
-                Image { anchors.fill: parent; source: QueueManager.currentArt; fillMode: Image.PreserveAspectCrop; smooth: true }
-                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.nowPlayingOpen = true }
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true; spacing: 2
-                C.Label { Layout.fillWidth: true; text: QueueManager.currentTitle; color: Theme.textPrimary; elide: Text.ElideRight; font { family: Theme.fontFamily; pixelSize: Theme.sizeBody; weight: Theme.weightMedium } }
-                C.Label { Layout.fillWidth: true; text: QueueManager.currentArtist; color: Theme.textSecondary; elide: Text.ElideRight; font { family: Theme.fontFamily; pixelSize: Theme.sizeSmall } }
-            }
-
-            C.AbstractButton { width: 32; height: 32; contentItem: Text { text: "\u23EE"; color: Theme.textPrimary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } onClicked: QueueManager.playPrevious() }
-            C.AbstractButton { width: 40; height: 40; contentItem: Text { text: QueueManager.isPlaying ? "\u23F8" : "\u25B6"; color: Theme.textPrimary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.pixelSize: 18 } onClicked: QueueManager.togglePlayPause() }
-            C.AbstractButton { width: 32; height: 32; contentItem: Text { text: "\u23ED"; color: Theme.textPrimary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } onClicked: QueueManager.playNext() }
-            C.AbstractButton { width: 32; height: 32; contentItem: Text { text: "\u2191"; color: Theme.textSecondary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } onClicked: root.nowPlayingOpen = true }
-        }
+        onOpenNowPlayingRequested: root.nowPlayingOpen = true
     }
 
     // ---- Now Playing overlay ----
-    Rectangle {
+    IanGlass {
         id: nowPlayingOverlay
         visible: root.nowPlayingOpen
         anchors.fill: parent
-        color: "#CC000000"
         z: 20
 
         MouseArea { anchors.fill: parent; onClicked: root.nowPlayingOpen = false }
 
-        Rectangle {
+        IanGlass {
             anchors.centerIn: parent
             width: Math.min(parent.width - 80, 520)
             height: Math.min(parent.height - 80, 640)
-            color: Theme.surface1
             radius: Theme.radius * 2
 
             ColumnLayout {
@@ -1587,7 +1529,7 @@ C.ApplicationWindow {
 
                 Rectangle {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 320; Layout.preferredHeight: 320
+                    Layout.preferredWidth: 300; Layout.preferredHeight: 300
                     color: Theme.surface2; radius: 20; clip: true
                     Image { anchors.fill: parent; source: QueueManager.currentArt; fillMode: Image.PreserveAspectCrop; smooth: true }
                 }
@@ -1595,18 +1537,22 @@ C.ApplicationWindow {
                 C.Label { Layout.alignment: Qt.AlignHCenter; text: QueueManager.currentTitle; color: Theme.textPrimary; font { family: Theme.fontFamily; pixelSize: Theme.sizeH1; weight: Theme.weightSemiBold } }
                 C.Label { Layout.alignment: Qt.AlignHCenter; text: QueueManager.currentArtist; color: Theme.textSecondary; font { family: Theme.fontFamily; pixelSize: Theme.sizeBody } }
 
-                Rectangle {
-                    Layout.fillWidth: true; height: 6; radius: 3; color: Theme.surface2
-                    Rectangle { anchors { left: parent.left; top: parent.top; bottom: parent.bottom } width: parent.width * (QueueManager.durationMsCurrent() > 0 ? QueueManager.positionMs() / QueueManager.durationMsCurrent() : 0); radius: 3; color: Theme.accent }
+                SeekBar {
+                    Layout.fillWidth: true
+                    progress: QueueManager.durationMsCurrent() > 0 ? QueueManager.positionMs() / QueueManager.durationMsCurrent() : 0
+                    onSeekRequested: (frac) => {
+                        if (QueueManager.durationMsCurrent() > 0)
+                            QueueManager.seekToMs(frac * QueueManager.durationMsCurrent())
+                    }
                 }
 
                 RowLayout {
                     Layout.alignment: Qt.AlignHCenter; spacing: 16
-                    C.AbstractButton { width: 40; height: 40; contentItem: Text { text: "\u21C4"; color: QueueManager.shuffleOn ? Theme.accent : Theme.textSecondary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } onClicked: QueueManager.toggleShuffle() }
-                    C.AbstractButton { width: 40; height: 40; contentItem: Text { text: "\u23EE"; color: Theme.textPrimary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } onClicked: QueueManager.playPrevious() }
-                    C.AbstractButton { width: 56; height: 56; contentItem: Text { text: QueueManager.isPlaying ? "\u23F8" : "\u25B6"; color: Theme.textPrimary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.pixelSize: 22 } onClicked: QueueManager.togglePlayPause() }
-                    C.AbstractButton { width: 40; height: 40; contentItem: Text { text: "\u23ED"; color: Theme.textPrimary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } onClicked: QueueManager.playNext() }
-                    C.AbstractButton { width: 40; height: 40; contentItem: Text { text: "\u21BB"; color: QueueManager.repeatMode !== 0 ? Theme.accent : Theme.textSecondary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } onClicked: QueueManager.toggleRepeat() }
+                    GlassButton { Layout.preferredWidth: 40; Layout.preferredHeight: 40; text: "🔀"; onClicked: QueueManager.toggleShuffle() }
+                    GlassButton { Layout.preferredWidth: 40; Layout.preferredHeight: 40; text: "⏮"; onClicked: QueueManager.playPrevious() }
+                    GlassButton { Layout.preferredWidth: 56; Layout.preferredHeight: 56; text: QueueManager.isPlaying ? "⏸" : "▶"; primary: true; onClicked: QueueManager.togglePlayPause() }
+                    GlassButton { Layout.preferredWidth: 40; Layout.preferredHeight: 40; text: "⏭"; onClicked: QueueManager.playNext() }
+                    GlassButton { Layout.preferredWidth: 40; Layout.preferredHeight: 40; text: "🔁"; onClicked: QueueManager.toggleRepeat() }
                 }
 
                 C.Label {
@@ -1707,6 +1653,19 @@ C.ApplicationWindow {
                 }
             }
         }
+    }
+
+    DownloadToast {
+        anchors {
+            top: titlebar.bottom
+            right: parent.right
+            margins: 16
+        }
+        z: 15
+    }
+
+    SettingsDialog {
+        id: settingsDialog
     }
 
     Item {

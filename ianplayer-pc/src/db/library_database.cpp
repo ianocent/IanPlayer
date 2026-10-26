@@ -639,6 +639,41 @@ QVector<SongRecord> LibraryDatabase::topPlayedSongs(int limit) const
     return result;
 }
 
+bool LibraryDatabase::updateSongMetadata(qint64 id, const QString &title, const QString &artist,
+                                       const QString &album, int year, int trackNo)
+{
+    if (!m_open)
+        return false;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral(
+        "UPDATE songs SET title = :t, artist = :a, album = :al, year = :y, track_no = :tr WHERE id = :id"));
+    q.bindValue(QStringLiteral(":t"), title);
+    q.bindValue(QStringLiteral(":a"), artist);
+    q.bindValue(QStringLiteral(":al"), album);
+    q.bindValue(QStringLiteral(":y"), year);
+    q.bindValue(QStringLiteral(":tr"), trackNo);
+    q.bindValue(QStringLiteral(":id"), id);
+    return q.exec();
+}
+
+bool LibraryDatabase::deleteSong(qint64 id)
+{
+    if (!m_open)
+        return false;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral("DELETE FROM playlist_songs WHERE song_id = :id"));
+    q.bindValue(QStringLiteral(":id"), id);
+    q.exec();
+
+    q.prepare(QStringLiteral("DELETE FROM favorites WHERE song_key = ('local:' || :id)"));
+    q.bindValue(QStringLiteral(":id"), id);
+    q.exec();
+
+    q.prepare(QStringLiteral("DELETE FROM songs WHERE id = :id"));
+    q.bindValue(QStringLiteral(":id"), id);
+    return q.exec();
+}
+
 // ==== paritas SongStore.kt: favorites / play counts / play history ====
 
 std::optional<qint64> LibraryDatabase::songIdByPath(const QString &path) const

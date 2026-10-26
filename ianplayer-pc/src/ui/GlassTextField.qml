@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls as C
+import QtQuick.Layouts
 
 // GlassTextField (M5.2): input glass custom
 Rectangle {

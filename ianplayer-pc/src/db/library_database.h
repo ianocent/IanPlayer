@@ -127,6 +127,11 @@ public:
     // tulis ulang semua position. for DnD drag reorder playlist detail.
     bool movePlaylistSong(qint64 playlistId, qint64 songId, int toPos);
 
+    // ---- Tag editing & Deletion (M4.3 extended) ----
+    bool updateSongMetadata(qint64 id, const QString &title, const QString &artist,
+                           const QString &album, int year, int trackNo);
+    bool deleteSong(qint64 id);
+
     // ---- lyric cache (M4.1) ----
     struct LyricCacheEntry
     {

@@ -1,5 +1,7 @@
 # Build output
 build/
+dist/
+vcpkg_installed/
 out/
 *.user
 .vs/

@@ -65,6 +65,11 @@ public:
     Q_INVOKABLE void removeSongFromPlaylist(qint64 playlistKey, const QString &songKey);
     Q_INVOKABLE void movePlaylistSongLive(qint64 playlistKey, qint64 songId, int toPos);
 
+    // === Tag editing & Recycle Bin delete (M4.3 extended) ===
+    Q_INVOKABLE bool updateSongTags(qint64 songId, const QString &title, const QString &artist,
+                                   const QString &album, int year, int track);
+    Q_INVOKABLE bool deleteLocalSong(qint64 songId);
+
     // buka Windows Explorer dengan file terpilih (medley pitfall /select: harus
     // backslash; startDetached)
     Q_INVOKABLE void revealLocalFile(const QString &path);

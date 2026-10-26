@@ -3,6 +3,16 @@
 #include "core/library_scanner.h"
 #include "db/library_database.h"
 
+#include <taglib/fileref.h>
+#include <taglib/tag.h>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <shellapi.h>
+#else
+#include <QFile>
+#endif
+
 #include <QVariant>
 #include <QDir>
 #include <QProcess>
@@ -272,4 +282,79 @@ void LibraryService::revealLocalFile(const QString &path)
     QProcess::startDetached(QStringLiteral("explorer.exe"),
         QStringList() << QStringLiteral("/select,")
                       << QDir::toNativeSeparators(path));
+}
+
+bool LibraryService::updateSongTags(qint64 songId, const QString &title, const QString &artist,
+                                   const QString &album, int year, int track)
+{
+    if (!m_db)
+        return false;
+
+    SongRecord target;
+    bool found = false;
+    for (const auto &s : m_db->allSongs()) {
+        if (s.id == songId) {
+            target = s;
+            found = true;
+            break;
+        }
+    }
+    if (!found || target.path.isEmpty())
+        return false;
+
+    TagLib::FileRef f(target.path.toStdWString().c_str());
+    if (!f.isNull() && f.tag()) {
+        f.tag()->setTitle(TagLib::String(title.toStdWString()));
+        f.tag()->setArtist(TagLib::String(artist.toStdWString()));
+        f.tag()->setAlbum(TagLib::String(album.toStdWString()));
+        f.tag()->setYear(year);
+        f.tag()->setTrack(track);
+        if (f.save()) {
+            m_db->updateSongMetadata(songId, title, artist, album, year, track);
+            m_db->rebuildIndexes();
+            emit libraryChanged();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool LibraryService::deleteLocalSong(qint64 songId)
+{
+    if (!m_db)
+        return false;
+
+    SongRecord target;
+    bool found = false;
+    for (const auto &s : m_db->allSongs()) {
+        if (s.id == songId) {
+            target = s;
+            found = true;
+            break;
+        }
+    }
+    if (!found || target.path.isEmpty())
+        return false;
+
+    bool fileDeleted = false;
+#ifdef Q_OS_WIN
+    std::wstring wpath = QDir::toNativeSeparators(target.path).toStdWString();
+    wpath.push_back(L'\0'); // Double null termination required for SHFILEOPSTRUCTW
+    SHFILEOPSTRUCTW fileOp = {};
+    fileOp.wFunc = FO_DELETE;
+    fileOp.pFrom = wpath.c_str();
+    fileOp.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT;
+    int res = SHFileOperationW(&fileOp);
+    fileDeleted = (res == 0 && !fileOp.fAnyOperationsAborted);
+#else
+    fileDeleted = QFile::remove(target.path);
+#endif
+
+    if (fileDeleted || !QFile::exists(target.path)) {
+        m_db->deleteSong(songId);
+        m_db->rebuildIndexes();
+        emit libraryChanged();
+        return true;
+    }
+    return false;
 }

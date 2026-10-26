@@ -72,6 +72,8 @@ qt_add_executable(ianplayer
     src/app/settings_service.cpp
     src/platform/smtc_controller.h
     src/platform/smtc_controller.cpp
+    src/platform/taskbar_controller.h
+    src/platform/taskbar_controller.cpp
     assets/app.manifest
 )
 
@@ -110,6 +112,8 @@ qt_add_qml_module(ianplayer
     QML_FILES
         src/ui/AppWindow.qml
         src/ui/Theme.qml
+        src/ui/SeekBar.qml
+        src/ui/MiniPlayer.qml
 )
 
 if (MSVC)
