@@ -23,6 +23,8 @@ add_library(ianplayer_core STATIC
     src/net/innertube_client.h
     src/net/tidal_repository.cpp
     src/net/tidal_repository.h
+    src/net/lyric_repository.cpp
+    src/net/lyric_repository.h
     src/net/thumbnail_cache.cpp
     src/net/thumbnail_cache.h
     src/core/title_cleaner.cpp
@@ -60,6 +62,8 @@ qt_add_executable(ianplayer
     src/models/stream_song_model.cpp
     src/app/stream_service.h
     src/app/stream_service.cpp
+    src/app/lyric_service.h
+    src/app/lyric_service.cpp
     src/platform/smtc_controller.h
     src/platform/smtc_controller.cpp
     assets/app.manifest

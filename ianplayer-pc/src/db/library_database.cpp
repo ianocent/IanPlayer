@@ -109,6 +109,12 @@ void LibraryDatabase::createSchema()
             "played_ts INTEGER,"
             "duration_ms INTEGER)"),
         QStringLiteral(
+            "CREATE TABLE IF NOT EXISTS lyric_cache ("
+            "key TEXT PRIMARY KEY,"
+            "synced_json TEXT,"
+            "plain_text TEXT,"
+            "cached_at_ms INTEGER)"),
+        QStringLiteral(
             "CREATE INDEX IF NOT EXISTS idx_songs_artist ON songs(artist_id)"),
         QStringLiteral(
             "CREATE INDEX IF NOT EXISTS idx_songs_album ON songs(album_id)"),
@@ -558,6 +564,41 @@ bool LibraryDatabase::movePlaylistSong(qint64 playlistId, qint64 songId, int toP
         return false;
     }
     return true;
+}
+
+std::optional<LibraryDatabase::LyricCacheEntry> LibraryDatabase::lyricCacheEntry(const QString &key) const
+{
+    std::optional<LyricCacheEntry> result;
+    if (!m_open)
+        return result;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral("SELECT key, synced_json, plain_text, cached_at_ms FROM lyric_cache WHERE key = :k"));
+    q.bindValue(QStringLiteral(":k"), key);
+    if (!q.exec() || !q.next())
+        return result;
+    LyricCacheEntry e;
+    e.key = q.value(0).toString();
+    e.syncedJson = q.value(1).toString();
+    e.plainText = q.value(2).toString();
+    e.cachedAtMs = q.value(3).toLongLong();
+    result = e;
+    return result;
+}
+
+bool LibraryDatabase::saveLyricCache(const QString &key, const QString &syncedJson,
+                                     const QString &plainText, qint64 cachedAtMs)
+{
+    if (!m_open)
+        return false;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral(
+        "INSERT OR REPLACE INTO lyric_cache (key, synced_json, plain_text, cached_at_ms)"
+        " VALUES (:k, :s, :p, :t)"));
+    q.bindValue(QStringLiteral(":k"), key);
+    q.bindValue(QStringLiteral(":s"), syncedJson);
+    q.bindValue(QStringLiteral(":p"), plainText);
+    q.bindValue(QStringLiteral(":t"), cachedAtMs);
+    return q.exec();
 }
 
 // ==== paritas SongStore.kt: favorites / play counts / play history ====

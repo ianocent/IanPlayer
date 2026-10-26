@@ -23,6 +23,7 @@
 #include "db/library_database.h"
 #include "app/library_service.h"
 #include "app/stream_service.h"
+#include "app/lyric_service.h"
 #include "models/stream_song_model.h"
 #include "models/library_song_model.h"
 #include "models/library_proxy_model.h"
@@ -281,6 +282,9 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("StreamSearchModel"), streamService.searchModel());
     engine.rootContext()->setContextProperty(QStringLiteral("StreamBrowseModel"), streamService.browseModel());
     engine.rootContext()->setContextProperty(QStringLiteral("StreamRelatedModel"), streamService.relatedModel());
+
+    LyricService lyricService(&libDb, &queueManager, &app);
+    engine.rootContext()->setContextProperty(QStringLiteral("LyricService"), &lyricService);
 
     QObject::connect(&playbackController, &PlaybackController::endReached,
                      &queueManager, &QueueManager::onTrackEnded);

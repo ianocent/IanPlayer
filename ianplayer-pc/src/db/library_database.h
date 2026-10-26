@@ -126,7 +126,17 @@ public:
     // tulis ulang semua position. for DnD drag reorder playlist detail.
     bool movePlaylistSong(qint64 playlistId, qint64 songId, int toPos);
 
-private:
+    // ---- lyric cache (M4.1) ----
+    struct LyricCacheEntry
+    {
+        QString key;
+        QString syncedJson;
+        QString plainText;
+        qint64 cachedAtMs = 0;
+    };
+    std::optional<LyricCacheEntry> lyricCacheEntry(const QString &key) const;
+    bool saveLyricCache(const QString &key, const QString &syncedJson,
+                        const QString &plainText, qint64 cachedAtMs);
     void createSchema();
 
     QString m_dbPath;

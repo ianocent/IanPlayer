@@ -1601,6 +1601,15 @@ C.ApplicationWindow {
                     C.AbstractButton { width: 40; height: 40; contentItem: Text { text: "\u21BB"; color: QueueManager.repeatMode !== 0 ? Theme.accent : Theme.textSecondary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } onClicked: QueueManager.toggleRepeat() }
                 }
 
+                C.Label {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: LyricService.lyricText
+                    color: Theme.textSecondary
+                    font { family: Theme.fontFamily; pixelSize: Theme.sizeSmall }
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 80
+                }
                 C.Label { Layout.alignment: Qt.AlignHCenter; text: qsTr("Esc untuk minimize"); color: Theme.textDisabled; font { family: Theme.fontFamily; pixelSize: Theme.sizeSmall } }
             }
         }

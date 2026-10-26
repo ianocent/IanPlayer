@@ -10,7 +10,7 @@ Update file ini di tiap phase M#
 | M2 Playback Penuh | 🟢 M2 selesai (M2.1–M2.4) |
 | M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | 🟢 M3 selesai (M3.1–M3.5) |
-| M4 Lyrics+Download | ⚪ belum |
+| M4 Lyrics+Download | 🟡 M4.1 Lyrics engine (LRCLIB get/search + cache) + M4.2 panel selesai — lanjut M4.3 downloader |
 | M5 Visual | ⚪ belum |
 | M6 Desktop & Rilis | ⚪ belum |
 
@@ -36,6 +36,26 @@ Catatan M0.4 (jebakan yang ketemu & solusinya):
 Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
 
 Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
+
+---
+
+## M4.1+M4.2 — Lyrics engine (LRCLIB) + panel (selesai, 2026-10-26)
+
+- [x] DB: tabel `lyric_cache` (key, synced_json, plain_text, cached_at_ms) + `lyricCacheEntry`/`saveLyricCache`
+- [x] `LyricRepository` (src/net/lyric_repository.{h,cpp}): LRCLIB get (precise) → search fallback; parse LRC timestamps; cache TTL 7 hari; source cycle enum 8 (implementasi LRCLIB_GET/SEARCH, sisanya None)
+- [x] `LyricService` (src/app/lyric_service.{h,cpp}): context property `LyricService`, fetch on `QueueManager::currentSongChanged`, property `lyricText`/`hasSynced`
+- [x] Now Playing overlay: lyrics label (wrap, height 80) bound ke `LyricService.lyricText`
+- [x] Build debug OK; smoke alive; gtest 55/55 PASS
+
+HOLDING (v2):
+1. M4.3 Downloader + tags (yt-dlp quality list, QNetworkAccessManager download, TagLib write, iTunes/Deezer enrichment, recycle bin delete)
+2. 6 sumber lirik tambahan (LrcMux, Genius, Musixmatch, LRCLIB plain, SomeRandomAPI, lyrics.ovh) — v1 LRCLIB only
+3. Karaoke highlight per baris sinkron position (saat ini plain text)
+4. Source cycling UI (indicator 1..8) + persist selected source
+
+Jebakan M4.1:
+1. LRC timestamp format `[mm:ss.xx]` — parse detik desimal → ms.
+2. Cache "NONE" marker untuk plain-only / not found supaya tidak re-fetch tiap kali.
 
 ---
 
