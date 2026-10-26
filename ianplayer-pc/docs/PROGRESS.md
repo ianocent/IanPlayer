@@ -9,7 +9,7 @@ Update file ini di tiap phase M#
 | M1 Local Library | 🟢 M1 selesai (M1.1–M1.3) |
 | M2 Playback Penuh | 🟢 M2 selesai (M2.1–M2.4) |
 | M2 Playback Penuh | ⚪ belum |
-| M3 Streaming | 🟡 M3.4 Stream UI (search/browse/play) selesai — lanjut M3.5 integration endpoints |
+| M3 Streaming | 🟢 M3 selesai (M3.1–M3.5) |
 | M4 Lyrics+Download | ⚪ belum |
 | M5 Visual | ⚪ belum |
 | M6 Desktop & Rilis | ⚪ belum |
@@ -36,6 +36,27 @@ Catatan M0.4 (jebakan yang ketemu & solusinya):
 Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
 
 Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
+
+---
+
+## M3.5 — Integration endpoints (selesai, 2026-10-26)
+
+- [x] Single instance via named mutex `Global\IanPlayerPC`; instance kedua kirim argv via `QLocalServer/QLocalSocket` (`IanPlayerPC_IPC`) lalu exit
+- [x] Protocol handler `ianplayer://` registered di `HKCU\Software\Classes\ianplayer` (per-user, tanpa elevasi); handler command tulis path exe
+- [x] URL parsing: `ianplayer://song?v=<id>` dan YouTube URL (`watch?v=`, `youtu.be`, shorts/embed/live) → `StreamService.playStream(videoId)`
+- [x] IPC server dipasang setelah StreamService siap; initial args diproses saat startup
+- [x] Build debug OK; smoke alive; gtest 55/55 PASS
+
+HOLDING (v2):
+1. Open-with registration di Windows Default Programs (assoc .url?) — manual via settings nanti
+2. Video mode stream (M3.6 backlog) — merged video+audio paritas ianvideo://, render via libmpv; fallback audio
+3. Related auto-fill Up Next (M3.4 holding) — StreamService.fetchRelated siap
+4. Paging infinite scroll & Tidal playback fallback
+
+Jebakan M3.5:
+1. `QLocalServer` harus di-listen setelah service siap supaya handler bisa akses `streamServicePtr`.
+2. Registry path native format pakai `QSettings::NativeFormat` + `HKEY_CURRENT_USER\...`.
+3. `QString::replace('/', '\\')` overload char vs string — pakai `QLatin1Char`.
 
 ---
 

@@ -8,6 +8,9 @@
 #include <QFileInfo>
 #include <QTimer>
 #include <QStandardPaths>
+#include <QLocalServer>
+#include <QLocalSocket>
+#include <QUrlQuery>
 #include <QWindow>
 #include <QSettings>
 
@@ -138,6 +141,23 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("IanPlayer"));
     app.setApplicationVersion(QStringLiteral("0.1.0"));
     app.setOrganizationName(QStringLiteral("ianocent"));
+
+    // Single instance (M3.5): named mutex Global\IanPlayerPC
+    HANDLE instanceMutex = CreateMutexW(nullptr, TRUE, L"Global\\IanPlayerPC");
+    const bool alreadyRunning = (instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS);
+    if (alreadyRunning) {
+        QLocalSocket sock;
+        sock.connectToServer(QStringLiteral("IanPlayerPC_IPC"));
+        if (sock.waitForConnected(1000)) {
+            QByteArray payload;
+            for (const QString &a : QCoreApplication::arguments())
+                payload += a.toUtf8() + "\n";
+            sock.write(payload);
+            sock.waitForBytesWritten(1000);
+            sock.disconnectFromServer();
+        }
+        return 0;
+    }
 
     // Font bundel (M0.4): Inter static 4 weight; fail-soft kalau resource hilang
     const QStringList fontFiles = {
@@ -304,6 +324,65 @@ int main(int argc, char *argv[])
         &app,
         []() { QCoreApplication::exit(-1); },
         Qt::QueuedConnection);
+
+    // Protocol handler registration (M3.5): ianplayer:// per-user, no elevation
+    {
+        QSettings reg(QStringLiteral("HKEY_CURRENT_USER\\Software\\Classes\\ianplayer"), QSettings::NativeFormat);
+        reg.setValue(QStringLiteral("URL Protocol"), QString());
+        reg.beginGroup(QStringLiteral("shell"));
+        reg.beginGroup(QStringLiteral("open"));
+        reg.beginGroup(QStringLiteral("command"));
+        reg.setValue(QStringLiteral("."), QString("\"%1\" \"%2\"")
+                        .arg(QCoreApplication::applicationFilePath().replace(QLatin1Char('/'), QLatin1Char('\\')),
+                             QStringLiteral("%1")));
+        reg.endGroup(); reg.endGroup(); reg.endGroup();
+    }
+
+    // IPC server for second-instance args
+    QLocalServer ipcServer;
+    QObject::connect(&ipcServer, &QLocalServer::newConnection, &app, [&]() {
+        while (QLocalSocket *s = ipcServer.nextPendingConnection()) {
+            if (s->waitForReadyRead(1000)) {
+                const QByteArray data = s->readAll();
+                const QStringList args = QString::fromUtf8(data).split('\n', Qt::SkipEmptyParts);
+                for (const QString &a : args) {
+                    QString vid;
+                    if (a.startsWith(QStringLiteral("ianplayer://"))) {
+                        QUrl u(a);
+                        QUrlQuery q(u);
+                        vid = q.queryItemValue(QStringLiteral("v"));
+                    } else {
+                        QUrl u(a);
+                        if (StreamUrlResolver::isYouTubeUrl(u))
+                            vid = StreamUrlResolver::extractVideoId(u);
+                    }
+                    if (!vid.isEmpty() && streamServicePtr)
+                        streamServicePtr->playStream(vid);
+                }
+            }
+            s->deleteLater();
+        }
+    });
+    ipcServer.listen(QStringLiteral("IanPlayerPC_IPC"));
+
+    // Process initial args
+    {
+        const QStringList args = QCoreApplication::arguments();
+        for (const QString &a : args) {
+            QString vid;
+            if (a.startsWith(QStringLiteral("ianplayer://"))) {
+                QUrl u(a);
+                QUrlQuery q(u);
+                vid = q.queryItemValue(QStringLiteral("v"));
+            } else {
+                QUrl u(a);
+                if (StreamUrlResolver::isYouTubeUrl(u))
+                    vid = StreamUrlResolver::extractVideoId(u);
+            }
+            if (!vid.isEmpty() && streamServicePtr)
+                streamServicePtr->playStream(vid);
+        }
+    }
 
     engine.loadFromModule("IanPlayer.PC", "AppWindow");
 
