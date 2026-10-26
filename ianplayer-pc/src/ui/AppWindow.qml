@@ -1083,6 +1083,7 @@ C.ApplicationWindow {
                         topMargin: 12
                     }
                     clip: true
+                    reuseItems: true
                     model: PlaylistListModel
                     spacing: 8
                     boundsBehavior: Flickable.StopAtBounds
@@ -1443,6 +1444,7 @@ C.ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
+                    reuseItems: true
                     model: streamSearchField.text.trim() !== ""
                         ? StreamSearchModel : StreamBrowseModel
                     spacing: 2
@@ -1648,6 +1650,7 @@ C.ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
+                    reuseItems: true
                     model: LibraryService.topPlayedSongs(10)
                     spacing: 4
                     delegate: RowLayout {

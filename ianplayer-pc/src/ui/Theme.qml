@@ -44,8 +44,7 @@ QtObject {
     readonly property color accent:              "#E11D48"
     readonly property color accentHover:         "#F43F5E"
     readonly property color accentGlow:          Qt.rgba(225, 29, 72, 0.35)
-    readonly property color onAccent:            "#FFFFFF"
-    readonly property color accentContrast:      "#FFFFFF"
+    readonly property color accentContrast:      "#FFFFFF"   // text on accent button
 
     // Borders & Focus
     readonly property color focusRing:           "#F8FAFC"

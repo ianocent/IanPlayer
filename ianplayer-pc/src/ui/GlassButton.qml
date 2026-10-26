@@ -21,7 +21,7 @@ Rectangle {
     Text {
         anchors.centerIn: parent
         text: root.text
-        color: root.primary ? Theme.onAccent : Theme.textPrimary
+        color: root.primary ? Theme.accentContrast : Theme.textPrimary
         font { family: Theme.fontFamily; pixelSize: Theme.sizeBody; weight: root.primary ? Theme.weightBold : Theme.weightMedium }
     }
 
