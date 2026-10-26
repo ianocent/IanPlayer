@@ -112,13 +112,21 @@ qt_add_qml_module(ianplayer
     QML_FILES
         src/ui/AppWindow.qml
         src/ui/Theme.qml
+        src/ui/IanGlass.qml
+        src/ui/GlassCard.qml
+        src/ui/GlassButton.qml
+        src/ui/GlassComboBox.qml
+        src/ui/GlassTextField.qml
+        src/ui/PlayerCanvas.qml
+        src/ui/DownloadToast.qml
+        src/ui/SettingsDialog.qml
         src/ui/SeekBar.qml
         src/ui/MiniPlayer.qml
 )
 
 if (MSVC)
-    target_compile_options(ianplayer PRIVATE /W4 /permissive- /utf-8)
-    target_compile_options(ianplayer_core PRIVATE /W4 /permissive- /utf-8)
+    target_compile_options(ianplayer PRIVATE /W4 /permissive- /utf-8 /FS)
+    target_compile_options(ianplayer_core PRIVATE /W4 /permissive- /utf-8 /FS)
 endif()
 
 # ---- tests (gtest) ----

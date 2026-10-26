@@ -8,7 +8,7 @@
       "binaryDir": "${sourceDir}/build/${presetName}",
       "toolchainFile": "C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake",
       "cacheVariables": {
-        "CMAKE_PREFIX_PATH": "C:/Qt/6.8.3/msvc2022_64",
+        "CMAKE_PREFIX_PATH": "C:/Qt/6.8.3/msvc2022_64;C:/dev/vcpkg/installed/x64-windows",
         "VCPKG_TARGET_TRIPLET": "x64-windows"
       }
     },
@@ -17,7 +17,7 @@
       "inherits": "debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "VCPKG_INSTALLED_DIR": "${sourceDir}/build/debug/vcpkg_installed",
+        "VCPKG_INSTALLED_DIR": "C:/dev/vcpkg/installed",
         "VCPKG_APPLOCAL_DEPS": "OFF"
       }
     }

@@ -148,21 +148,19 @@ int main(int argc, char *argv[])
     app.setApplicationVersion(QStringLiteral("0.1.0"));
     app.setOrganizationName(QStringLiteral("ianocent"));
 
-    // Single instance (M3.5): named mutex Global\IanPlayerPC
-    HANDLE instanceMutex = CreateMutexW(nullptr, TRUE, L"Global\\IanPlayerPC");
-    const bool alreadyRunning = (instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS);
-    if (alreadyRunning) {
+    // Single instance (M3.5): IPC check via QLocalSocket
+    {
         QLocalSocket sock;
         sock.connectToServer(QStringLiteral("IanPlayerPC_IPC"));
-        if (sock.waitForConnected(1000)) {
+        if (sock.waitForConnected(500)) {
             QByteArray payload;
             for (const QString &a : QCoreApplication::arguments())
                 payload += a.toUtf8() + "\n";
             sock.write(payload);
             sock.waitForBytesWritten(1000);
             sock.disconnectFromServer();
+            return 0; // Handled by active instance, exit
         }
-        return 0;
     }
 
     // Font bundel (M0.4): Inter static 4 weight; fail-soft kalau resource hilang
@@ -399,12 +397,13 @@ int main(int argc, char *argv[])
             s->deleteLater();
         }
     });
+    QLocalServer::removeServer(QStringLiteral("IanPlayerPC_IPC"));
     ipcServer.listen(QStringLiteral("IanPlayerPC_IPC"));
 
     // Process initial args
     {
-        const QStringList args = QCoreApplication::arguments();
-        for (const QString &a : args) {
+        const QStringList initArgs = QCoreApplication::arguments();
+        for (const QString &a : initArgs) {
             QString vid;
             if (a.startsWith(QStringLiteral("ianplayer://"))) {
                 QUrl u(a);
