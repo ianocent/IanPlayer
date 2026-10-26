@@ -38,8 +38,6 @@ qt_add_executable(ianplayer
     src/main.cpp
     src/playback/playback_controller.h
     src/playback/playback_controller.cpp
-    src/playback/queue_manager.h
-    src/playback/queue_manager.cpp
     src/core/library_scanner.h
     src/core/library_scanner.cpp
     src/db/library_database.h
@@ -58,6 +56,10 @@ qt_add_executable(ianplayer
     src/models/playlist_list_model.cpp
     src/models/playlist_song_model.h
     src/models/playlist_song_model.cpp
+    src/models/stream_song_model.h
+    src/models/stream_song_model.cpp
+    src/app/stream_service.h
+    src/app/stream_service.cpp
     src/platform/smtc_controller.h
     src/platform/smtc_controller.cpp
     assets/app.manifest

@@ -1394,6 +1394,98 @@ C.ApplicationWindow {
                     dialogPlaylistKey, playlistImageDialog.selectedFile.toString())
             }
 
+            // == Stream pane (M3.4) ==
+            ColumnLayout {
+                id: streamPane
+                visible: contentArea.subPane === ""
+                    && tabsModel.count > 0
+                    && tabsModel.get(tabRail.activeIndex % tabsModel.count).name === qsTr("Stream")
+                anchors {
+                    top: contentTitle.bottom
+                    left: contentTitle.left
+                    right: parent.right
+                    rightMargin: 24
+                    bottom: parent.bottom
+                    topMargin: 16
+                }
+                spacing: 8
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    C.TextField {
+                        id: streamSearchField
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("Cari di YouTube Music / Tidal...")
+                        font.family: Theme.fontFamily
+                        onTextChanged: streamSearchDebounce.restart()
+                    }
+
+                    C.Button {
+                        text: qsTr("Browse")
+                        onClicked: StreamService.browseHome()
+                        font.family: Theme.fontFamily
+                    }
+                }
+
+                Timer {
+                    id: streamSearchDebounce
+                    interval: 300
+                    onTriggered: {
+                        if (streamSearchField.text.trim() !== "")
+                            StreamService.search(streamSearchField.text.trim())
+                    }
+                }
+
+                ListView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    model: streamSearchField.text.trim() !== ""
+                        ? StreamSearchModel : StreamBrowseModel
+                    spacing: 2
+                    boundsBehavior: Flickable.StopAtBounds
+                    C.ScrollBar.vertical: C.ScrollBar {}
+
+                    delegate: C.ItemDelegate {
+                        id: streamRow
+                        required property string title
+                        required property string artist
+                        required property string thumbnailUrl
+                        required property string videoId
+                        required property string source
+
+                        width: streamPane.width
+                        height: 56
+                        background: Rectangle { color: streamRow.hovered ? Theme.surface2 : "transparent"; radius: Theme.radius }
+
+                        RowLayout {
+                            anchors.fill: parent
+                            spacing: 12
+
+                            Rectangle {
+                                Layout.preferredWidth: 48; Layout.preferredHeight: 48
+                                color: Theme.surface2; radius: Theme.radius; clip: true
+                                Image { anchors.fill: parent; source: streamRow.thumbnailUrl; fillMode: Image.PreserveAspectCrop; smooth: true }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 2
+                                C.Label { Layout.fillWidth: true; text: streamRow.title; color: Theme.textPrimary; elide: Text.ElideRight; font { family: Theme.fontFamily; pixelSize: Theme.sizeBody; weight: Theme.weightMedium } }
+                                C.Label { Layout.fillWidth: true; text: streamRow.artist + " \u00B7 " + streamRow.source; color: Theme.textSecondary; elide: Text.ElideRight; font { family: Theme.fontFamily; pixelSize: Theme.sizeSmall } }
+                            }
+
+                            C.AbstractButton {
+                                width: 32; height: 32
+                                contentItem: Text { text: "\u25B6"; color: Theme.textPrimary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                onClicked: StreamService.playStream(streamRow.videoId)
+                            }
+                        }
+                    }
+                }
+            }
+
             // == placeholder tab yang belum aktif ==
             component PanePlaceholder : C.Label {
                 anchors {

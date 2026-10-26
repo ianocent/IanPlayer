@@ -19,6 +19,8 @@
 #include "core/library_scanner.h"
 #include "db/library_database.h"
 #include "app/library_service.h"
+#include "app/stream_service.h"
+#include "models/stream_song_model.h"
 #include "models/library_song_model.h"
 #include "models/library_proxy_model.h"
 #include "models/album_list_model.h"
@@ -191,22 +193,50 @@ int main(int argc, char *argv[])
     // Playback engine M2.1 — QueueManager satu sumber kebenaran queue
     PlaybackController playbackController;
     QSettings playbackSettings(QStringLiteral("ianocent"), QStringLiteral("IanPlayer"));
-    auto resolveSong = [&libDb](const QString &key, QueueManager::SongInfo &out) -> bool {
-        if (!key.startsWith(QStringLiteral("local:")))
+    StreamUrlResolver streamResolver(dbPath);
+
+    StreamService *streamServicePtr = nullptr;
+    auto resolveSong = [&libDb, &streamResolver, &streamServicePtr](const QString &key, QueueManager::SongInfo &out) -> bool {
+        if (key.startsWith(QStringLiteral("local:"))) {
+            const qint64 id = key.mid(6).toLongLong();
+            for (const auto &rec : libDb.allSongs()) {
+                if (rec.id != id)
+                    continue;
+                out.key = key;
+                out.title = rec.title;
+                out.artist = rec.artist;
+                out.album = rec.album;
+                out.durationMs = rec.durationMs;
+                out.art = rec.art256;
+                out.playUrl = rec.path;
+                out.isStream = false;
+                out.needsResolution = false;
+                return true;
+            }
             return false;
-        const qint64 id = key.mid(6).toLongLong();
-        for (const auto &rec : libDb.allSongs()) {
-            if (rec.id != id)
-                continue;
+        }
+        if (key.startsWith(QStringLiteral("yt:"))) {
+            const QString videoId = key.mid(3);
+            StreamSong meta;
+            if (streamServicePtr && streamServicePtr->metadataFor(key, meta)) {
+                out.title = meta.title;
+                out.artist = meta.artist;
+                out.album = meta.album;
+                out.durationMs = meta.durationMs;
+                out.art = meta.thumbnailUrl;
+            } else {
+                out.title = videoId;
+                out.artist = QStringLiteral("YouTube");
+            }
             out.key = key;
-            out.title = rec.title;
-            out.artist = rec.artist;
-            out.album = rec.album;
-            out.durationMs = rec.durationMs;
-            out.art = rec.art256;
-            out.playUrl = rec.path;
-            out.isStream = false;
-            out.needsResolution = false;
+            out.isStream = true;
+            out.needsResolution = true;
+            auto resolved = streamResolver.getStreamUrl(QUrl(QStringLiteral("https://www.youtube.com/watch?v=%1").arg(videoId)));
+            if (resolved)
+                out.playUrl = resolved->url;
+            else
+                out.playUrl.clear();
+            out.needsResolution = out.playUrl.isEmpty();
             return true;
         }
         return false;
@@ -224,6 +254,13 @@ int main(int argc, char *argv[])
 
     QueueManager queueManager(hooks, resolveSong, &playbackSettings, &app);
     engine.rootContext()->setContextProperty(QStringLiteral("QueueManager"), &queueManager);
+
+    StreamService streamService(&streamResolver, &queueManager, &app);
+    streamServicePtr = &streamService;
+    engine.rootContext()->setContextProperty(QStringLiteral("StreamService"), &streamService);
+    engine.rootContext()->setContextProperty(QStringLiteral("StreamSearchModel"), streamService.searchModel());
+    engine.rootContext()->setContextProperty(QStringLiteral("StreamBrowseModel"), streamService.browseModel());
+    engine.rootContext()->setContextProperty(QStringLiteral("StreamRelatedModel"), streamService.relatedModel());
 
     QObject::connect(&playbackController, &PlaybackController::endReached,
                      &queueManager, &QueueManager::onTrackEnded);

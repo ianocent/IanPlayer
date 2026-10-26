@@ -9,7 +9,7 @@ Update file ini di tiap phase M#
 | M1 Local Library | 🟢 M1 selesai (M1.1–M1.3) |
 | M2 Playback Penuh | 🟢 M2 selesai (M2.1–M2.4) |
 | M2 Playback Penuh | ⚪ belum |
-| M3 Streaming | 🟡 M3.3 Tidal search selesai — lanjut M3.4 Stream UI |
+| M3 Streaming | 🟡 M3.4 Stream UI (search/browse/play) selesai — lanjut M3.5 integration endpoints |
 | M4 Lyrics+Download | ⚪ belum |
 | M5 Visual | ⚪ belum |
 | M6 Desktop & Rilis | ⚪ belum |
@@ -36,6 +36,27 @@ Catatan M0.4 (jebakan yang ketemu & solusinya):
 Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
 
 Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
+
+---
+
+## M3.4 — Stream UI (selesai, 2026-10-26)
+
+- [x] `StreamSongModel` (src/models/stream_song_model.{h,cpp}) + `StreamService` (src/app/stream_service.{h,cpp}) — fan-out Innertube + Tidal, metadata cache untuk QueueManager resolver
+- [x] Stream tab UI: search field debounce 300ms, Browse button, ListView (thumbnail+title+artist+source+play), model switch search/browse
+- [x] Play stream: QueueManager `playSingle("yt:<videoId>")` → resolve via StreamUrlResolver (yt-dlp) + metadata dari cache
+- [x] Context properties: StreamService, StreamSearchModel, StreamBrowseModel, StreamRelatedModel
+- [x] Build debug OK; smoke alive; gtest 55/55 PASS
+
+HOLDING (v2):
+1. Related auto-fill Up Next (fetchRelated → QueueManager.addToQueue) — StreamService.fetchRelated siap, belum dipanggil otomatis
+2. Paging infinite scroll (next page token) — Innertube parse belum ekstrak continuation
+3. Tidal playback fallback ke YouTube (playStream Tidal belum resolve)
+4. ThumbnailCache integrasi ke QML Image via local path (masih pakai remote URL)
+5. Now Playing metadata stream sudah via QueueManager (title/artist/art dari resolver)
+
+Jebakan M3.4:
+1. Chicken-egg StreamService vs QueueManager: resolver lambda capture `streamServicePtr` yang di-set setelah ctor.
+2. QML `required property` pada delegate harus cocok dengan role name (case-sensitive).
 
 ---
 
