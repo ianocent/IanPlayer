@@ -66,6 +66,8 @@ qt_add_executable(ianplayer
     src/app/lyric_service.cpp
     src/app/downloader_service.h
     src/app/downloader_service.cpp
+    src/app/update_manager.h
+    src/app/update_manager.cpp
     src/app/settings_service.h
     src/app/settings_service.cpp
     src/platform/smtc_controller.h

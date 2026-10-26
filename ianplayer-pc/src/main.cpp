@@ -25,6 +25,7 @@
 #include "app/stream_service.h"
 #include "app/lyric_service.h"
 #include "app/downloader_service.h"
+#include "app/update_manager.h"
 #include "app/settings_service.h"
 #include "models/stream_song_model.h"
 #include "models/library_song_model.h"
@@ -291,6 +292,9 @@ int main(int argc, char *argv[])
     DownloaderService downloaderService(&service, &streamResolver, &app);
     engine.rootContext()->setContextProperty(QStringLiteral("DownloaderService"), &downloaderService);
 
+    UpdateManager updateManager(&playbackSettings, &app);
+    engine.rootContext()->setContextProperty(QStringLiteral("UpdateManager"), &updateManager);
+
     SettingsService settingsService(&playbackSettings, &app);
     engine.rootContext()->setContextProperty(QStringLiteral("SettingsService"), &settingsService);
 
@@ -347,6 +351,24 @@ int main(int argc, char *argv[])
         reg.setValue(QStringLiteral("."), QString("\"%1\" \"%2\"")
                         .arg(QCoreApplication::applicationFilePath().replace(QLatin1Char('/'), QLatin1Char('\\')),
                              QStringLiteral("%1")));
+        reg.endGroup(); reg.endGroup(); reg.endGroup();
+    }
+
+    // File associations (M6.2): per-user, no elevation
+    {
+        const QString exe = QCoreApplication::applicationFilePath().replace('/', '\\');
+        const QStringList exts = { QStringLiteral(".mp3"), QStringLiteral(".flac"), QStringLiteral(".m4a"),
+                                   QStringLiteral(".ogg"), QStringLiteral(".opus"), QStringLiteral(".wav") };
+        for (const QString &ext : exts) {
+            QSettings reg(QStringLiteral("HKEY_CURRENT_USER\\Software\\Classes\\") + ext, QSettings::NativeFormat);
+            reg.setValue(QStringLiteral("."), QStringLiteral("IanPlayerAudio"));
+        }
+        QSettings reg(QStringLiteral("HKEY_CURRENT_USER\\Software\\Classes\\IanPlayerAudio"), QSettings::NativeFormat);
+        reg.setValue(QStringLiteral("."), QStringLiteral("Audio file"));
+        reg.beginGroup(QStringLiteral("shell"));
+        reg.beginGroup(QStringLiteral("open"));
+        reg.beginGroup(QStringLiteral("command"));
+        reg.setValue(QStringLiteral("."), QString("\"%1\" \"%2\"").arg(exe, QStringLiteral("%1")));
         reg.endGroup(); reg.endGroup(); reg.endGroup();
     }
 

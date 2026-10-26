@@ -12,7 +12,7 @@ Update file ini di tiap phase M#
 | M3 Streaming | 🟢 M3 selesai (M3.1–M3.5) |
 | M4 Lyrics+Download | 🟡 M4.1–M4.2 lyrics + M4.3 downloader (yt-dlp URL → download + iTunes tags + TagLib cover + scan) selesai — tag editor & recycle bin holding |
 | M5 Visual | 🟡 M5.1 Settings service (keys paritas Android) selesai — M5.2–5.5 holding |
-| M6 Desktop & Rilis | ⚪ belum |
+| M6 Desktop & Rilis | 🟡 M6.1 UpdateManager + M6.2 file assoc/single instance selesai — M6.3 packaging & M6.4 QA holding |
 
 ---
 
@@ -36,6 +36,27 @@ Catatan M0.4 (jebakan yang ketemu & solusinya):
 Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
 
 Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
+
+---
+
+## M6.1+M6.2 — Auto-update + desktop integration (bagian 1, 2026-10-26)
+
+- [x] `UpdateManager` (src/app/update_manager.{h,cpp}): cek GitHub Releases latest, semver compare, "don't show again" pref, release notes URL; `updateYtDlp()` jalankan `yt-dlp -U`
+- [x] Single instance (M3.5) + file association (.mp3/.flac/.m4a/.ogg/.opus/.wav) → `IanPlayerAudio` ProgID dengan open command (HKCU, per-user)
+- [x] Protocol handler `ianplayer://` (M3.5)
+- [x] Context property `UpdateManager`; build OK; smoke alive; gtest 55/55 PASS
+
+HOLDING (v2):
+1. M6.1 portable update flow (download zip + helper batch swap folder)
+2. M6.2 taskbar thumbnail toolbar (ITaskbarList3 prev/play/next)
+3. M6.2 audio device switch mid-play (MMDevice notifications)
+4. M6.3 build script windeployqt + zip + first-run essentials
+5. M6.4 performance profiling (cold start <2s, 10k library, memory <300MB)
+6. M6.5 stretch (voice assistant, wave recording, light mode)
+
+Jebakan M6:
+1. Update portable butuh write-access ke folder app; cek startup, banner warning kalau di Program Files.
+2. Taskbar toolbar butuh HWND valid setelah window created.
 
 ---
 
