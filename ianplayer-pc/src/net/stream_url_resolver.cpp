@@ -143,9 +143,17 @@ StreamUrlResolver::getStreamUrl(const QUrl &youtubeUrl, QString *err)
     if (auto hit = lookupCache(videoId))
         return hit;
 
-    const QString url = resolveViaYtDlp(youtubeUrl, err);
-    if (url.isEmpty())
+    QString lastErr;
+    QString url;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        url = resolveViaYtDlp(youtubeUrl, &lastErr);
+        if (!url.isEmpty())
+            break;
+    }
+    if (url.isEmpty()) {
+        if (err) *err = lastErr;
         return std::nullopt;
+    }
 
     ResolvedStream item;
     item.videoId = videoId;
@@ -213,6 +221,18 @@ void StreamUrlResolver::storeToCache(const ResolvedStream &item)
     q.exec();
 }
 
+QString StreamUrlResolver::ytDlpVersion(const QString &executable)
+{
+    QProcess proc;
+    proc.setProgram(executable.isEmpty() ? ytDlpCandidates(QCoreApplication::applicationDirPath()) : executable);
+    proc.setArguments({QStringLiteral("--version")});
+    proc.start();
+    if (!proc.waitForStarted(3000) || !proc.waitForFinished(5000))
+        return {};
+    if (proc.exitCode() != 0)
+        return {};
+    return QString::fromUtf8(proc.readAllStandardOutput()).trimmed();
+}
 QString StreamUrlResolver::ytDlpExecutable() const
 {
     const QString exeDir = QCoreApplication::applicationDirPath();
@@ -232,9 +252,9 @@ QString StreamUrlResolver::resolveViaYtDlp(const QUrl &youtubeUrl, QString *err)
         if (err) *err = QStringLiteral("yt-dlp tidak bisa dijalankan di %1").arg(proc.program());
         return {};
     }
-    if (!proc.waitForFinished(30000)) { // -J bisa beberapa detik utk stream music
+    if (!proc.waitForFinished(10000)) { // timeout 10 detik (M3.1)
         proc.kill();
-        if (err) *err = QStringLiteral("yt-dlp timeout (30 s)");
+        if (err) *err = QStringLiteral("yt-dlp timeout (10 s)");
         return {};
     }
     if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {

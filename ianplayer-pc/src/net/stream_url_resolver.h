@@ -35,6 +35,9 @@ public:
     // ada/tidak bisa diparse.
     static qint64 extractExpireEpoch(const QUrl &url);
 
+    // Version check (M3.1): jalankan `yt-dlp --version`, timeout 5s.
+    static QString ytDlpVersion(const QString &executable = QString());
+
     // ---- dengan cache & yt-dlp ----
     // Main entry: videoId -> cache hit (belum expired) -> pakai;
     //             miss/expired -> yt-dlp -J --no-download -> best audio URL ->

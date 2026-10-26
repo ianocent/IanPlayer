@@ -9,7 +9,7 @@ Update file ini di tiap phase M#
 | M1 Local Library | 🟢 M1 selesai (M1.1–M1.3) |
 | M2 Playback Penuh | 🟢 M2 selesai (M2.1–M2.4) |
 | M2 Playback Penuh | ⚪ belum |
-| M3 Streaming | ⚪ belum |
+| M3 Streaming | 🟡 M3.1 yt-dlp resolver robust (timeout 10s, retry 1x, version check) selesai — lanjut M3.2 InnerTube |
 | M4 Lyrics+Download | ⚪ belum |
 | M5 Visual | ⚪ belum |
 | M6 Desktop & Rilis | ⚪ belum |
@@ -36,6 +36,24 @@ Catatan M0.4 (jebakan yang ketemu & solusinya):
 Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
 
 Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
+
+---
+
+## M3.1 — yt-dlp resolver robust (selesai, 2026-10-26)
+
+- [x] `StreamUrlResolver` (src/net/stream_url_resolver.{h,cpp}) — timeout 10s, retry 1x, pilih format audio-only bitrate tertinggi (abr/tbr), fallback root url; cache SQLite `cached_stream_urls` dengan `expire=` epoch (detik→ms), default TTL 6 jam
+- [x] `ytDlpVersion()` static (runs `--version`, timeout 5s) untuk version check startup
+- [x] gtest stream_url tests (isYouTubeUrl/extractVideoId/extractExpireEpoch) tetap PASS; build debug OK; smoke alive
+
+HOLDING (v2):
+1. InnerTube client (M3.2) — feeds/search/related
+2. Tidal search (M3.3)
+3. Stream UI + integration endpoints (M3.4/M3.5)
+4. Wire StreamUrlResolver ke QueueManager untuk `yt:` keys (M3.4, butuh StreamSong model)
+
+Jebakan M3.1:
+1. `yt-dlp -J` bisa >10s pada jaringan lambat — retry 1x, jangan loop tak terbatas.
+2. `expire` query param googlevideo dalam DETIK — konversi ×1000; kalau tidak ada fallback 6 jam.
 
 ---
 
