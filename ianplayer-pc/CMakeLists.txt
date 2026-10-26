@@ -36,7 +36,7 @@ target_include_directories(ianplayer_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
 target_link_libraries(ianplayer_core PUBLIC Qt6::Core Qt6::Sql Qt6::Network)
 
 # ---- app exe ----
-qt_add_executable(ianplayer
+qt_add_executable(ianplayer WIN32
     src/main.cpp
     src/playback/playback_controller.h
     src/playback/playback_controller.cpp
@@ -174,9 +174,10 @@ add_custom_command(TARGET ianplayer POST_BUILD
         ${CMAKE_SOURCE_DIR}/third_party/ytdlp/yt-dlp.exe
         $<TARGET_FILE_DIR:ianplayer>
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${VCPKG_BIN_DIR}/tag.dll"
+        "C:/dev/vcpkg/installed/x64-windows/bin/z.dll"
         $<TARGET_FILE_DIR:ianplayer>
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${VCPKG_BIN_DIR}/zd.dll"
+        "C:/dev/vcpkg/installed/x64-windows/bin/tag.dll"
+        $<TARGET_FILE_DIR:ianplayer>
         $<TARGET_FILE_DIR:ianplayer>
 )

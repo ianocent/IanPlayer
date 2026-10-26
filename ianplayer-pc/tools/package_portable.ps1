@@ -33,8 +33,17 @@ New-Item -ItemType Directory -Force -Path $dist | Out-Null
 
 Write-Host "Copying core application files..."
 Copy-Item (Join-Path $build "ianplayer.exe") $dist
+
+# Copy TagLib & zlib DLLs (z.dll / zd.dll / tag.dll)
+$vcpkgBin = "C:\dev\vcpkg\installed\x64-windows\bin"
 if (Test-Path (Join-Path $build "tag.dll")) { Copy-Item (Join-Path $build "tag.dll") $dist }
+elseif (Test-Path (Join-Path $vcpkgBin "tag.dll")) { Copy-Item (Join-Path $vcpkgBin "tag.dll") $dist }
+
+if (Test-Path (Join-Path $build "z.dll")) { Copy-Item (Join-Path $build "z.dll") $dist }
+elseif (Test-Path (Join-Path $vcpkgBin "z.dll")) { Copy-Item (Join-Path $vcpkgBin "z.dll") $dist }
+
 if (Test-Path (Join-Path $build "zd.dll")) { Copy-Item (Join-Path $build "zd.dll") $dist }
+if (Test-Path (Join-Path $build "zlib1.dll")) { Copy-Item (Join-Path $build "zlib1.dll") $dist }
 
 # Qt deploy
 $windeploy = Join-Path $QtDir "bin\windeployqt.exe"
@@ -105,7 +114,7 @@ Terima kasih telah menggunakan IanPlayer PC!
 $readmeContent | Out-File -FilePath (Join-Path $dist "README-PORTABLE.txt") -Encoding utf8
 
 # Verification check
-$essentialFiles = @("ianplayer.exe", "libmpv-2.dll", "yt-dlp.exe", "tag.dll", "zd.dll", "README-PORTABLE.txt")
+$essentialFiles = @("ianplayer.exe", "libmpv-2.dll", "yt-dlp.exe", "tag.dll", "z.dll", "README-PORTABLE.txt")
 foreach ($file in $essentialFiles) {
     $targetPath = Join-Path $dist $file
     if (-not (Test-Path $targetPath)) {

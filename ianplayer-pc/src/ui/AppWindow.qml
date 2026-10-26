@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Controls as C
 import QtQuick.Layouts
 import QtQuick.Dialogs
@@ -746,14 +747,6 @@ C.ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                 }
-            }
-
-            // == placeholder Stream (M3) & Playlists (M1.3) ==
-            PanePlaceholder {
-                visible: contentArea.subPane === ""
-                    && tabsModel.count > 0
-                    && ["Stream", "Playlists"].indexOf(
-                        tabsModel.get(tabRail.activeIndex % tabsModel.count).name) >= 0
             }
 
             // == Albums pane: grid kotak (paritas Android) ==

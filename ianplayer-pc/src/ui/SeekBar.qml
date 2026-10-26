@@ -155,7 +155,7 @@ Item {
 
         Rectangle {
             x: Math.max(0, Math.min(parent.width - 10, parent.width * Math.max(0, Math.min(1, root.progress)) - 5))
-            anchors.centerY: parent.centerY
+            anchors.verticalCenter: parent.verticalCenter
             width: 10
             height: 10
             radius: 5

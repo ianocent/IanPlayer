@@ -6,6 +6,8 @@
 #include <QFont>
 #include <QObject>
 #include <QFileInfo>
+#include <QDir>
+#include <QFile>
 #include <QTimer>
 #include <QStandardPaths>
 #include <QLocalServer>
@@ -181,9 +183,6 @@ int main(int argc, char *argv[])
         const QString target = args.at(1);
         if (looksLikeUrl(target) || looksLikeLocalMedia(target))
             return runHiAudio(app, target);
-        std::cout << "Argumen bukan file media atau URL yang dikenal: "
-                  << target.toStdString() << "\n";
-        return 2;
     }
 
     // Mode GUI biasa

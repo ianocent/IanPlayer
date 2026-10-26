@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls
 import QtQuick.Controls as C
 import IanPlayer.PC 1.0
 
@@ -90,7 +91,7 @@ Item {
         visible: root.layoutIndex === 1
         width: Math.min(480, parent.width - 32)
         height: 52
-        anchors.centerX: parent.centerX
+        anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: root.isPillAtBottom ? parent.bottom : undefined
         anchors.top: !root.isPillAtBottom ? parent.top : undefined
         anchors.margins: 12
