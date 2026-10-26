@@ -3,7 +3,7 @@
 #include "core/library_scanner.h"
 #include "db/library_database.h"
 
-#include <QDateTime>
+#include <QVariant>
 #include <QDir>
 #include <QProcess>
 #include <QSettings>
@@ -172,6 +172,18 @@ void LibraryService::toggleFavorite(const QString &songKey)
     setFavorite(songKey, !m_db->isFavorite(songKey));
 }
 
+QVariantList LibraryService::topPlayedSongs(int limit) const
+{
+    QVariantList out;
+    for (const auto &rec : m_db->topPlayedSongs(limit)) {
+        QVariantMap m;
+        m.insert(QStringLiteral("title"), rec.title);
+        m.insert(QStringLiteral("artist"), rec.artist);
+        m.insert(QStringLiteral("art"), rec.art256);
+        out.append(m);
+    }
+    return out;
+}
 void LibraryService::recordLocalPlayed(const QString &path)
 {
     const auto row = m_db->songIdAndDurationByPath(path);

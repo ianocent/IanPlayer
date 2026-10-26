@@ -38,6 +38,7 @@ C.ApplicationWindow {
 
     property bool nowPlayingOpen: false
     property bool shortcutsOpen: false
+    property bool recapOpen: false
 
     Timer {
         id: positionPoll
@@ -1620,6 +1621,52 @@ C.ApplicationWindow {
         }
     }
 
+    // ---- recap overlay (M5.5) ----
+    Rectangle {
+        id: recapOverlay
+        visible: root.recapOpen
+        anchors.fill: parent
+        color: "#CC000000"
+        z: 25
+
+        MouseArea { anchors.fill: parent; onClicked: root.recapOpen = false }
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: Math.min(parent.width - 80, 480)
+            height: Math.min(parent.height - 80, 520)
+            color: Theme.surface1
+            radius: Theme.radius * 2
+
+            ColumnLayout {
+                anchors { fill: parent; margins: 20 }
+                spacing: 8
+
+                C.Label { text: qsTr("Monthly Recap"); color: Theme.textPrimary; font { family: Theme.fontFamily; pixelSize: Theme.sizeH2; weight: Theme.weightSemiBold } }
+
+                ListView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    model: LibraryService.topPlayedSongs(10)
+                    spacing: 4
+                    delegate: RowLayout {
+                        required property var modelData
+                        width: parent.width
+                        C.Label { text: index + 1 + "."; color: Theme.textDisabled; font { family: Theme.fontFamily; pixelSize: Theme.sizeSmall } }
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 0
+                            C.Label { text: modelData.title; color: Theme.textPrimary; font { family: Theme.fontFamily; pixelSize: Theme.sizeBody; weight: Theme.weightMedium } }
+                            C.Label { text: modelData.artist; color: Theme.textSecondary; font { family: Theme.fontFamily; pixelSize: Theme.sizeSmall } }
+                        }
+                    }
+                }
+
+                C.Button { text: qsTr("Tutup"); onClicked: root.recapOpen = false; font.family: Theme.fontFamily }
+            }
+        }
+    }
+
     // ---- shortcut overlay ----
     Rectangle {
         id: shortcutOverlay
@@ -1671,8 +1718,9 @@ C.ApplicationWindow {
             else if (event.key === Qt.Key_S) { QueueManager.toggleShuffle(); event.accepted = true; }
             else if (event.key === Qt.Key_R) { QueueManager.toggleRepeat(); event.accepted = true; }
             else if (event.key === Qt.Key_Q) { root.nowPlayingOpen = true; event.accepted = true; }
-            else if (event.key === Qt.Key_Escape) { root.nowPlayingOpen = false; root.shortcutsOpen = false; event.accepted = true; }
+            else if (event.key === Qt.Key_Escape) { root.nowPlayingOpen = false; root.shortcutsOpen = false; root.recapOpen = false; event.accepted = true; }
             else if (event.text === "?") { root.shortcutsOpen = !root.shortcutsOpen; event.accepted = true; }
+            else if (event.key === Qt.Key_M) { root.recapOpen = !root.recapOpen; event.accepted = true; }
         }
     }
 }

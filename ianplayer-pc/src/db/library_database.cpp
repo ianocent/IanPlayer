@@ -601,6 +601,44 @@ bool LibraryDatabase::saveLyricCache(const QString &key, const QString &syncedJs
     return q.exec();
 }
 
+QVector<SongRecord> LibraryDatabase::topPlayedSongs(int limit) const
+{
+    QVector<SongRecord> result;
+    if (!m_open)
+        return result;
+    QSqlQuery q(libraryConnection(m_dbPath));
+    q.prepare(QStringLiteral(
+        "SELECT s.id, s.path, s.title, s.artist, s.artist_id, s.album, s.album_id,"
+        " s.track_no, s.year, s.duration_ms, s.bitrate, s.codec, s.art_256, s.art_64,"
+        " s.added_ts, s.modified_ts, s.avail"
+        " FROM songs s JOIN play_counts pc ON pc.song_key = ('local:' || s.id)"
+        " WHERE s.avail = 1 ORDER BY pc.count DESC, s.title COLLATE NOCASE LIMIT :n"));
+    q.bindValue(QStringLiteral(":n"), limit);
+    q.exec();
+    while (q.next()) {
+        SongRecord rec;
+        rec.id = q.value(0).toLongLong();
+        rec.path = q.value(1).toString();
+        rec.title = q.value(2).toString();
+        rec.artist = q.value(3).toString();
+        rec.artistId = q.value(4).toLongLong();
+        rec.album = q.value(5).toString();
+        rec.albumId = q.value(6).toLongLong();
+        rec.trackNo = q.value(7).toInt();
+        rec.year = q.value(8).toInt();
+        rec.durationMs = q.value(9).toLongLong();
+        rec.bitrate = q.value(10).toInt();
+        rec.codec = q.value(11).toString();
+        rec.art256 = q.value(12).toString();
+        rec.art64 = q.value(13).toString();
+        rec.addedTs = q.value(14).toLongLong();
+        rec.modifiedTs = q.value(15).toLongLong();
+        rec.avail = q.value(16).toInt();
+        result.append(rec);
+    }
+    return result;
+}
+
 // ==== paritas SongStore.kt: favorites / play counts / play history ====
 
 std::optional<qint64> LibraryDatabase::songIdByPath(const QString &path) const

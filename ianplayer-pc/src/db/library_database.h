@@ -58,6 +58,7 @@ public:
 
     // ---- query untuk UI/model (M1.2+) ----
     QVector<SongRecord> allSongs() const;
+    QVector<SongRecord> topPlayedSongs(int limit = 10) const;   // paritas RecapBuilder M5.5
     int songCount() const;
 
     // ---- paritas SongStore.kt (#7 target M1.1) ----

@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QVariant>
 #include <QStringList>
 #include <QTimer>
 #include <QFileSystemWatcher>
@@ -50,6 +51,7 @@ public:
     // Recording play event: naikkan play_counts + tulis play_history (trim 90d).
     // Dipanggil controller playback saat track lokal mulai putar.
     Q_INVOKABLE void recordLocalPlayed(const QString &path);
+    Q_INVOKABLE QVariantList topPlayedSongs(int limit = 10) const;
     Q_INVOKABLE void recordPlayedByKey(const QString &songKey);
 
     // === playlists (M1.3) ===
