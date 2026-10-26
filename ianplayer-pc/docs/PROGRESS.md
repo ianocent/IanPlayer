@@ -7,7 +7,7 @@ Update file ini di tiap phase M#
 |---|---|
 | M0 Fondasi | 🟢 M0 selesai (M0.1–M0.4) |
 | M1 Local Library | 🟢 M1 selesai (M1.1–M1.3) |
-| M2 Playback Penuh | 🟡 M2.3 SMTC selesai — lanjut M2.4 crossfade |
+| M2 Playback Penuh | 🟢 M2 selesai (M2.1–M2.4) |
 | M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | ⚪ belum |
 | M4 Lyrics+Download | ⚪ belum |
@@ -36,6 +36,23 @@ Catatan M0.4 (jebakan yang ketemu & solusinya):
 Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
 
 Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
+
+---
+
+## M2.4 — Crossfade (selesai, 2026-10-26)
+
+- [x] `QueueManager::crossfadeMs` property (0/100/300/700/1200, persisted `crossfade_duration_ms`) + setter clamp 0..2000
+- [x] Fade-out/fade-in (8 langkah, non-blocking via `QTimer::singleShot`) di sekitar `loadCurrentAndPlay` saat `crossfadeMs > 0` dan sedang playing; volume 100→0 lalu load+play lalu 0→100
+- [x] True dual-instance overlap (mpv kedua) **HOLDING** — fade-only untuk v1; tambah overlap player di M5 kalau butuh
+- [x] gtest **53/53 PASS**; build debug OK; smoke alive
+
+HOLDING (v2):
+1. True overlap (second mpv instance) — v1 fade-only.
+2. Setting UI untuk crossfade_duration_ms (M5 settings).
+
+Jebakan M2.4:
+1. Jangan blokir main thread untuk fade — pakai `QTimer::singleShot` rekursif.
+2. `std::function` rekursif butuh deklarasi `nullptr` dulu lalu assign lambda (capture by reference `&fadeOut`).
 
 ---
 

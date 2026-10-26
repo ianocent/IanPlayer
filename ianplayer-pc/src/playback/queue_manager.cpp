@@ -6,6 +6,8 @@
 #include <QUrl>
 #include <QStringList>
 #include <QRandomGenerator>
+#include <QTimer>
+#include <functional>
 #include <QtGlobal>
 
 using SongInfo = QueueManager::SongInfo;
@@ -22,6 +24,7 @@ QueueManager::QueueManager(EngineHooks hooks,
     if (m_settings) {
         m_shuffleOn = m_settings->value(QStringLiteral("is_shuffle_on"), false).toBool();
         m_repeatMode = m_settings->value(QStringLiteral("repeat_mode"), RepeatOff).toInt();
+        m_crossfadeMs = m_settings->value(QStringLiteral("crossfade_duration_ms"), 0).toInt();
     }
     restoreState();
 }
@@ -570,6 +573,42 @@ void QueueManager::publishCurrentSong(const SongInfo &song, int index, bool fire
 
 void QueueManager::loadCurrentAndPlay()
 {
+    const bool wasPlaying = m_hooks.paused ? !m_hooks.paused() : false;
+    if (m_crossfadeMs > 0 && wasPlaying && m_hooks.setVolume) {
+        const int steps = 8;
+        const int interval = (m_crossfadeMs / 2) / steps;
+        std::function<void(int)> fadeOut = nullptr;
+        fadeOut = [this, steps, interval, &fadeOut](int i) {
+            if (i >= steps) {
+                if (m_hooks.setVolume)
+                    m_hooks.setVolume(0);
+                doLoadCurrentAndPlay();
+                std::function<void(int)> fadeIn = nullptr;
+                fadeIn = [this, steps, interval, &fadeIn](int j) {
+                    if (j >= steps) {
+                        if (m_hooks.setVolume)
+                            m_hooks.setVolume(100);
+                        return;
+                    }
+                    if (m_hooks.setVolume)
+                        m_hooks.setVolume(j * 100 / steps);
+                    QTimer::singleShot(interval, this, [j, fadeIn]() { fadeIn(j + 1); });
+                };
+                fadeIn(0);
+                return;
+            }
+            if (m_hooks.setVolume)
+                m_hooks.setVolume(100 - (i * 100 / steps));
+            QTimer::singleShot(interval, this, [i, fadeOut]() { fadeOut(i + 1); });
+        };
+        fadeOut(0);
+        return;
+    }
+    doLoadCurrentAndPlay();
+}
+
+void QueueManager::doLoadCurrentAndPlay()
+{
     if (m_currentKey.isEmpty())
         return;
     if (m_current.playUrl.isEmpty()) {
@@ -602,6 +641,18 @@ QString QueueManager::queueKeyAt(int index) const
     return m_queue.at(index).key;
 }
 
+void QueueManager::setCrossfadeMs(int ms)
+{
+    ms = qBound(0, ms, 2000);
+    if (m_crossfadeMs == ms)
+        return;
+    m_crossfadeMs = ms;
+    if (m_settings) {
+        m_settings->setValue(QStringLiteral("crossfade_duration_ms"), ms);
+        m_settings->sync();
+    }
+    emit crossfadeMsChanged();
+}
 void QueueManager::setPlaying(bool playing)
 {
     if (m_isPlaying == playing)

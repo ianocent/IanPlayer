@@ -25,6 +25,7 @@ class QueueManager : public QObject
     Q_PROPERTY(qint64 currentDurationMs READ currentDurationMs NOTIFY currentSongChanged)
     Q_PROPERTY(bool shuffleOn READ shuffleOn NOTIFY shuffleChanged)
     Q_PROPERTY(int repeatMode READ repeatMode NOTIFY repeatModeChanged)
+    Q_PROPERTY(int crossfadeMs READ crossfadeMs WRITE setCrossfadeMs NOTIFY crossfadeMsChanged)
     Q_PROPERTY(int currentIndex READ currentIndex NOTIFY currentSongChanged)
     Q_PROPERTY(int queueCount READ queueCount NOTIFY queueChanged)
 
@@ -75,6 +76,8 @@ public:
     Q_INVOKABLE qint64 positionMs() const;
     Q_INVOKABLE qint64 durationMsCurrent() const { return m_current.durationMs; }
     int repeatMode() const { return m_repeatMode; }
+    int crossfadeMs() const { return m_crossfadeMs; }
+    void setCrossfadeMs(int ms);
     int currentIndex() const { return m_currentIndex; }
     int queueCount() const { return int(m_queue.size()); }
 
@@ -118,6 +121,7 @@ signals:
     void queueChanged();
     void isPlayingChanged(bool playing);
     void shuffleChanged();
+    void crossfadeMsChanged();
     void repeatModeChanged();
     void playbackError(const QString &message);
     void songStarted(const QString &key);   // untuk LibraryService.recordLocalPlayed
@@ -127,6 +131,7 @@ private:
     SongInfo resolveOrPlaceholder(const QString &key);
     void publishCurrentSong(const SongInfo &song, int index, bool fireSongStarted);
     void loadCurrentAndPlay();
+    void doLoadCurrentAndPlay();
     void handleResolveFailure();
     void prefetchNextIfNeeded();
     void saveStateIfNeeded();
@@ -143,6 +148,7 @@ private:
     int m_currentIndex = -1;
     QString m_currentKey;
     bool m_shuffleOn = false;
+    int m_crossfadeMs = 0;
     bool m_isPlaying = false;
     int m_repeatMode = RepeatOff;
     QVector<SongInfo> m_baseQueueBeforeShuffle;
