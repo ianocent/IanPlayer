@@ -7,7 +7,7 @@ Update file ini di tiap phase M#
 |---|---|
 | M0 Fondasi | 🟢 M0 selesai (M0.1–M0.4) |
 | M1 Local Library | 🟢 M1 selesai (M1.1–M1.3) |
-| M2 Playback Penuh | 🟡 M2.2 Now Playing + mini player + keyboard + overlay selesai — lanjut M2.3 SMTC |
+| M2 Playback Penuh | 🟡 M2.3 SMTC selesai — lanjut M2.4 crossfade |
 | M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | ⚪ belum |
 | M4 Lyrics+Download | ⚪ belum |
@@ -36,6 +36,24 @@ Catatan M0.4 (jebakan yang ketemu & solusinya):
 Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
 
 Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
+
+---
+
+## M2.3 — Media keys & SMTC (selesai, 2026-10-26)
+
+- [x] `SmtcController` (`src/platform/smtc_controller.{h,cpp}`) — C++/WinRT `ISystemMediaTransportControlsInterop::GetForWindow` (HWND dari `QWindow::winId()`); enabled play/pause/next/prev/stop; `ButtonPressed` → `QueueManager` via `QMetaObject::invokeMethod` (queued)
+- [x] Metadata updater: title/artist/thumbnail (file:/// URI); playback status Playing/Paused; wired ke `QueueManager::currentSongChanged` & `isPlayingChanged`
+- [x] Link `runtimeobject`, include cppwinrt path; gtest tetap **53/53 PASS** (SMTC Windows-only, tidak di-test unit)
+- [x] Build debug OK; smoke alive; stderr cuma deprecation `Qt.labs.settings`
+
+HOLDING (v2):
+1. Artwork thumbnail mungkin tidak muncul di volume OSD kalau path kosong — perlu cache 256.
+2. SMTC property `TimelineProperties` (seek position) belum di-set — progress di OSD statis; tambah di M2.4.
+
+Jebakan M2.3:
+1. `winrt::to_hstring(std::wstring)` tidak ada overload — pakai `winrt::hstring(wstr)`.
+2. `winrt::init_apartment()` boleh gagal kalau Qt sudah init COM — tangkap exception, jangan crash.
+3. Interop header `SystemMediaTransportControlsInterop.h` ada di `um/` (default include), cppwinrt di `cppwinrt/` (tambah include path).
 
 ---
 

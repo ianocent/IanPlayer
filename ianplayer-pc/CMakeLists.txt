@@ -52,6 +52,8 @@ qt_add_executable(ianplayer
     src/models/playlist_list_model.cpp
     src/models/playlist_song_model.h
     src/models/playlist_song_model.cpp
+    src/platform/smtc_controller.h
+    src/platform/smtc_controller.cpp
     assets/app.manifest
 )
 
@@ -71,7 +73,12 @@ target_link_libraries(ianplayer PRIVATE
     Qt6::Concurrent
     TagLib::TagLib
     ianplayer_core
+    runtimeobject
     ${MPV_DIR}/lib/x86_64/mpv.lib
+)
+
+target_include_directories(ianplayer PRIVATE
+    "C:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/cppwinrt"
 )
 
 # Theme = QML singleton: generator qmldir cuma baca property QT_QML_SINGLETON_TYPE

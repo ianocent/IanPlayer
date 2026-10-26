@@ -8,10 +8,12 @@
 #include <QFileInfo>
 #include <QTimer>
 #include <QStandardPaths>
+#include <QWindow>
 #include <QSettings>
 
 #include "playback/playback_controller.h"
 #include "playback/queue_manager.h"
+#include "platform/smtc_controller.h"
 #include "net/stream_url_resolver.h"
 
 #include "core/library_scanner.h"
@@ -267,6 +269,24 @@ int main(int argc, char *argv[])
         Qt::QueuedConnection);
 
     engine.loadFromModule("IanPlayer.PC", "AppWindow");
+
+    // SMTC (M2.3): expose playback to Windows media keys / volume OSD
+    SmtcController *smtc = nullptr;
+    if (!engine.rootObjects().isEmpty()) {
+        if (QWindow *w = qobject_cast<QWindow *>(engine.rootObjects().first())) {
+            smtc = new SmtcController(reinterpret_cast<void *>(w->winId()), &queueManager, &app);
+            smtc->updateMetadata(queueManager.currentTitle(), queueManager.currentArtist(),
+                                 queueManager.currentArt());
+            smtc->setPlaybackStatus(queueManager.isPlaying());
+            QObject::connect(&queueManager, &QueueManager::currentSongChanged, smtc,
+                             [smtc, &queueManager]() {
+                smtc->updateMetadata(queueManager.currentTitle(), queueManager.currentArtist(),
+                                     queueManager.currentArt());
+            });
+            QObject::connect(&queueManager, &QueueManager::isPlayingChanged, smtc,
+                             [smtc](bool p) { smtc->setPlaybackStatus(p); });
+        }
+    }
 
     return app.exec();
 }
