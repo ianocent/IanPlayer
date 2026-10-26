@@ -25,6 +25,7 @@
 #include "app/stream_service.h"
 #include "app/lyric_service.h"
 #include "app/downloader_service.h"
+#include "app/settings_service.h"
 #include "models/stream_song_model.h"
 #include "models/library_song_model.h"
 #include "models/library_proxy_model.h"
@@ -289,6 +290,9 @@ int main(int argc, char *argv[])
 
     DownloaderService downloaderService(&service, &streamResolver, &app);
     engine.rootContext()->setContextProperty(QStringLiteral("DownloaderService"), &downloaderService);
+
+    SettingsService settingsService(&playbackSettings, &app);
+    engine.rootContext()->setContextProperty(QStringLiteral("SettingsService"), &settingsService);
 
     QObject::connect(&playbackController, &PlaybackController::endReached,
                      &queueManager, &QueueManager::onTrackEnded);

@@ -11,7 +11,7 @@ Update file ini di tiap phase M#
 | M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | 🟢 M3 selesai (M3.1–M3.5) |
 | M4 Lyrics+Download | 🟡 M4.1–M4.2 lyrics + M4.3 downloader (yt-dlp URL → download + iTunes tags + TagLib cover + scan) selesai — tag editor & recycle bin holding |
-| M5 Visual | ⚪ belum |
+| M5 Visual | 🟡 M5.1 Settings service (keys paritas Android) selesai — M5.2–5.5 holding |
 | M6 Desktop & Rilis | ⚪ belum |
 
 ---
@@ -36,6 +36,23 @@ Catatan M0.4 (jebakan yang ketemu & solusinya):
 Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
 
 Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
+
+---
+
+## M5.1 — Settings service (selesai, 2026-10-26)
+
+- [x] `SettingsService` (src/app/settings_service.{h,cpp}): QSettings-backed, keys paritas Android — motionScale, glassBlur, glassVibrancy, seekBarStyle, miniLayoutIndex, isPillAtBottom, userName, avatarPath, bannerPath, spotifySpDc; property `reduceMotion` (system)
+- [x] Context property `SettingsService`; gtest 55/55 PASS; build OK; smoke alive
+
+HOLDING (v2):
+1. M5.2 Liquid glass QML (IanGlass MultiEffect blur/vibrancy/lens) + ambient palette
+2. M5.3 Canvas (off/generative/video/kenburns)
+3. M5.4 Mini player variants + seek bar styles (wave/squiggle)
+4. M5.5 Monthly recap + PNG export
+5. Settings UI panel (sidebar kategori) — saat ini service saja, belum ada dialog
+
+Jebakan M5.1:
+1. QSettings NativeFormat di Windows = Registry; gunakan group keys konsisten.
 
 ---
 
