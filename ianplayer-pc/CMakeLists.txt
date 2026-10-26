@@ -21,6 +21,8 @@ add_library(ianplayer_core STATIC
     src/net/stream_url_resolver.cpp
     src/core/title_cleaner.cpp
     src/core/title_cleaner.h
+    src/playback/queue_manager.h
+    src/playback/queue_manager.cpp
 )
 target_include_directories(ianplayer_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(ianplayer_core PUBLIC Qt6::Core Qt6::Sql)
@@ -30,6 +32,8 @@ qt_add_executable(ianplayer
     src/main.cpp
     src/playback/playback_controller.h
     src/playback/playback_controller.cpp
+    src/playback/queue_manager.h
+    src/playback/queue_manager.cpp
     src/core/library_scanner.h
     src/core/library_scanner.cpp
     src/db/library_database.h
@@ -96,6 +100,7 @@ add_executable(ianplayer_tests
     src/tests/title_clean_test.cpp
     src/tests/library_db_test.cpp
     src/tests/library_model_test.cpp
+    src/tests/queue_manager_test.cpp
     src/tests/test_main.cpp
     src/core/library_scanner.h
     src/core/library_scanner.cpp

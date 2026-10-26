@@ -182,6 +182,20 @@ void LibraryService::recordLocalPlayed(const QString &path)
         emit playStateChanged();
 }
 
+void LibraryService::recordPlayedByKey(const QString &songKey)
+{
+    if (!songKey.startsWith(QStringLiteral("local:")))
+        return;
+    const qint64 id = songKey.mid(6).toLongLong();
+    for (const auto &rec : m_db->allSongs()) {
+        if (rec.id != id)
+            continue;
+        if (m_db->recordPlayed(songKey, QDateTime::currentMSecsSinceEpoch(), rec.durationMs))
+            emit playStateChanged();
+        return;
+    }
+}
+
 // ==== playlists (M1.3) : proxy ke LibraryDatabase + signal ====
 
 qint64 LibraryService::createPlaylist(const QString &name)

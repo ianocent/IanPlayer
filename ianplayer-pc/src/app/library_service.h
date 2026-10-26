@@ -50,6 +50,7 @@ public:
     // Recording play event: naikkan play_counts + tulis play_history (trim 90d).
     // Dipanggil controller playback saat track lokal mulai putar.
     Q_INVOKABLE void recordLocalPlayed(const QString &path);
+    Q_INVOKABLE void recordPlayedByKey(const QString &songKey);
 
     // === playlists (M1.3) ===
     Q_INVOKABLE qint64 createPlaylist(const QString &name);

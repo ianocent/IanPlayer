@@ -8,8 +8,10 @@
 #include <QFileInfo>
 #include <QTimer>
 #include <QStandardPaths>
+#include <QSettings>
 
 #include "playback/playback_controller.h"
+#include "playback/queue_manager.h"
 #include "net/stream_url_resolver.h"
 
 #include "core/library_scanner.h"
@@ -183,6 +185,56 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("ArtistListModel"), &artistModel);
     engine.rootContext()->setContextProperty(QStringLiteral("PlaylistListModel"), &playlistModel);
     engine.rootContext()->setContextProperty(QStringLiteral("PlaylistSongModel"), &playlistSongsModel);
+
+    // Playback engine M2.1 — QueueManager satu sumber kebenaran queue
+    PlaybackController playbackController;
+    QSettings playbackSettings(QStringLiteral("ianocent"), QStringLiteral("IanPlayer"));
+    auto resolveSong = [&libDb](const QString &key, QueueManager::SongInfo &out) -> bool {
+        if (!key.startsWith(QStringLiteral("local:")))
+            return false;
+        const qint64 id = key.mid(6).toLongLong();
+        for (const auto &rec : libDb.allSongs()) {
+            if (rec.id != id)
+                continue;
+            out.key = key;
+            out.title = rec.title;
+            out.artist = rec.artist;
+            out.album = rec.album;
+            out.durationMs = rec.durationMs;
+            out.art = rec.art256;
+            out.playUrl = rec.path;
+            out.isStream = false;
+            out.needsResolution = false;
+            return true;
+        }
+        return false;
+    };
+
+    QueueManager::EngineHooks hooks;
+    hooks.load = [&playbackController](const QUrl &u) { playbackController.loadTrack(u); };
+    hooks.play = [&playbackController]() { playbackController.play(); };
+    hooks.pause = [&playbackController]() { playbackController.pause(); };
+    hooks.position = [&playbackController]() { return playbackController.positionSeconds(); };
+    hooks.duration = [&playbackController]() { return playbackController.durationSeconds(); };
+    hooks.paused = [&playbackController]() { return playbackController.pausedNow(); };
+    hooks.setVolume = [&playbackController](int v) { playbackController.setVolume(v); };
+    hooks.seekToMs = [&playbackController](qint64 ms) { playbackController.seekBy(ms / 1000.0); };
+
+    QueueManager queueManager(hooks, resolveSong, &playbackSettings, &app);
+    engine.rootContext()->setContextProperty(QStringLiteral("QueueManager"), &queueManager);
+
+    QObject::connect(&playbackController, &PlaybackController::endReached,
+                     &queueManager, &QueueManager::onTrackEnded);
+    QObject::connect(&playbackController, &PlaybackController::errorOccurred,
+                     &queueManager, &QueueManager::onPlaybackError);
+    QObject::connect(&playbackController, &PlaybackController::positionChanged,
+                     &queueManager, [&playbackController, &queueManager](double) {
+        queueManager.onPositionTick(
+            static_cast<qint64>(playbackController.positionSeconds() * 1000.0),
+            static_cast<qint64>(playbackController.durationSeconds() * 1000.0));
+    });
+    QObject::connect(&queueManager, &QueueManager::songStarted,
+                     &service, &LibraryService::recordPlayedByKey);
 
     // snapshot ulang model saat scan sukses / favorit ganti
     QObject::connect(&service, &LibraryService::libraryChanged, [&] {

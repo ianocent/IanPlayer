@@ -6,7 +6,8 @@ Update file ini di tiap phase M#
 | Milestone | Status |
 |---|---|
 | M0 Fondasi | 🟢 M0 selesai (M0.1–M0.4) |
-| M1 Local Library | 🟢 M1.3 Playlists selesai — M1 tuntas (M1.1–M1.3) |
+| M1 Local Library | 🟢 M1 selesai (M1.1–M1.3) |
+| M2 Playback Penuh | 🟡 M2.1 QueueManager (engine) selesai — lanjut M2.2 UI |
 | M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | ⚪ belum |
 | M4 Lyrics+Download | ⚪ belum |
@@ -35,6 +36,33 @@ Catatan M0.4 (jebakan yang ketemu & solusinya):
 Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
 
 Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
+
+---
+
+## M2.1 — PlaybackController/QueueManager engine (selesai, 2026-10-26)
+
+- [x] `QueueManager` (`src/playback/queue_manager.{h,cpp}`) — satu sumber kebenaran queue, paritas `PlayerGateway.kt`: `playNow/playSingle/playSongAt/playNext/playPrevious/addToQueue/playNextInQueue/removeSongFromQueue/reorderUpNext/clearQueue/toggleShuffle/toggleRepeat/togglePlayPause/seekToMs/setVolume/stop`
+- [x] State: shuffle (base queue before shuffle + restore), repeat off/all/one, continuousFailures guard (<3 skip, x3 stop), prefetch hook 8s (skeleton — stream resolution M3)
+- [x] Persist: QSettings keys `last_queue/last_song_id/last_index/is_shuffle_on/repeat_mode` (paritas `KEY_LAST_*`) JSON codec; `restoreState()` di ctor tanpa auto-play
+- [x] Wiring main.cpp: PlaybackController + QueueManager, mpv signals (endReached/errorOccurred/positionChanged) → queue ops; `songStarted` → `LibraryService.recordPlayedByKey` (record play count/history)
+- [x] Context property `QueueManager` untuk QML (M2.2 UI akan konsumsi)
+- [x] gtest `queue_manager_test.cpp` — **12 tests** (play now/load, next wrap repeat all, stop at end, previous seek>3s, remove, reorder, shuffle current-first, repeat cycle, ended repeat-one restart, ended auto-next, persist/restore, error guard) → **53/53 PASS**
+- [x] Build debug OK; smoke alive; stderr cuma deprecation `Qt.labs.settings`
+
+Verifikasi: gtest 53/53; smoke app alive.
+
+HOLDING (v2):
+1. Mini player / Now Playing UI (M2.2)
+2. Media keys & SMTC (M2.3)
+3. Crossfade dual-instance (M2.4)
+4. Mute property (volume 0 sementara) — expose `muted` di M2.2
+5. Auto-fill up-next (stream only) — M3
+
+Jebakan M2.1:
+1. `m_continuousFailures` jangan di-reset di `loadCurrentAndPlay` (reset hanya setelah playback benar-benar jalan) — kalau tidak, guard error x3 tidak pernah tercapai.
+2. `std::clamp(int, qsizetype, qsizetype)` ambigu di MSVC — cast `int(...)`.
+3. Nested struct `SongInfo` butuh prefix `QueueManager::` di .cpp atau alias `using SongInfo = QueueManager::SongInfo;`.
+4. `EngineHooks` pakai `std::function` supaya QueueManager testable tanpa mpv (fake engine).
 
 ---
 
