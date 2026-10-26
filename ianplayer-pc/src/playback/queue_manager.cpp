@@ -602,6 +602,21 @@ QString QueueManager::queueKeyAt(int index) const
     return m_queue.at(index).key;
 }
 
+void QueueManager::setPlaying(bool playing)
+{
+    if (m_isPlaying == playing)
+        return;
+    m_isPlaying = playing;
+    emit isPlayingChanged(m_isPlaying);
+}
+
+qint64 QueueManager::positionMs() const
+{
+    if (!m_hooks.position)
+        return 0;
+    return static_cast<qint64>(m_hooks.position() * 1000.0);
+}
+
 QString QueueManager::queueTitleAt(int index) const
 {
     if (index < 0 || index >= m_queue.size())

@@ -36,6 +36,17 @@ C.ApplicationWindow {
         id: tabsModel
     }
 
+    property bool nowPlayingOpen: false
+    property bool shortcutsOpen: false
+
+    Timer {
+        id: positionPoll
+        interval: 250
+        running: QueueManager.queueCount > 0
+        repeat: true
+        onTriggered: { /* progress bound via QueueManager.positionMs() in mini/np */ }
+    }
+
     Component.onCompleted: {
         const defaults = [qsTr("Stream"), qsTr("Songs"), qsTr("Playlists"), qsTr("Albums"), qsTr("Artists")];
         const saved = JSON.parse(tabsSetting.tabOrder || "[]");
@@ -155,7 +166,7 @@ C.ApplicationWindow {
             top: titlebar.bottom
             left: parent.left
             right: parent.right
-            bottom: parent.bottom
+            bottom: miniPlayer.top
         }
         spacing: 0
 
@@ -1405,6 +1416,157 @@ C.ApplicationWindow {
                     && ["Stream", "Playlists"].indexOf(
                         tabsModel.get(tabRail.activeIndex % tabsModel.count).name) >= 0
             }
+        }
+    }
+
+    // ---- mini player dock (M2.2) ----
+    Rectangle {
+        id: miniPlayer
+        visible: QueueManager.queueCount > 0
+        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+        height: 72
+        color: Theme.surface1
+        z: 5
+
+        Rectangle {
+            anchors { top: parent.top; left: parent.left; right: parent.right }
+            height: 2
+            color: Theme.surface2
+            Rectangle {
+                anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
+                width: parent.width * (QueueManager.durationMsCurrent() > 0
+                    ? QueueManager.positionMs() / QueueManager.durationMsCurrent() : 0)
+                color: Theme.accent
+            }
+        }
+
+        RowLayout {
+            anchors { fill: parent; leftMargin: 12; rightMargin: 12; topMargin: 8; bottomMargin: 8 }
+            spacing: 12
+
+            Rectangle {
+                Layout.preferredWidth: 56; Layout.preferredHeight: 56
+                color: Theme.surface2; radius: Theme.radius; clip: true
+                Image { anchors.fill: parent; source: QueueManager.currentArt; fillMode: Image.PreserveAspectCrop; smooth: true }
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.nowPlayingOpen = true }
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true; spacing: 2
+                C.Label { Layout.fillWidth: true; text: QueueManager.currentTitle; color: Theme.textPrimary; elide: Text.ElideRight; font { family: Theme.fontFamily; pixelSize: Theme.sizeBody; weight: Theme.weightMedium } }
+                C.Label { Layout.fillWidth: true; text: QueueManager.currentArtist; color: Theme.textSecondary; elide: Text.ElideRight; font { family: Theme.fontFamily; pixelSize: Theme.sizeSmall } }
+            }
+
+            C.AbstractButton { width: 32; height: 32; contentItem: Text { text: "\u23EE"; color: Theme.textPrimary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } onClicked: QueueManager.playPrevious() }
+            C.AbstractButton { width: 40; height: 40; contentItem: Text { text: QueueManager.isPlaying ? "\u23F8" : "\u25B6"; color: Theme.textPrimary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.pixelSize: 18 } onClicked: QueueManager.togglePlayPause() }
+            C.AbstractButton { width: 32; height: 32; contentItem: Text { text: "\u23ED"; color: Theme.textPrimary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } onClicked: QueueManager.playNext() }
+            C.AbstractButton { width: 32; height: 32; contentItem: Text { text: "\u2191"; color: Theme.textSecondary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } onClicked: root.nowPlayingOpen = true }
+        }
+    }
+
+    // ---- Now Playing overlay ----
+    Rectangle {
+        id: nowPlayingOverlay
+        visible: root.nowPlayingOpen
+        anchors.fill: parent
+        color: "#CC000000"
+        z: 20
+
+        MouseArea { anchors.fill: parent; onClicked: root.nowPlayingOpen = false }
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: Math.min(parent.width - 80, 520)
+            height: Math.min(parent.height - 80, 640)
+            color: Theme.surface1
+            radius: Theme.radius * 2
+
+            ColumnLayout {
+                anchors { fill: parent; margins: 24 }
+                spacing: 16
+
+                Rectangle {
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: 320; Layout.preferredHeight: 320
+                    color: Theme.surface2; radius: 20; clip: true
+                    Image { anchors.fill: parent; source: QueueManager.currentArt; fillMode: Image.PreserveAspectCrop; smooth: true }
+                }
+
+                C.Label { Layout.alignment: Qt.AlignHCenter; text: QueueManager.currentTitle; color: Theme.textPrimary; font { family: Theme.fontFamily; pixelSize: Theme.sizeH1; weight: Theme.weightSemiBold } }
+                C.Label { Layout.alignment: Qt.AlignHCenter; text: QueueManager.currentArtist; color: Theme.textSecondary; font { family: Theme.fontFamily; pixelSize: Theme.sizeBody } }
+
+                Rectangle {
+                    Layout.fillWidth: true; height: 6; radius: 3; color: Theme.surface2
+                    Rectangle { anchors { left: parent.left; top: parent.top; bottom: parent.bottom } width: parent.width * (QueueManager.durationMsCurrent() > 0 ? QueueManager.positionMs() / QueueManager.durationMsCurrent() : 0); radius: 3; color: Theme.accent }
+                }
+
+                RowLayout {
+                    Layout.alignment: Qt.AlignHCenter; spacing: 16
+                    C.AbstractButton { width: 40; height: 40; contentItem: Text { text: "\u21C4"; color: QueueManager.shuffleOn ? Theme.accent : Theme.textSecondary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } onClicked: QueueManager.toggleShuffle() }
+                    C.AbstractButton { width: 40; height: 40; contentItem: Text { text: "\u23EE"; color: Theme.textPrimary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } onClicked: QueueManager.playPrevious() }
+                    C.AbstractButton { width: 56; height: 56; contentItem: Text { text: QueueManager.isPlaying ? "\u23F8" : "\u25B6"; color: Theme.textPrimary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.pixelSize: 22 } onClicked: QueueManager.togglePlayPause() }
+                    C.AbstractButton { width: 40; height: 40; contentItem: Text { text: "\u23ED"; color: Theme.textPrimary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } onClicked: QueueManager.playNext() }
+                    C.AbstractButton { width: 40; height: 40; contentItem: Text { text: "\u21BB"; color: QueueManager.repeatMode !== 0 ? Theme.accent : Theme.textSecondary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } onClicked: QueueManager.toggleRepeat() }
+                }
+
+                C.Label { Layout.alignment: Qt.AlignHCenter; text: qsTr("Esc untuk minimize"); color: Theme.textDisabled; font { family: Theme.fontFamily; pixelSize: Theme.sizeSmall } }
+            }
+        }
+    }
+
+    // ---- shortcut overlay ----
+    Rectangle {
+        id: shortcutOverlay
+        visible: root.shortcutsOpen
+        anchors.fill: parent
+        color: "#CC000000"
+        z: 30
+        MouseArea { anchors.fill: parent; onClicked: root.shortcutsOpen = false }
+        Rectangle {
+            anchors.centerIn: parent
+            width: 420; height: 420
+            color: Theme.surface1; radius: Theme.radius * 2
+            ColumnLayout {
+                anchors { fill: parent; margins: 20 }
+                spacing: 6
+                C.Label { text: qsTr("Keyboard Shortcuts"); color: Theme.textPrimary; font { family: Theme.fontFamily; pixelSize: Theme.sizeH2; weight: Theme.weightSemiBold } }
+                Repeater {
+                    model: [
+                        qsTr("Space \u2014 Play/Pause"),
+                        qsTr("\u2190 / \u2192 \u2014 Rewind/Forward 10s"),
+                        qsTr("\u2191 / \u2193 \u2014 Volume (placeholder)"),
+                        qsTr("N / P \u2014 Next / Previous"),
+                        qsTr("S \u2014 Shuffle toggle"),
+                        qsTr("R \u2014 Repeat cycle"),
+                        qsTr("Q \u2014 Now Playing"),
+                        qsTr("Esc \u2014 Minimize/Close overlay"),
+                        qsTr("? \u2014 Shortcut overlay"),
+                    ]
+                    delegate: C.Label {
+                        required property string modelData
+                        text: modelData
+                        color: Theme.textSecondary
+                        font { family: Theme.fontFamily; pixelSize: Theme.sizeSmall }
+                    }
+                }
+            }
+        }
+    }
+
+    Item {
+        anchors.fill: parent
+        focus: true
+        Keys.onPressed: (event) => {
+            if (event.key === Qt.Key_Space) { QueueManager.togglePlayPause(); event.accepted = true; }
+            else if (event.key === Qt.Key_Left) { QueueManager.seekToMs(QueueManager.positionMs() - 10000); event.accepted = true; }
+            else if (event.key === Qt.Key_Right) { QueueManager.seekToMs(QueueManager.positionMs() + 10000); event.accepted = true; }
+            else if (event.key === Qt.Key_N) { QueueManager.playNext(); event.accepted = true; }
+            else if (event.key === Qt.Key_P) { QueueManager.playPrevious(); event.accepted = true; }
+            else if (event.key === Qt.Key_S) { QueueManager.toggleShuffle(); event.accepted = true; }
+            else if (event.key === Qt.Key_R) { QueueManager.toggleRepeat(); event.accepted = true; }
+            else if (event.key === Qt.Key_Q) { root.nowPlayingOpen = true; event.accepted = true; }
+            else if (event.key === Qt.Key_Escape) { root.nowPlayingOpen = false; root.shortcutsOpen = false; event.accepted = true; }
+            else if (event.text === "?") { root.shortcutsOpen = !root.shortcutsOpen; event.accepted = true; }
         }
     }
 }

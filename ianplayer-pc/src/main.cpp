@@ -233,6 +233,8 @@ int main(int argc, char *argv[])
             static_cast<qint64>(playbackController.positionSeconds() * 1000.0),
             static_cast<qint64>(playbackController.durationSeconds() * 1000.0));
     });
+    QObject::connect(&playbackController, &PlaybackController::pausedChanged,
+                     &queueManager, [&queueManager](bool paused) { queueManager.setPlaying(!paused); });
     QObject::connect(&queueManager, &QueueManager::songStarted,
                      &service, &LibraryService::recordPlayedByKey);
 

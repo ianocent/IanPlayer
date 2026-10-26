@@ -7,7 +7,7 @@ Update file ini di tiap phase M#
 |---|---|
 | M0 Fondasi | 🟢 M0 selesai (M0.1–M0.4) |
 | M1 Local Library | 🟢 M1 selesai (M1.1–M1.3) |
-| M2 Playback Penuh | 🟡 M2.1 QueueManager (engine) selesai — lanjut M2.2 UI |
+| M2 Playback Penuh | 🟡 M2.2 Now Playing + mini player + keyboard + overlay selesai — lanjut M2.3 SMTC |
 | M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | ⚪ belum |
 | M4 Lyrics+Download | ⚪ belum |
@@ -36,6 +36,29 @@ Catatan M0.4 (jebakan yang ketemu & solusinya):
 Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
 
 Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
+
+---
+
+## M2.2 — Now Playing + Mini player + Keyboard (selesai, 2026-10-26)
+
+- [x] `QueueManager` extended: `isPlaying` property + `setPlaying(bool)` (wired ke `PlaybackController.pausedChanged`), `positionMs()` invokable untuk polling progress
+- [x] Mini player dock bawah (72px): artwork 56 + title/artist + prev/play/next + progress bar 2px + tombol buka Now Playing; muncul saat `QueueManager.queueCount > 0`
+- [x] Now Playing overlay: artwork 320, title/artist, seek bar, kontrol (shuffle/prev/play/next/repeat), Esc/minimize via scrim
+- [x] Keyboard shortcuts: Space play/pause, ←/→ seek ±10s, N/P next/prev, S shuffle, R repeat, Q Now Playing, Esc close, ? overlay (via `Item` dengan `focus: true` + `Keys.onPressed`)
+- [x] Shortcut overlay dialog daftar shortcut
+- [x] gtest tetap **53/53 PASS** (tidak ada test baru; UI layer)
+- [x] Build debug OK; smoke alive; stderr cuma deprecation `Qt.labs.settings`
+
+HOLDING (v2):
+1. Volume Up/Down keyboard placeholder (setVolume 50/60) — expose `volume` property + mute di M2.3
+2. Lyrics panel (L) — M4
+3. Queue panel (Q membuka Now Playing saja) — full queue panel M2.4
+4. Ambient palette dari artwork — M5
+
+Jebakan M2.2:
+1. `focus` bukan property writable di `ApplicationWindow` — bungkus `Keys.onPressed` di `Item { focus: true }`.
+2. QML tidak suka `;` setelah `}` sebelum property binding (`} ; onClicked:`) — hapus spasi+semicolon.
+3. `pausedChanged(bool paused)` semantik terbalik vs `isPlaying` — connect dengan lambda `setPlaying(!paused)`.
 
 ---
 

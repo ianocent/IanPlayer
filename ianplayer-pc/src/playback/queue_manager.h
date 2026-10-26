@@ -17,6 +17,7 @@ class QueueManager : public QObject
 {
     Q_OBJECT
 
+    Q_PROPERTY(bool isPlaying READ isPlaying NOTIFY isPlayingChanged)
     Q_PROPERTY(QString currentSongKey READ currentSongKey NOTIFY currentSongChanged)
     Q_PROPERTY(QString currentTitle READ currentTitle NOTIFY currentSongChanged)
     Q_PROPERTY(QString currentArtist READ currentArtist NOTIFY currentSongChanged)
@@ -68,6 +69,11 @@ public:
     QString currentArt() const { return m_current.art; }
     qint64 currentDurationMs() const { return m_current.durationMs; }
     bool shuffleOn() const { return m_shuffleOn; }
+    bool isPlaying() const { return m_isPlaying; }
+    void setPlaying(bool playing);
+
+    Q_INVOKABLE qint64 positionMs() const;
+    Q_INVOKABLE qint64 durationMsCurrent() const { return m_current.durationMs; }
     int repeatMode() const { return m_repeatMode; }
     int currentIndex() const { return m_currentIndex; }
     int queueCount() const { return int(m_queue.size()); }
@@ -137,6 +143,7 @@ private:
     int m_currentIndex = -1;
     QString m_currentKey;
     bool m_shuffleOn = false;
+    bool m_isPlaying = false;
     int m_repeatMode = RepeatOff;
     QVector<SongInfo> m_baseQueueBeforeShuffle;
     int m_continuousFailures = 0;
