@@ -1481,6 +1481,11 @@ C.ApplicationWindow {
                                 contentItem: Text { text: "\u25B6"; color: Theme.textPrimary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: StreamService.playStream(streamRow.videoId)
                             }
+                            C.AbstractButton {
+                                width: 32; height: 32
+                                contentItem: Text { text: "\u2193"; color: Theme.textSecondary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                onClicked: DownloaderService.downloadStream(streamRow.videoId, streamRow.title, streamRow.artist)
+                            }
                         }
                     }
                 }

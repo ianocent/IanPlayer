@@ -10,7 +10,7 @@ Update file ini di tiap phase M#
 | M2 Playback Penuh | 🟢 M2 selesai (M2.1–M2.4) |
 | M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | 🟢 M3 selesai (M3.1–M3.5) |
-| M4 Lyrics+Download | 🟡 M4.1 Lyrics engine (LRCLIB get/search + cache) + M4.2 panel selesai — lanjut M4.3 downloader |
+| M4 Lyrics+Download | 🟡 M4.1–M4.2 lyrics + M4.3 downloader (yt-dlp URL → download + iTunes tags + TagLib cover + scan) selesai — tag editor & recycle bin holding |
 | M5 Visual | ⚪ belum |
 | M6 Desktop & Rilis | ⚪ belum |
 
@@ -36,6 +36,27 @@ Catatan M0.4 (jebakan yang ketemu & solusinya):
 Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
 
 Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
+
+---
+
+## M4.3 — Downloader (bagian 1 selesai, 2026-10-26)
+
+- [x] `DownloaderService` (src/app/downloader_service.{h,cpp}): download stream URL via QNetworkAccessManager ke `%MUSIC%/IanPlayer/<title>.m4a`, progress signal, cancel-on-error cleanup
+- [x] Enrichment iTunes Search API (album, year, track#, cover URL 600x600) + write tags via TagLib (FileRef/MP4/MPEG), cover art (covr/APIC)
+- [x] Setelah selesai: `LibraryService.addRoot` + `rescanNow()` supaya file tampil di library
+- [x] Stream row tambah tombol download (↓)
+- [x] Build debug OK; smoke alive; gtest 55/55 PASS
+
+HOLDING (v2):
+1. Tag editor UI + delete file ke Recycle Bin (`IFileOperation`)
+2. UI pilih kualitas (list bitrate dari yt-dlp format info)
+3. Pause/resume download queue (saat ini satu-file satu-waktu, tanpa pause)
+4. Download progress UI (saat ini hanya signal, belum ada dialog/progress bar QML)
+
+Jebakan M4.3:
+1. TagLib `FileRef::tag()` bisa null untuk format tidak dikenal — guard.
+2. MP4 cover art butuh `TagLib::MP4::CoverArt::JPEG` + Item("covr", ...).
+3. Download raw googlevideo sering .m4a — simpan .m4a, tag via MP4.
 
 ---
 
