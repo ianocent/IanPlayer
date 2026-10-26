@@ -9,7 +9,7 @@ Update file ini di tiap phase M#
 | M1 Local Library | 🟢 M1 selesai (M1.1–M1.3) |
 | M2 Playback Penuh | 🟢 M2 selesai (M2.1–M2.4) |
 | M2 Playback Penuh | ⚪ belum |
-| M3 Streaming | 🟡 M3.1 yt-dlp resolver robust (timeout 10s, retry 1x, version check) selesai — lanjut M3.2 InnerTube |
+| M3 Streaming | 🟡 M3.2 InnerTube client (search/browse/related + noise filter + genres/moods + thumbnail cache) selesai — lanjut M3.3 Tidal |
 | M4 Lyrics+Download | ⚪ belum |
 | M5 Visual | ⚪ belum |
 | M6 Desktop & Rilis | ⚪ belum |
@@ -36,6 +36,29 @@ Catatan M0.4 (jebakan yang ketemu & solusinya):
 Verified: app alive (181 MB), stderr clean kecuali deprecation warning; qmldir contains `singleton Theme 1.0`.
 
 Test manual: drag reorder tab, persist restart, titlebar drag/resize, double-click maximize.
+
+---
+
+## M3.2 — InnerTube client (selesai, 2026-10-26)
+
+- [x] `InnertubeClient` (src/net/innertube_client.{h,cpp}): POST JSON ke `youtubei/v1/{search,browse,next}`, client WEB_REMIX, hl=en, gl=US; API key dari env `INNERTUBE_API_KEY` atau `keys.properties` (tidak hardcode)
+- [x] Parse `musicResponsiveListItemRenderer` → title/artist/videoId/thumbnail/duration; dedup by videoId; filter songs params `EgIQAQ%3D%3D`
+- [x] Noise filter: regex compilation/karaoke/8d/slowed/reverb/nightcore + `isIndianContent` (hindi/tamil/telugu/punjabi/bollywood/desi)
+- [x] Genre (12) + Mood (12) lists dengan query anchor Billboard/UK + current year; shuffled di Android (PC biarkan caller shuffle)
+- [x] `ThumbnailCache` (src/net/thumbnail_cache.{h,cpp}): disk cache LRU di `%LOCALAPPDATA%\IanPlayer\imgcache`, max 200MB, sha1 filename, async fetch + signal `loaded`
+- [x] gtest `innertube_test.cpp` — genres/moods count 12 + noise filter → **55/55 PASS**; build debug OK; smoke alive
+
+HOLDING (v2):
+1. Stream UI (M3.4) yang konsumsi InnertubeClient (search screen, home feed, related auto-fill)
+2. Tidal search (M3.3)
+3. Wire StreamUrlResolver (yt-dlp) untuk `yt:` keys di QueueManager (M3.4)
+4. ThumbnailCache integrasi ke QML Image (via local path) — M3.4
+5. Network tests (httptest) tidak ditambahkan — pure helpers saja
+
+Jebakan M3.2:
+1. InnerTube response shape bervariasi; parser walk rekursif + guard field kosong supaya tidak crash.
+2. `X-Goog-Api-Format-Version` header diperlukan supaya response konsisten.
+3. API key kosong → request tetap jalan tapi mungkin 403; dokumentasikan di settings.
 
 ---
 

@@ -19,13 +19,17 @@ set(MPV_DIR ${CMAKE_SOURCE_DIR}/third_party/mpv)
 # ---- ianplayer_core: logic non-UI (network/cache) supaya bisa di-test gtest ----
 add_library(ianplayer_core STATIC
     src/net/stream_url_resolver.cpp
+    src/net/innertube_client.cpp
+    src/net/innertube_client.h
+    src/net/thumbnail_cache.cpp
+    src/net/thumbnail_cache.h
     src/core/title_cleaner.cpp
     src/core/title_cleaner.h
     src/playback/queue_manager.h
     src/playback/queue_manager.cpp
 )
 target_include_directories(ianplayer_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(ianplayer_core PUBLIC Qt6::Core Qt6::Sql)
+target_link_libraries(ianplayer_core PUBLIC Qt6::Core Qt6::Sql Qt6::Network)
 
 # ---- app exe ----
 qt_add_executable(ianplayer
@@ -108,6 +112,7 @@ add_executable(ianplayer_tests
     src/tests/library_db_test.cpp
     src/tests/library_model_test.cpp
     src/tests/queue_manager_test.cpp
+    src/tests/innertube_test.cpp
     src/tests/test_main.cpp
     src/core/library_scanner.h
     src/core/library_scanner.cpp
