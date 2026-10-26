@@ -163,7 +163,9 @@ endif()
 enable_testing()
 add_test(NAME stream_url COMMAND ianplayer_tests)
 
-# ---- POST_BUILD deploy: DLL libmpv + yt-dlp di samping exe ----
+# ---- POST_BUILD deploy: DLL libmpv + yt-dlp + TagLib DLLs di samping exe ----
+set(VCPKG_BIN_DIR "C:/dev/vcpkg/installed/x64-windows/$<$<CONFIG:Debug>:debug/>bin")
+
 add_custom_command(TARGET ianplayer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${MPV_DIR}/lib/x86_64/libmpv-2.dll
@@ -172,6 +174,9 @@ add_custom_command(TARGET ianplayer POST_BUILD
         ${CMAKE_SOURCE_DIR}/third_party/ytdlp/yt-dlp.exe
         $<TARGET_FILE_DIR:ianplayer>
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${MPV_DIR}/lib/x86_64/libmpv-2.dll
-        $<TARGET_FILE_DIR:ianplayer_tests>
+        "${VCPKG_BIN_DIR}/tag.dll"
+        $<TARGET_FILE_DIR:ianplayer>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${VCPKG_BIN_DIR}/zd.dll"
+        $<TARGET_FILE_DIR:ianplayer>
 )
