@@ -15,6 +15,27 @@ Update file ini di tiap phase M#
 
 ---
 
+## Fix & QML Runtime Stabilization — Portable Deployment & QML Load Fixes (selesai, 2026-10-26)
+
+- [x] **Subsystem Windows Native & Single Instance**:
+  - `CMakeLists.txt`: Dikonfigurasi dengan `qt_add_executable(ianplayer WIN32 ...)` agar terkompilasi sebagai native Windows GUI application tanpa memunculkan jendela console/terminal hitam.
+  - `src/main.cpp`: Pengecekan single-instance diperbarui murni berbasis IPC socket `QLocalSocket::waitForConnected(500)`. Jika tidak ada instansi aktif, aplikasi **selalu lanjut dan membuka window GUI**.
+- [x] **Eliminasi Crash & Syntax Error QML Runtime**:
+  - `AppWindow.qml`: Menghapus komponen usang `PanePlaceholder` yang menyebabkan kegagalan penciptaan objek root QML (`objectCreationFailed`).
+  - `SeekBar.qml`: Mengubah sintaks properti `anchors.centerY` yang tidak valid menjadi `anchors.verticalCenter`.
+  - `MiniPlayer.qml`: Mengubah sintaks properti `anchors.centerX` yang tidak valid menjadi `anchors.horizontalCenter`.
+  - `SettingsDialog.qml`: Menambahkan import `import QtQuick.Controls` agar komponen `ScrollView` dan `Slider` terdeteksi secara utuh.
+- [x] **Skema Rilis Portable Standalone (`dist/IanPlayer-Portable/`)**:
+  - `tools/package_portable.ps1`: Otomatis menyalin `z.dll` (zlib release dependency dari TagLib) bersama `tag.dll`, `libmpv-2.dll`, `yt-dlp.exe`, dan seluruh plugin Qt 6.8 via `windeployqt`.
+  - Distribusi utama pengembangan selanjutnya dilakukan lewat folder **`dist/IanPlayer-Portable/ianplayer.exe`** dan arsip `dist/IanPlayer-Portable-6.3.4.zip`.
+- [ ] **Backlog Refinements (Dilanjutkan Sesi Berikutnya)**:
+  - Pembuatan & pemasangan Icon aplikasi (`.ico`) untuk titlebar & executable.
+  - Perbaikan kontras warna teks & latar belakang pada `SettingsDialog.qml`.
+  - Penataan ulang ikon pencarian `Search` pada `GlassTextField.qml` (karakter placeholder `p` diganti ikon).
+  - Eliminasi overlap label "Playlist Baru" & perbaikan margin layout pada tab Playlists & Stream.
+
+---
+
 ## M6.2 + M6.3 + M4.3 Ext + M5.4 — Integration, Packaging Script, Tag Editor & Mini Player Variants (selesai, 2026-10-26)
 
 - [x] **M6.3 Portable Packaging Script**: `tools/package_portable.ps1` dikonfigurasi & diperbarui penuh.
