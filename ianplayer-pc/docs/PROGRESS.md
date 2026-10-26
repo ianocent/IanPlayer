@@ -11,7 +11,7 @@ Update file ini di tiap phase M#
 | M2 Playback Penuh | ⚪ belum |
 | M3 Streaming | 🟢 M3 selesai (M3.1–M3.5) |
 | M4 Lyrics+Download | 🟡 M4.1–M4.2 lyrics + M4.3 downloader (yt-dlp URL → download + iTunes tags + TagLib cover + scan) selesai — tag editor & recycle bin holding |
-| M5 Visual | 🟡 M5.1 Settings service (keys paritas Android) selesai — M5.2–5.5 holding |
+| M5 Visual | 🟡 M5.1 settings + M5.2 glass components (IanGlass, GlassTextField, GlassButton, GlassCard) + M5.5 recap selesai — canvas/variants holding |
 | M6 Desktop & Rilis | 🟡 M6.1 UpdateManager + M6.2 file assoc/single instance selesai — M6.3 packaging & M6.4 QA holding |
 
 ---
@@ -57,6 +57,39 @@ HOLDING (v2):
 Jebakan M6:
 1. Update portable butuh write-access ke folder app; cek startup, banner warning kalau di Program Files.
 2. Taskbar toolbar butuh HWND valid setelah window created.
+
+---
+
+## M5.2 — Fluid Glass UI Design System Refactoring (Spesifikasi Dokumen Selesai, 2026-10-26)
+
+- [x] Evaluasi screenshot UI: identifikasi tombol/input box putih polos raw, text overlapping pada search & playlist, latar belakang flat black, dan belum adanya komponen glass.
+- [x] Pembaruan `03-DESIGN-SYSTEM.md` dengan panduan skill `ui-ux-pro-max` & `no-ai-slop`:
+  - Visual Architecture 3 Layer (Ambient OLED background + Translucent Glass Surface + High contrast text & accent buttons).
+  - Penambahan token warna glass di `Theme.qml` (`glassSurface`, `inputBg`, `buttonBg`, `borderGlass`, `accentGlow`).
+  - Spesifikasi komponen custom: `GlassTextField`, `GlassButton`, `GlassComboBox`, `GlassCard`.
+  - Spesifikasi animasi transisi fluid (`Easing.OutCubic`, 120ms - 220ms).
+- [ ] Refactoring kode QML & penataan tampilan UI (Menunggu persetujuan / green light pengguna).
+
+---
+
+## M5.2 — Liquid glass components (bagian 1, 2026-10-26)
+
+- [x] `Theme.qml` diupdate ke token baru (bg #08080A, glassSurface, inputBg, buttonBg, accent #E11D48, text tokens, radius 10/12/20)
+- [x] `IanGlass.qml` (MultiEffect blur + tint + border)
+- [x] `GlassTextField.qml` (input glass custom, placeholder hide saat ada teks, clear button)
+- [x] `GlassButton.qml` (primary/secondary, hover scale 1.02, press 0.98)
+- [x] `GlassCard.qml` (hover lift -4px + scale 1.02)
+- [x] Build debug OK; smoke alive
+
+HOLDING (v2):
+1. M5.3 Canvas modes (off/generative/video/kenburns)
+2. M5.4 Mini player variants + seek bar styles (wave/squiggle)
+3. M5.5 polish (ambient palette dari artwork, recap export PNG)
+4. Refactor AppWindow/Songs/Stream/Playlists panes pakai Glass* components (saat ini masih C.* raw)
+
+Jebakan M5.2:
+1. Qt6 MultiEffect ada di `QtQuick.Effects` (import wajib).
+2. Backdrop blur penuh tidak tersedia di Qt6; simulasi via translucency + MultiEffect pada layer sendiri.
 
 ---
 

@@ -1,11 +1,32 @@
-# IanPlayer PC — Design System
+# IanPlayer PC — Design System (Fluid Glass UI)
 
-Sumber data: ui-ux-pro-max (style: Dark Mode OLED, palette: Video Streaming/OTT, typography: Modern Dark Cinema/Inter, UX guidelines keyboard & focus).
-Mode utama: **dark**, ikut default Android (`is_dark_mode` on). Referensi rasa: Spotify/musik streaming, bukan aplikasi kantor.
+Sumber data: `ui-ux-pro-max` (style: Dark Mode OLED + Glassmorphism, palette: Video Streaming/OTT, typography: Inter Modern Dark, UX guidelines keyboard & focus).
+Mode utama: **dark**, ikut default Android (`is_dark_mode` on). Referensi visual: Spotify Desktop + macOS Acrylic Glass + Cyberpunk Frosted Aesthetics.
 
-## 1. Design tokens (warna)
+---
 
-Semua warna didefinisikan sekali sebagai singleton QML (`Theme.qml`). Dilarang hardcode hex di screen lain.
+## 1. Visual Architecture & Liquid Glass Layering
+
+IanPlayer PC menggunakan arsitektur **3 Layer Visual**:
+
+```
+[Layer 3: Controls & Text]      — High contrast textPrimary (#F8FAFC), accent buttons (#E11D48)
+[Layer 2: Translucent Glass]    — Translucent panels (5-12% opacity) + 1px white border (10% opacity) + QML MultiEffect blur
+[Layer 1: Ambient Background]   — Deep OLED black (#08080A) dengan radial gradient & ambient artwork blur
+```
+
+### 1.1 QML Glass Implementation (IanGlass / GlassPanel)
+- **Primary Glass Surface**: `Qt.rgba(255, 255, 255, 0.05)` s/d `Qt.rgba(255, 255, 255, 0.08)`.
+- **Glass Border**: `1px` border `Qt.rgba(255, 255, 255, 0.10)` dengan `radius: 10px` s/d `16px`.
+- **Top Inner Shine**: Linear gradient tipis 1px di batas atas panel (`Qt.rgba(255, 255, 255, 0.15)` -> `transparent`).
+- **Backdrop Blur**: `MultiEffect` dengan `blurMax: 32`, `blur: glassBlur / 40`, `saturation: 0.2 + glassVibrancy * 0.4`.
+- **Performance Fallback**: Jika GPU terdeteksi lemah atau software rendering (`llvmpipe`), matikan `MultiEffect` blur; gunakan solid semi-transparent surface (`#121216`) dengan 1px border.
+
+---
+
+## 2. Design Tokens (`Theme.qml`)
+
+Semua token warna didefinisikan sebagai singleton QML (`Theme.qml`). **Dilarang keras hardcode hex acak** atau menggunakan komponen bawaan default tanpa style (seperti tombol putih polos / input box raw).
 
 ```qml
 // Theme.qml
@@ -13,151 +34,179 @@ pragma Singleton
 import QtQuick
 
 QtObject {
-    // Surfaces — urut dari paling gelap ke paling terang
-    readonly property color bg:          "#000000"   // window root, area player
-    readonly property color surface1:    "#0C0C0D"   // card, list item
-    readonly property color surface2:    "#181818"   // panel sekunder, sidebar
-    readonly property color surface3:    "#1E1B4B"   // surface ber-aksen (dialog, pill)
+    // Surface Base (OLED Dark)
+    readonly property color bg:                  "#08080A"   // Window root & canvas background
+    readonly property color bgGradientTop:       "#0D0E15"   // Subtle top ambient gradient
+    readonly property color bgGradientBottom:    "#050507"   // Deep bottom background
 
-    // Text
-    readonly property color textPrimary:   "#F8FAFC" // heading, judul lagu aktif
-    readonly property color textSecondary: "#94A3B8" // meta: artist, durasi, size
-    readonly property color textDisabled:  "#555B66"
+    // Translucent Glass Surfaces
+    readonly property color glassSurface:        Qt.rgba(0.08, 0.09, 0.12, 0.55) // Card, list row
+    readonly property color glassSurfaceHover:   Qt.rgba(0.14, 0.15, 0.20, 0.70) // Item hover state
+    readonly property color glassSurfaceActive:  Qt.rgba(0.18, 0.20, 0.26, 0.85) // Item active/pressed
+    readonly property color glassPanel:          Qt.rgba(0.06, 0.07, 0.09, 0.65) // Sidebar, mini player dock
 
-    // Accent — play red
-    readonly property color accent:        "#E11D48" // tombol play, progress, state aktif
-    readonly property color accentHover:   "#F43F5E"
-    readonly property color onAccent:      "#FFFFFF"
+    // Glass Input & Control Surfaces (Menghilangkan box putih polos raw)
+    readonly property color inputBg:             Qt.rgba(1, 1, 1, 0.06)
+    readonly property color inputBgHover:        Qt.rgba(1, 1, 1, 0.10)
+    readonly property color inputBgFocused:      Qt.rgba(1, 1, 1, 0.14)
+    readonly property color inputBorder:         Qt.rgba(1, 1, 1, 0.12)
+    readonly property color inputBorderFocused:  "#E11D48"
 
-    // Border & state
-    readonly property color border:       "#2A2D35"
-    readonly property color focusRing:    "#F8FAFC"
-    readonly property color destructive:  "#EF4444"
+    readonly property color buttonBg:            Qt.rgba(1, 1, 1, 0.08)
+    readonly property color buttonBgHover:       Qt.rgba(1, 1, 1, 0.15)
+    readonly property color buttonBgPressed:     Qt.rgba(1, 1, 1, 0.22)
 
-    // Overlay khusus player / now playing
-    readonly property color scrim:        Qt.rgba(0,0,0,0.6)
-    readonly property color osdBg:        Qt.rgba(0,0,0,0.72)
+    // Text Tokens
+    readonly property color textPrimary:         "#F8FAFC"   // Judul utama, heading, active state
+    readonly property color textSecondary:       "#94A3B8"   // Subtitle, artist, album, meta
+    readonly property color textMuted:           "#64748B"   // Placeholder text, disabled text
+
+    // Accent (IanPlayer Rose Red)
+    readonly property color accent:              "#E11D48"   // Play buttons, active indicators, sliders
+    readonly property color accentHover:         "#F43F5E"   // Hover state accent
+    readonly property color accentGlow:          Qt.rgba(225, 29, 72, 0.35) // Radial glow accent
+    readonly property color onAccent:            "#FFFFFF"   // Text on accent button
+
+    // Borders & Focus
+    readonly property color borderGlass:         Qt.rgba(1, 1, 1, 0.10) // Standard subtle border
+    readonly property color borderGlassBright:   Qt.rgba(1, 1, 1, 0.20) // Highlighted border
+    readonly property color focusRing:          "#F8FAFC"   // Keyboard accessibility focus
+    readonly property color destructive:         "#EF4444"   // Hapus / danger action
+
+    // Overlays
+    readonly property color scrim:              Qt.rgba(0, 0, 0, 0.65) // Dialog backdrop
+    readonly property color osdBg:              Qt.rgba(8, 8, 10, 0.85) // OSD Volume / Popup
 }
 ```
 
-Aturan kontras (hasil hitung, bukan perasaan):
+### Kontras & Accessibility Rules
+- `textPrimary` di `bg`/`glassSurface`: **15:1+** (sangat aman).
+- `textSecondary` di `glassSurface`: **>= 4.5:1** (lulus WCAG AA).
+- `textMuted` sebagai placeholder: **>= 3:1** (hanya untuk placeholder, **dilarang menumpuk/overlap dengan text terisi**).
+- `focusRing`: Indikator fokus keyboard wajib terlihat jelas 2px outline dengan offset 2px.
 
-| Pasangan | Kontras minimum | Catatan |
-|---|---|---|
-| textPrimary di bg/surface | 14:1+ | aman |
-| textSecondary di surface1 | >=4.5:1 | `#94A3B8` di `#0C0C0D` ~5.2:1, lolos |
-| accent di bg | >=3:1 (non-text) | `#E11D48` di `#000000` ~4.0:1, lolos |
-| onAccent (putih di `#E11D48`) | >=4.5:1 | ~4.4:1 — hanya untuk text besar/bold; body text jangan ditaruh di atas accent |
-| focusRing di semua surface | >=3:1 | lolos |
+---
 
-Dari anti-pattern skill, hindari:
+## 3. Custom Glass Components Specification
 
-- Background putih penuh di section manapun saat dark mode.
-- Glow/drop shadow di semua item; glow hanya untuk artwork aktif dan elemen hero.
-- Warna acak di luar token (EQ bars, canvas aurora kelola palette-nya sendiri tapi dibatasi token + palet artwork).
+Semua UI kontrol di-refactor menggunakan komponen custom berbasis `GlassPanel` untuk membuang gaya default Qt Quick Controls yang tampak seperti box putih polos.
 
-## 2. Tipografi
+### 3.1 `GlassTextField.qml` (Input Pencarian & Teks)
+- **Bentuk**: Rounded rectangle `radius: 10px`, tinggi `40px`.
+- **Background**: Translucent `Theme.inputBg`, berubah ke `inputBgHover` saat mouse hover, dan `inputBgFocused` saat terfokus.
+- **Border**: `1px border` `Theme.inputBorder`, berubah menjadi `Theme.accent` dengan subtle glow saat terfokus.
+- **Placeholder Handling**: Teks placeholder `Theme.textMuted` tersembunyi total begitu ada input teks (`text.length > 0`). **Mencegah bug text overlapping**.
+- **Ikon**: Magnifying glass SVG di sebelah kiri (`18px`, `textSecondary`), clear text button (`×`) di sebelah kanan saat input terisi.
 
-Satu keluarga font: **Inter** (bundel ke aplikasi; Windows 10 tidak bawa Inter).
+### 3.2 `GlassButton.qml` (Tombol Aksi & Navigasi)
+- **Bentuk**: Rounded rectangle `radius: 10px` (atau `20px` pill style), tinggi `40px`.
+- **Varian**:
+  - `Secondary / Standard`: Background `Theme.buttonBg`, border `Theme.borderGlass`, text `Theme.textPrimary`.
+  - `Primary / Accent`: Background `Theme.accent`, glow `Theme.accentGlow`, text `Theme.onAccent` (Bold).
+- **Interaksi**:
+  - Hover: Scale `1.02`, background memterang (`buttonBgHover`), border memterang.
+  - Press: Scale `0.98`, background `buttonBgPressed`.
+  - Transititon: `Behavior on scale`, `Behavior on color` (150ms `OutCubic`).
 
-| Token | Weight | Size | Line height | Penggunaan |
+### 3.3 `GlassComboBox.qml` (Dropdown Sorting & Filter)
+- **Bentuk**: Custom glass container `radius: 10px`, tinggi `40px`, background `Theme.buttonBg`.
+- **Popup List**: Translucent frosted glass panel dengan drop shadow `blur: 16`, item list ber-highlight hover `Theme.glassSurfaceHover`.
+- **Arrow**: Chevron down SVG teranimasi rotasi 180° saat popup terbuka.
+
+### 3.4 `GlassCard.qml` (Kartu Album / Artist / Playlist)
+- **Bentuk**: Square / rounded card `radius: 12px`, padding `12px`.
+- **Background**: `Theme.glassSurface` + 1px `Theme.borderGlass`.
+- **Hover Effect**:
+  - Card lift: Translate Y `-4px`, Scale `1.02`.
+  - Artwork zoom: Scale artwork inside clipping rect `1.05`.
+  - Play button overlay: Floating accent play button `44px` fade-in di kanan bawah artwork.
+  - Duration: 200ms `OutCubic`.
+
+---
+
+## 4. Tipografi
+
+Satu keluarga font utama: **Inter** (termasuk static TTF di `resources/fonts/`).
+
+| Token | Weight | Size | Line Height | Penggunaan |
 |---|---|---|---|---|
-| display | 700 | 44px | 1.05 | Judul empty state, splash, recap title |
-| h1 | 600 | 32px | 1.15 | Screen title |
-| h2 | 600 | 24px | 1.2 | Section title |
-| h3 | 500 | 18px | 1.3 | Card title, judul lagu di grid |
-| body | 400 | 16px | 1.5 | Isi, deskripsi, lyrics non-aktif |
-| small | 400 | 13px | 1.4 | Meta: artist, durasi, timestamp |
-| label | 500 | 12px | 1.2 | Uppercase +0.8px tracking, section header kecil |
+| display | 700 (Bold) | 44px | 1.05 | Title splash, empty state hero, recap |
+| h1 | 700 (Bold) | 32px | 1.15 | Screen title (Songs, Stream, Playlists) |
+| h2 | 600 (SemiBold) | 24px | 1.20 | Section header, header detail album |
+| h3 | 600 (SemiBold) | 16px | 1.30 | Judul lagu di list/grid, nama playlist |
+| body | 400 (Regular) | 14px | 1.45 | Subtitle, deskripsi, lirik non-aktif |
+| small | 400 (Regular) | 12px | 1.40 | Meta: nama artis, durasi, bitrate, year |
+| label | 600 (SemiBold) | 11px | 1.20 | Uppercase section tracking +0.8px |
 
-- Download Inter dari Google Fonts (file `.ttf`), taruh di `resources/fonts/`, register via `QFontDatabase::addApplicationFont` di `main.cpp`.
-- Timestamp dan durasi (`01:23:45`) pakai tabular numbers (`font.features: { "tnum": 1 }`) biar tidak jitter saat seek jalan.
-- Judul panjang: maksimal 2 baris lalu ellipsis. Jangan wrap lebih dari 2.
-- Lyrics aktif (karaoke): boleh lebih besar (20–24px) karena ini elemen fokus, tapi hanya di lyrics panel.
+- Durasi & timestamp (`03:45`): Menggunakan tabular numbers (`font.features: { "tnum": 1 }`) untuk menghentikan jitter saat seek.
 
-## 3. Spacing & sizing
+---
 
-- Grid 8px: 4, 8, 12, 16, 24, 32, 48, 64.
-- Padding komponen: 12px kecil, 16px standar, 24px besar.
-- Radius: 8px (button, input), 12px (card, dialog), 20px (artwork besar, hero card).
-- Ikon (SVG bundel): 20px (inline text), 24px (default toolbar/nav), 32px (aksi besar di now playing).
-- Tinggi kontrol: button 40px, input 40px, row lagu 64px, row album/playlist 88px.
-- Target hit minimum: 40x40px. Klik area seek bar >= 20px tinggi walau track yang terlihat cuma 6px.
+## 5. Spacing, Layout & Rail Navigation
 
-## 4. Motion
+- **Grid System**: Kelipatan 8px (`4px`, `8px`, `12px`, `16px`, `24px`, `32px`, `48px`).
+- **Sidebar Rail (Navigasi Kiri)**:
+  - Translucent frosted panel (`width: 220px`).
+  - Active Tab Pill: Accent indicator bar `4px` di tepi kiri + background `Theme.glassSurfaceActive` dengan rounded radius `8px`.
+  - Reorderable tabs via drag dengan smooth row animation.
+- **Main View Area**:
+  - Content padding `24px`.
+  - Header area: Judul H1 + Search bar & Filter controls di sebelah kanan sejajar secara visual.
+- **Mini Player Dock (Bawah Window)**:
+  - Frosted glass bar tinggi `72px`, terpasang di bagian bawah window.
+  - Top edge accent line `1px` `Theme.borderGlassBright`.
+  - Progress bar mini `2px` di paling atas bar dengan hover expand ke `6px`.
 
-| Interaksi | Durasi | Easing |
-|---|---|---|
-| Hover state | 120ms | linear |
-| Now Playing buka/minimize | 220ms | OutCubic |
-| Panel slide (queue, lyrics, sidebar) | 220ms | OutCubic |
-| Dialog buka | 180ms | OutCubic, scale 0.96->1 + fade |
-| Artwork hover scale | 200ms | OutBack, scale 1.0->1.03 |
-| Ambient palette transisi | 500ms | OutCubic |
-| Voice spectrum / canvas aurora | frame-driven | bebas tapi hormati motion_scale |
+---
 
-Anti-pattern: transisi 300ms+ di hover, animasi masuk yang terlalu lambat, animasi berat di seek bar (bikin janky saat lagu jalan). Hormati setting `reduce_motion` (sama seperti Android): matikan animasi non-kritis saat aktif, dan `qApp->styleHints()->reduceMotion()` dari sistem juga dihormati.
+## 6. Fluid Motion & Transition Specifications
 
-## 5. Komponen kunci
+Semua animasi diatur agar terasa responsif (120ms – 220ms) tanpa membuat UI terasa lambat atau janky.
 
-### 5.1 Now Playing screen (paling penting)
+```qml
+// Standard Transition Behaviours
+Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+Behavior on scale   { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+Behavior on color   { ColorAnimation  { duration: 150; easing.type: Easing.OutCubic } }
+```
 
-Di desktop Now Playing bukan fullscreen paksa seperti Android, tapi **panel besar yang bisa minimize ke mini player** (jembatan dari gesture vertical-dismiss Android).
+### 6.1 Transition Scenarios
+1. **Tab Switching**:
+   - Fade out current tab content (`opacity 1 -> 0`, `duration 100ms`), fade in new tab content (`opacity 0 -> 1`, `translate Y 8px -> 0px`, `duration 180ms`).
+2. **Hover Interactions**:
+   - Button / Card: Color fade `150ms`, Scale `1.0 -> 1.02` `150ms OutCubic`.
+3. **Now Playing Panel Open / Minimize**:
+   - Slide & scale from mini player: Y offset transition `220ms OutCubic`.
+4. **Dialog Open**:
+   - Scrim fade-in `150ms`, Dialog container scale `0.95 -> 1.0` + opacity `0 -> 1` (`180ms OutCubic`).
+5. **Accessibility / Reduce Motion**:
+   - Jika `SettingsService.reduceMotion` aktif atau OS `reduceMotion` terdeteksi, matikan animasi scale dan translate. Gunakan instant opacity transition (50ms).
 
-- **Root:** artwork besar (radius 20, max 420px) di atas, title + artist di bawahnya, seek bar, kontrol, toggle queue di kanan.
-- **Ambient palette:** latar gradasi lembut dari warna dominan artwork (dominan + sekunder, didim-masukkan >80% supaya text tetap kontras). Paritas dengan `AmbientPaletteController` Android. Detail teknis di `02-ARCHITECTURE.md`.
-- **Seek bar:** 4 style dari Android tetap ada: `classic / wave / squiggle / minimal` (key `seek_bar_style`). Track 6px, thumb 14px muncul saat hover/pause. Buffer track tidak relevan (stream buffer pendek), buang.
-- **Kontrol:** shuffle, prev, play/pause (56px, accent), next, repeat (off/all/one), queue, lyrics. Icon 24px, tooltip.
-- **Lyrics panel:** overlay + highlight karaoke per baris (LRC). Source indicator nomor 1..8 di pojok, persis Android. Baris aktif: textPrimary besar; baris yang belum: textSecondary redup; yang sudah lewat: nyaris hilang.
-- **Ultra glass (IanGlass):** panel frost di belakang info lagu (default `glass_blur` 16, `glass_vibrancy` 0.3). Implementasi QML di dokumen arsitektur.
+---
 
-Keyboard Now Playing (slot kebiasaan desktop, geser dari gesture Android yang ada):
+## 7. Keyboard Focus & Accessibility
 
-| Key | Aksi |
-|---|---|
-| `Space` | play/pause |
-| `<-` / `->` | rewind/forward 10s |
-| `Up` / `Down` | volume |
-| `N` / `P` | next / previous |
-| `S` | shuffle toggle |
-| `R` | repeat cycle |
-| `L` | lyrics toggle |
-| `Q` | queue panel |
-| `Esc` | minimize Now Playing |
+- **Focus Indicator**: Indikator fokus keyboard wajib terlihat berupa ring outline 2px `Theme.focusRing` saat elemen difokuskan via keyboard navigation.
+- **Accessible Names**: Semua ikon tombol (`Play`, `Pause`, `Next`, `Previous`, `Shuffle`, `Repeat`, `Scan`) wajib menyertakan `Accessible.name`.
+- **Keyboard Shortcuts**:
+  - `Space`: Play / Pause toggle.
+  - `Left` / `Right`: Seek ±10s.
+  - `Up` / `Down`: Adjust Volume.
+  - `N` / `P`: Next / Previous track.
+  - `S` / `R`: Shuffle / Repeat toggle.
+  - `Esc`: Close dialog / minimize Now Playing.
 
-### 5.2 Library view
+---
 
-- **Grid album:** square 1:1, tile 180-220px, jumlah kolom responsif terhadap lebar window.
-- **Row lagu:** artwork kecil 48px + judul (h3) + artist (small) + durasi (small, tabular). Hover: surface1 ke surface2 + aksi tombol muncul.
-- **Fast scroller:** vertical di kanan (paritas fitur Android), preview huruf A-Z saat di-drag.
-- **Empty state:** display font + ilustrasi line-art SVG + tombol "Scan Folder".
-- Tab (Stream / Songs / Playlists / Albums) bisa reorder; persist pakai QSettings `tab_order`, format sama dengan Android: `"stream,songs,playlists,albums"`.
+## 8. Implementation Checklist for UI Refactoring
 
-### 5.3 Mini player
-
-Paritas dengan 4 layout Android (`mini_layout_index`: Default/Floating/Compact/Queue, `is_pill_at_bottom`):
-
-- Gaya yang disarankan di desktop: dock bar full-width di bawah window, 72px.
-- Isi: artwork 56px, title + artist, kontrol prev/play/next, seek bar mini full-width di tepi atas bar, tombol queue + volume.
-- 4 variant Android diterjemahkan sebagai 4 mode density mini bar (full/compact/floating card/queue-first) di milestone visual.
-
-### 5.4 Dialog, settings, recap
-
-- Dialog: max width 480px, radius 12, surface1, drop shadow blur 24 opacity 0.5.
-- Settings: sidebar kiri kategori + konten kanan (bukan tab horizontal). Semua key dari `SettingsStore` Android dipetakan 1:1 (`motion_scale`, `canvas_mode`, `glass_blur`, `glass_vibrancy`, `seek_bar_style`, `spotify_sp_dc`, dsb.).
-- Recap (Monthly Recap ala Wrapped): full screen kartu statistik — top lagu, top artist, menit listen, taste comment. Nanti di M6 bisa tambah export PNG untuk share (fitur baru desktop, bukan port).
-
-## 6. Keyboard & accessibility (wajib, dari UX guidelines)
-
-- **Setiap kontrol interaktif punya focus ring terlihat** (2px focusRing + offset 2px). `visible: activeFocus && !mouseOnly`. Jangan hilangkan indikator fokus di dark mode.
-- Tab order mengikuti urutan visual.
-- Shortcut overlay: tekan `?` buka dialog semua shortcut, dikelompokkan Playback / Volume / Navigation / Queue.
-- Semua tombol ikon punya `Accessible.name`. Tidak ada tombol ikon tanpa nama aksesibilitas.
-- Dialog scrim: diuji 60% hitam, konten di belakang tidak terbaca, fokus terkunci di dalam dialog (focus trap manual via `KeyNavigation`).
-- Kontras 4.5:1 untuk semua body text kalau light mode nanti diproduksi.
-
-## 7. Futures (out of scope sekarang)
-
-- Light mode. Kalau mau, tambah token set kedua di Theme.qml, jangan hardcode.
-- Dynamic accent dari sistem Windows. Skip.
-- Font custom user via settings (load file .ttf). Phase M5.
+- [ ] **Theme.qml**: Update token warna & glass translucency variables.
+- [ ] **GlassTextField.qml**: Implementasi komponen input glass custom untuk menggantikan `TextField` raw.
+- [ ] **GlassButton.qml**: Implementasi tombol glass custom untuk menggantikan `Button` raw.
+- [ ] **GlassComboBox.qml**: Implementasi dropdown sorting glass custom untuk menggantikan `ComboBox` raw.
+- [ ] **GlassCard.qml**: Implementasi kartu album/artist/playlist dengan hover zoom & lift effect.
+- [ ] **AppWindow.qml**: Refactor layout utama dengan background gradient & sidebar glass rail.
+- [ ] **SongsPane.qml**: Pasang `GlassTextField`, `GlassButton`, `GlassComboBox`, dan styling list row 64px.
+- [ ] **StreamPane.qml**: Pasang `GlassTextField` & `GlassButton` (menghilangkan text overlapping).
+- [ ] **PlaylistsPane.qml**: Pasang `GlassButton` & Empty state glass card.
+- [ ] **AlbumsPane & ArtistsPane**: Grid view dengan `GlassCard` dan empty state visual.
