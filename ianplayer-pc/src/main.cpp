@@ -12,6 +12,7 @@
 #include <QLocalSocket>
 #include <QUrlQuery>
 #include <QWindow>
+#include <QtWidgets/QStyle>
 #include <QSettings>
 
 #include "playback/playback_controller.h"

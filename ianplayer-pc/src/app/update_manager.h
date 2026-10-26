@@ -14,6 +14,7 @@ public:
 
     Q_INVOKABLE void checkForUpdates();
     Q_INVOKABLE void updateYtDlp();
+    Q_INVOKABLE void downloadAndApplyUpdate(const QString &zipUrl);
     Q_INVOKABLE void setDontShowAgain(const QString &version);
 
 signals:

@@ -5,7 +5,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
-#include <QStandardPaths>
+#include <QTextStream>
+#include <QDir>
 #include <QDir>
 #include <QCoreApplication>
 #include <QSettings>
@@ -80,6 +81,64 @@ void UpdateManager::setDontShowAgain(const QString &version)
     }
 }
 
+void UpdateManager::downloadAndApplyUpdate(const QString &zipUrl)
+{
+    QNetworkRequest req(zipUrl);
+    req.setRawHeader("User-Agent", "IanPlayer");
+    QNetworkReply *reply = m_nam.get(req);
+    const QString zipPath = QDir::tempPath() + QStringLiteral("/IanPlayer-update.zip");
+    QFile *file = new QFile(zipPath, this);
+    if (!file->open(QIODevice::WriteOnly)) {
+        emit ytDlpUpdateFinished(QStringLiteral("cannot open temp file"));
+        reply->abort();
+        reply->deleteLater();
+        file->deleteLater();
+        return;
+    }
+    QObject::connect(reply, &QNetworkReply::readyRead, this, [reply, file]() { file->write(reply->readAll()); });
+    QObject::connect(reply, &QNetworkReply::finished, this, [this, reply, file, zipPath]() {
+        file->write(reply->readAll());
+        file->close();
+        const bool ok = (reply->error() == QNetworkReply::NoError);
+        const QString err = reply->errorString();
+        reply->deleteLater();
+        file->deleteLater();
+        if (!ok) {
+            emit ytDlpUpdateFinished(QStringLiteral("download failed: ") + err);
+            return;
+        }
+
+        const QString appDir = QCoreApplication::applicationDirPath();
+        const QString appName = QFileInfo(QCoreApplication::applicationFilePath()).fileName();
+        const QString batPath = QDir::tempPath() + QStringLiteral("/ianplayer_update.bat");
+        QFile bat(batPath);
+        if (bat.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream ts(&bat);
+            ts << "@echo off\r\n";
+            ts << ":wait\r\n";
+            ts << "tasklist /FI \"IMAGENAME eq " << appName << "\" 2>NUL | find /I \"" << appName << "\" >NUL\r\n";
+            ts << "if not errorlevel 1 ( timeout /t 1 /nobreak >NUL & goto wait )\r\n";
+            ts << "set APPDIR=" << appDir << "\r\n";
+            ts << "set ZIP=" << zipPath << "\r\n";
+            ts << "set NEWDIR=%TEMP%\\IanPlayer-new\r\n";
+            ts << "if exist \"%NEWDIR%\" rmdir /s /q \"%NEWDIR%\"\r\n";
+            ts << "mkdir \"%NEWDIR%\"\r\n";
+            ts << "powershell -NoProfile -Command \"Expand-Archive -Path '%ZIP%' -DestinationPath '%NEWDIR%' -Force\"\r\n";
+            ts << "ren \"%APPDIR%\" \"_old\"\r\n";
+            ts << "ren \"%NEWDIR%\" \"" << QFileInfo(appDir).fileName() << "\"\r\n";
+            ts << "move /Y \"%NEWDIR%\" \"%APPDIR%\" >NUL 2>&1\r\n";
+            ts << "start \"\" \"%APPDIR%\\" << appName << "\"\r\n";
+            ts << "timeout /t 2 /nobreak >NUL\r\n";
+            ts << "rmdir /s /q \"%APPDIR%_old\" 2>NUL\r\n";
+            ts << "del \"%ZIP%\" 2>NUL\r\n";
+            ts << "del \"%~f0\" 2>NUL\r\n";
+            bat.close();
+        }
+
+        QProcess::startDetached(QStringLiteral("cmd.exe"), {QStringLiteral("/c"), batPath});
+        QCoreApplication::quit();
+    });
+}
 void UpdateManager::updateYtDlp()
 {
     QProcess proc;

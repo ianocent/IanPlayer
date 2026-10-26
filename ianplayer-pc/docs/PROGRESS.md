@@ -1,7 +1,7 @@
 # IanPlayer PC — Progress Log
 
 Update file ini di tiap phase M#
- Branch kerja: `ianplayer-pc`. Android tetap `main`.
+ Branch kerja: `ianplayer-pc`. Android tetap `main`. *JANGAN SENTUH BRANCH MAIN / ANDROID
 
 | Milestone | Status |
 |---|---|

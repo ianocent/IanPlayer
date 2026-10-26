@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Core Sql Concurrent Gui)
+find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Core Sql Concurrent Gui Widgets)
 find_package(TagLib CONFIG REQUIRED)
 
 qt_policy(SET QTP0001 NEW)
@@ -88,6 +88,7 @@ target_include_directories(ianplayer PRIVATE ${MPV_DIR}/include)
 target_link_libraries(ianplayer PRIVATE
     Qt6::Quick
     Qt6::QuickControls2
+    Qt6::Widgets
     Qt6::Concurrent
     TagLib::TagLib
     ianplayer_core
