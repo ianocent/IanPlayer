@@ -1240,7 +1240,11 @@ class YTMusicRepository(context: Context) {
         )
     }
 
-    suspend fun resolveStreamUrl(song: Song, highPriority: Boolean = false): String? = withContext(Dispatchers.IO) {
+    suspend fun resolveStreamUrl(
+        song: Song,
+        highPriority: Boolean = false,
+        allowSearchFallback: Boolean = true
+    ): String? = withContext(Dispatchers.IO) {
         val videoId = song.remoteId ?: return@withContext null
 
         if (!song.uri.toString().startsWith(StreamSources.PLACEHOLDER_PREFIX)) {
@@ -1274,13 +1278,14 @@ class YTMusicRepository(context: Context) {
         }
 
         Timber.d("YTMusicRepo Resolving stream URL for: ${song.title}")
+        var audioUrl: String? = null
         try {
             if (!highPriority) {
                 playerSemaphore.acquire()
             }
 
             // Coba InnerTube dengan multiple clients (WEB_REMIX, TV_EMBEDDED, ANDROID_MUSIC, dll)
-            var audioUrl = fetchViaInnerTube(videoId)
+            audioUrl = fetchViaInnerTube(videoId)
 
             if (audioUrl != null) {
                 streamUrlCache[videoId] = audioUrl
@@ -1301,12 +1306,57 @@ class YTMusicRepository(context: Context) {
             } else {
                 Timber.e("YTMusicRepo ALL methods failed to resolve stream for: ${song.title} ($videoId)")
             }
-            return@withContext audioUrl
         } finally {
             if (!highPriority) {
                 playerSemaphore.release()
             }
         }
+
+        if (audioUrl != null) return@withContext audioUrl
+
+        // Fallback: some YouTube uploads are unavailable/unplayable even though
+        // search returned them. Try a few alternate uploads with the same
+        // title/artist before reporting failure to the player.
+        if (!allowSearchFallback) return@withContext null
+        return@withContext resolveViaSearchFallback(song, highPriority)
+    }
+
+    private suspend fun resolveViaSearchFallback(song: Song, highPriority: Boolean): String? {
+        val query = listOf(song.artist, song.title)
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .joinToString(" - ")
+        if (query.isBlank()) return null
+
+        Timber.d("YTMusicRepo Trying search fallback for: ${song.title} ($query)")
+        val result = try {
+            searchSongs(query, onPartial = {})
+        } catch (e: Exception) {
+            Timber.w(e, "YTMusicRepo Search fallback failed for ${song.title}")
+            return null
+        }
+
+        val candidates = when (result) {
+            is StreamSearchResult.Success -> result.songs
+            else -> emptyList()
+        }
+
+        for (candidate in candidates.take(8)) {
+            if (candidate.remoteId.isNullOrBlank() || candidate.remoteId == song.remoteId) continue
+            val url = resolveStreamUrl(
+                candidate.copy(source = StreamSources.YOUTUBE),
+                highPriority = true,
+                allowSearchFallback = false
+            )
+            if (!url.isNullOrBlank()) {
+                Timber.d("YTMusicRepo Fallback resolved ${song.title} via ${candidate.title} (${candidate.remoteId})")
+                streamUrlCache[song.remoteId ?: ""] = url
+                return url
+            }
+        }
+
+        Timber.w("YTMusicRepo Search fallback exhausted for: ${song.title}")
+        return null
     }
 
     /**

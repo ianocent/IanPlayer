@@ -162,6 +162,8 @@ fun StreamTabContent(
     streamParsingFailed: Boolean,
     adaptiveColor: Color
 ) {
+                        val recentStreamSongs by viewModel.recentStreamSongs.collectAsState()
+
                         var streamFilterArtist by remember { mutableStateOf<String?>(null) }
                         var streamFilterAlbum by remember { mutableStateOf<String?>(null) }
                         val streamGridScrollState = rememberScrollState()
@@ -439,6 +441,38 @@ fun StreamTabContent(
                                         }
 
                                         Spacer(Modifier.height(12.dp))
+
+                                        if (searchQuery.isBlank() && recentStreamSongs.isNotEmpty()) {
+                                            Text(
+                                                "Recently played",
+                                                modifier = Modifier.padding(horizontal = 16.dp),
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = adaptiveColor
+                                            )
+                                            Spacer(Modifier.height(4.dp))
+                                            Text(
+                                                "Stream songs you opened recently.",
+                                                modifier = Modifier.padding(horizontal = 16.dp),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color.Gray
+                                            )
+                                            Spacer(Modifier.height(8.dp))
+                                            androidx.compose.foundation.lazy.LazyRow(
+                                                contentPadding = PaddingValues(horizontal = 12.dp),
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                items(recentStreamSongs, key = { it.id }) { song ->
+                                                    RecentStreamCard(
+                                                        song = song,
+                                                        viewModel = viewModel,
+                                                        adaptiveColor = adaptiveColor,
+                                                        modifier = Modifier.width(132.dp)
+                                                    )
+                                                }
+                                            }
+                                            Spacer(Modifier.height(20.dp))
+                                        }
 
                                         // Mood Section - NEW
                                         Text(

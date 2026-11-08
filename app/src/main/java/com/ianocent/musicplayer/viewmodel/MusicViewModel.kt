@@ -350,6 +350,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val isSearchingRemote: StateFlow<Boolean> get() = streamSearch.isSearching
     val streamParsingFailed: StateFlow<Boolean> get() = streamSearch.parsingFailed
 
+    private val _recentStreamSongs = MutableStateFlow<List<Song>>(emptyList())
+    val recentStreamSongs: StateFlow<List<Song>> = _recentStreamSongs
+
+    private fun refreshRecentStreamSongs() {
+        val cache = songStore.streamSongsCache.value
+        val recentIds = songStore.loadPlayHistory()
+            .asReversed()
+            .map { it.first }
+            .distinct()
+            .filter { it in cache }
+            .take(12)
+        _recentStreamSongs.value = recentIds.mapNotNull { cache[it] }
+    }
+
     private val _sortMode = MutableStateFlow(0)
     val sortMode: StateFlow<Int> = _sortMode
 
@@ -1353,6 +1367,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
         _genreSongs.value = cachedGenres
 
+        refreshRecentStreamSongs()
+
         checkForUpdate()
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1374,6 +1390,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             getAllStreamSongs = { streamSearch.allResults.value },
             onSongPlayed = { song ->
                 if (song.isStream) addToStreamSongsCache(listOf(song))
+                if (song.isStream) refreshRecentStreamSongs()
                 playbackGateway.markAsPlayed(song.id)
                 incrementPlayCount(song.id)
                 lastVisualSongId = song.id
